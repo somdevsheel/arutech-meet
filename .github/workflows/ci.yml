@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  DATABASE_URL: postgresql://arutech:arutech_dev_password@localhost:5432/arutech_meet_test?schema=public
+  REDIS_URL: redis://localhost:6379
+  JWT_SECRET: ci-test-access-secret-min-32-characters
+  JWT_REFRESH_SECRET: ci-test-refresh-secret-min-32-characters
+  COOKIE_SECRET: ci-test-cookie-secret
+  API_URL: http://localhost:4000
+  WEB_URL: http://localhost:3000
+  S3_ENDPOINT: http://localhost:9000
+  S3_BUCKET: arutech-meet-ci
+  S3_ACCESS_KEY: ci
+  S3_SECRET_KEY: ci-secret
+  LIVEKIT_URL: ws://localhost:7880
+  LIVEKIT_HTTP_URL: http://localhost:7880
+  LIVEKIT_API_KEY: devkey
+  LIVEKIT_API_SECRET: ci-livekit-secret-min-32-characters
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: arutech
+          POSTGRES_PASSWORD: arutech_dev_password
+          POSTGRES_DB: arutech_meet_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U arutech" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @arutech/database exec prisma generate
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Run database migrations
+        run: pnpm --filter @arutech/database exec prisma migrate deploy
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build

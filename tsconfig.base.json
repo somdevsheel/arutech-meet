@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "declaration": false,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+    "baseUrl": ".",
+    "paths": {
+      "@arutech/types": ["packages/types/src/index.ts"],
+      "@arutech/types/*": ["packages/types/src/*"],
+      "@arutech/config": ["packages/config/src/index.ts"],
+      "@arutech/database": ["packages/database/src/index.ts"],
+      "@arutech/validation": ["packages/validation/src/index.ts"],
+      "@arutech/ui": ["packages/ui/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "dist", ".next", "build", "coverage"]
+}

@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+.turbo/
+
+# Env
+.env
+.env.local
+.env.*.local
+!.env.example
+!.env.development
+!.env.test
+!.env.production.example
+
+# Testing
+coverage/
+playwright-report/
+test-results/
+
+# Prisma
+packages/database/generated/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Mobile
+apps/mobile/ios/Pods/
+apps/mobile/ios/build/
+apps/mobile/android/.gradle/
+apps/mobile/android/app/build/
+apps/mobile/.expo/
+
+# Docker volumes / local storage
+infrastructure/docker/volumes/
+minio-data/
+
+# Recordings (local dev)
+services/recording/tmp/

@@ -1,0 +1,1068 @@
+// ==============================================================================
+// Arutech Meet — Prisma Schema
+// See docs/database.md for the accompanying narrative/ERD description.
+// ==============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------------------------
+// Enums
+// ------------------------------------------------------------------------------
+
+enum SystemRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum AuthProviderType {
+  PASSWORD
+  GOOGLE
+  MICROSOFT
+  APPLE
+  SSO
+}
+
+enum DeviceType {
+  WEB
+  IOS
+  ANDROID
+  DESKTOP
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum OrgMemberType {
+  EMPLOYEE
+  TEACHER
+  STUDENT
+}
+
+enum SubscriptionPlan {
+  FREE
+  PRO
+  BUSINESS
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+}
+
+enum MeetingType {
+  INSTANT
+  SCHEDULED
+  RECURRING
+  CLASS
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  WAITING
+  LIVE
+  ENDED
+  CANCELED
+}
+
+enum RecurrenceFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum ScreenShareScope {
+  HOST_ONLY
+  ALL_PARTICIPANTS
+}
+
+enum ParticipantRole {
+  OWNER
+  HOST
+  CO_HOST
+  TEACHER
+  STUDENT
+  PARTICIPANT
+  GUEST
+}
+
+enum ParticipantStatus {
+  INVITED
+  WAITING
+  ADMITTED
+  JOINED
+  LEFT
+  REMOVED
+  DENIED
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  REVOKED
+}
+
+enum RecordingStatus {
+  PENDING
+  RECORDING
+  PROCESSING
+  READY
+  FAILED
+  DELETED
+}
+
+enum TranscriptStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum ChatRoomType {
+  MEETING
+  CLASS
+  DIRECT
+  GROUP
+}
+
+enum CallType {
+  AUDIO
+  VIDEO
+}
+
+enum CallStatus {
+  RINGING
+  ONGOING
+  MISSED
+  DECLINED
+  ENDED
+  CANCELED
+}
+
+enum CallParticipantStatus {
+  INVITED
+  RINGING
+  JOINED
+  DECLINED
+  MISSED
+  LEFT
+}
+
+enum ClassStudentStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  PARTIAL
+  ABSENT
+}
+
+enum PollStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum QuizStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum NotificationType {
+  MEETING_INVITE
+  MEETING_REMINDER
+  CLASS_REMINDER
+  CALL_INCOMING
+  RECORDING_READY
+  CHAT_MESSAGE
+  WAITING_ROOM
+  SYSTEM
+}
+
+enum NotificationChannel {
+  PUSH
+  EMAIL
+  IN_APP
+}
+
+enum FileScope {
+  MEETING
+  CLASS
+  CHAT
+  PROFILE
+  ORG
+}
+
+enum VirusScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  SKIPPED
+  FAILED
+}
+
+// ------------------------------------------------------------------------------
+// Identity & Access
+// ------------------------------------------------------------------------------
+
+model User {
+  id              String     @id @default(uuid())
+  email           String     @unique
+  emailVerifiedAt DateTime?  @map("email_verified_at")
+  passwordHash    String?    @map("password_hash")
+  displayName     String     @map("display_name")
+  username        String     @unique
+  avatarUrl       String?    @map("avatar_url")
+  timezone        String     @default("UTC")
+  locale          String     @default("en")
+  systemRole      SystemRole @default(USER) @map("system_role")
+  status          UserStatus @default(ACTIVE)
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  deletedAt       DateTime?  @map("deleted_at")
+
+  identities            AuthIdentity[]
+  sessions              Session[]
+  devices               Device[]
+  memberships           Membership[]
+  ownedOrganizations     Organization[]        @relation("OrgOwner")
+  ownedMeetings         Meeting[]              @relation("MeetingOwner")
+  meetingParticipants   MeetingParticipant[]
+  sentInvites           MeetingInvite[]        @relation("InviteSender")
+  meetingEvents         MeetingEvent[]
+  startedRecordings     MeetingRecording[]
+  chatMemberships       ChatMember[]
+  sentChatMessages      ChatMessage[]          @relation("MessageSender")
+  chatReactions         ChatReaction[]
+  initiatedCalls        Call[]                 @relation("CallInitiator")
+  callParticipants      CallParticipant[]
+  taughtClasses         ClassTeacher[]
+  enrolledClasses       ClassStudent[]
+  attendanceRecords     Attendance[]
+  createdWhiteboards    Whiteboard[]
+  createdPolls          Poll[]
+  pollResponses         PollResponse[]
+  createdQuizzes        Quiz[]
+  quizAnswers           QuizAnswer[]
+  breakoutAssignments   BreakoutRoomAssignment[]
+  notifications         Notification[]
+  uploadedFiles         FileAsset[]
+  personalSubscription  Subscription?          @relation("PersonalSubscription")
+  auditLogs             AuditLog[]
+
+  @@map("users")
+}
+
+model AuthIdentity {
+  id                String           @id @default(uuid())
+  userId            String           @map("user_id")
+  provider          AuthProviderType
+  providerAccountId String           @map("provider_account_id")
+  createdAt         DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("auth_identities")
+}
+
+model Session {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  deviceId         String?   @map("device_id")
+  refreshTokenHash String    @map("refresh_token_hash")
+  replacedByTokenHash String? @map("replaced_by_token_hash")
+  userAgent        String?   @map("user_agent")
+  ip               String?
+  expiresAt        DateTime  @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  lastUsedAt       DateTime  @default(now()) @map("last_used_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device Device? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Device {
+  id          String     @id @default(uuid())
+  userId      String     @map("user_id")
+  type        DeviceType
+  pushToken   String?    @map("push_token")
+  platform    String?
+  appVersion  String?    @map("app_version")
+  lastSeenAt  DateTime   @default(now()) @map("last_seen_at")
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions Session[]
+
+  @@index([userId])
+  @@map("devices")
+}
+
+// ------------------------------------------------------------------------------
+// Organizations / Multi-tenancy
+// ------------------------------------------------------------------------------
+
+model Organization {
+  id                     String   @id @default(uuid())
+  name                   String
+  slug                   String   @unique
+  logoUrl                String?  @map("logo_url")
+  brandColor             String?  @map("brand_color")
+  ownerUserId            String   @map("owner_user_id")
+  plan                   SubscriptionPlan @default(FREE)
+  storageLimitBytes      BigInt   @default(10737418240) @map("storage_limit_bytes") // 10 GiB default
+  meetingConcurrencyLimit Int     @default(5) @map("meeting_concurrency_limit")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+  deletedAt              DateTime? @map("deleted_at")
+
+  owner        User          @relation("OrgOwner", fields: [ownerUserId], references: [id])
+  memberships  Membership[]
+  meetings     Meeting[]
+  classes      Class[]
+  files        FileAsset[]
+  subscription Subscription? @relation("OrgSubscription")
+  auditLogs    AuditLog[]
+
+  @@index([ownerUserId])
+  @@map("organizations")
+}
+
+model Membership {
+  id             String        @id @default(uuid())
+  orgId          String        @map("org_id")
+  userId         String        @map("user_id")
+  role           OrgRole       @default(MEMBER)
+  memberType     OrgMemberType? @map("member_type")
+  invitedByUserId String?      @map("invited_by_user_id")
+  joinedAt       DateTime      @default(now()) @map("joined_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model Subscription {
+  id                     String              @id @default(uuid())
+  orgId                  String?             @unique @map("org_id")
+  userId                 String?             @unique @map("user_id")
+  plan                   SubscriptionPlan
+  status                 SubscriptionStatus  @default(TRIALING)
+  seats                  Int?
+  currentPeriodStart     DateTime            @map("current_period_start")
+  currentPeriodEnd       DateTime            @map("current_period_end")
+  cancelAtPeriodEnd      Boolean             @default(false) @map("cancel_at_period_end")
+  provider               String              @default("stripe")
+  providerCustomerId     String?             @map("provider_customer_id")
+  providerSubscriptionId String?             @map("provider_subscription_id")
+  createdAt              DateTime            @default(now()) @map("created_at")
+  updatedAt              DateTime            @updatedAt @map("updated_at")
+
+  organization Organization? @relation("OrgSubscription", fields: [orgId], references: [id], onDelete: Cascade)
+  user         User?         @relation("PersonalSubscription", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+// ------------------------------------------------------------------------------
+// Meetings
+// ------------------------------------------------------------------------------
+
+model Meeting {
+  id                  String               @id @default(uuid())
+  code                String               @unique
+  title               String
+  type                MeetingType          @default(INSTANT)
+  status              MeetingStatus        @default(SCHEDULED)
+  ownerId             String               @map("owner_id")
+  orgId               String?              @map("org_id")
+  passwordHash        String?              @map("password_hash")
+  scheduledStart      DateTime?            @map("scheduled_start")
+  scheduledEnd        DateTime?            @map("scheduled_end")
+  actualStart         DateTime?            @map("actual_start")
+  actualEnd           DateTime?            @map("actual_end")
+  timezone            String               @default("UTC")
+  recurrenceFrequency RecurrenceFrequency? @map("recurrence_frequency")
+  recurrenceUntil     DateTime?            @map("recurrence_until")
+  parentMeetingId     String?              @map("parent_meeting_id")
+  livekitRoomName     String               @unique @map("livekit_room_name")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  deletedAt           DateTime?            @map("deleted_at")
+
+  owner          User                 @relation("MeetingOwner", fields: [ownerId], references: [id])
+  organization   Organization?        @relation(fields: [orgId], references: [id])
+  parentMeeting  Meeting?             @relation("RecurringInstances", fields: [parentMeetingId], references: [id])
+  childMeetings  Meeting[]            @relation("RecurringInstances")
+  settings       MeetingSettings?
+  participants   MeetingParticipant[]
+  invites        MeetingInvite[]
+  events         MeetingEvent[]
+  recordings     MeetingRecording[]
+  transcripts    MeetingTranscript[]
+  chatRoom       ChatRoom?
+  classSession   ClassSession?
+  whiteboards    Whiteboard[]
+  polls          Poll[]
+  quizzes        Quiz[]
+  breakoutRooms  BreakoutRoom[]
+  files          FileAsset[]
+
+  @@index([ownerId])
+  @@index([orgId])
+  @@index([status, scheduledStart])
+  @@map("meetings")
+}
+
+model MeetingSettings {
+  id                       String           @id @default(uuid())
+  meetingId                String           @unique @map("meeting_id")
+  waitingRoomEnabled       Boolean          @default(true) @map("waiting_room_enabled")
+  allowJoinBeforeHost      Boolean          @default(false) @map("allow_join_before_host")
+  muteOnEntry              Boolean          @default(true) @map("mute_on_entry")
+  screenShareScope         ScreenShareScope @default(HOST_ONLY) @map("screen_share_scope")
+  allowChat                Boolean          @default(true) @map("allow_chat")
+  allowRecording           Boolean          @default(true) @map("allow_recording")
+  allowParticipantsUnmuteSelf Boolean       @default(true) @map("allow_participants_unmute_self")
+  lockAfterStart           Boolean          @default(false) @map("lock_after_start")
+  maxParticipants          Int              @default(100) @map("max_participants")
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@map("meeting_settings")
+}
+
+model MeetingParticipant {
+  id              String            @id @default(uuid())
+  meetingId       String            @map("meeting_id")
+  userId          String?           @map("user_id")
+  guestName       String?           @map("guest_name")
+  role            ParticipantRole   @default(PARTICIPANT)
+  status          ParticipantStatus @default(INVITED)
+  livekitIdentity String            @unique @map("livekit_identity")
+  invitedByUserId String?           @map("invited_by_user_id")
+  joinedAt        DateTime?         @map("joined_at")
+  leftAt          DateTime?         @map("left_at")
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([meetingId, userId])
+  @@index([meetingId, status])
+  @@map("meeting_participants")
+}
+
+model MeetingInvite {
+  id              String       @id @default(uuid())
+  meetingId       String       @map("meeting_id")
+  email           String?
+  userId          String?      @map("user_id")
+  invitedByUserId String       @map("invited_by_user_id")
+  token           String       @unique
+  role            ParticipantRole @default(PARTICIPANT)
+  status          InviteStatus @default(PENDING)
+  expiresAt       DateTime     @map("expires_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  sender  User    @relation("InviteSender", fields: [invitedByUserId], references: [id])
+
+  @@index([meetingId])
+  @@index([email])
+  @@map("meeting_invites")
+}
+
+/// Append-only event log for a meeting; also the source data for attendance computation.
+model MeetingEvent {
+  id            String   @id @default(uuid())
+  meetingId     String   @map("meeting_id")
+  participantId String?  @map("participant_id")
+  userId        String?  @map("user_id")
+  type          String
+  metadata      Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([meetingId, type])
+  @@index([meetingId, createdAt])
+  @@map("meeting_events")
+}
+
+model MeetingRecording {
+  id                   String           @id @default(uuid())
+  meetingId            String           @map("meeting_id")
+  startedByUserId      String           @map("started_by_user_id")
+  status               RecordingStatus  @default(PENDING)
+  egressId             String?          @map("egress_id")
+  storageKey           String?          @map("storage_key")
+  format               String           @default("mp4")
+  durationSeconds      Int?             @map("duration_seconds")
+  sizeBytes            BigInt?          @map("size_bytes")
+  startedAt            DateTime         @default(now()) @map("started_at")
+  endedAt              DateTime?        @map("ended_at")
+  processingStartedAt  DateTime?        @map("processing_started_at")
+  readyAt              DateTime?        @map("ready_at")
+  expiresAt            DateTime?        @map("expires_at")
+  deletedAt            DateTime?        @map("deleted_at")
+  createdAt            DateTime         @default(now()) @map("created_at")
+
+  meeting     Meeting             @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  startedBy   User                @relation(fields: [startedByUserId], references: [id])
+  transcripts MeetingTranscript[]
+
+  @@index([meetingId])
+  @@index([status])
+  @@map("meeting_recordings")
+}
+
+model MeetingTranscript {
+  id          String            @id @default(uuid())
+  meetingId   String            @map("meeting_id")
+  recordingId String?           @map("recording_id")
+  provider    String
+  language    String            @default("en")
+  storageKey  String?           @map("storage_key")
+  status      TranscriptStatus  @default(PENDING)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  readyAt     DateTime?         @map("ready_at")
+
+  meeting   Meeting           @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  recording MeetingRecording? @relation(fields: [recordingId], references: [id], onDelete: SetNull)
+  segments  TranscriptSegment[]
+  summary   AiSummary?
+
+  @@index([meetingId])
+  @@map("meeting_transcripts")
+}
+
+model TranscriptSegment {
+  id           String   @id @default(uuid())
+  transcriptId String   @map("transcript_id")
+  speakerLabel String?  @map("speaker_label")
+  startMs      Int      @map("start_ms")
+  endMs        Int      @map("end_ms")
+  text         String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  transcript MeetingTranscript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+
+  @@index([transcriptId, startMs])
+  @@map("transcript_segments")
+}
+
+/// AI-generated meeting assistant output. Provider-agnostic — see packages for the AiProvider interface.
+model AiSummary {
+  id           String   @id @default(uuid())
+  transcriptId String   @unique @map("transcript_id")
+  summary      String
+  keyPoints    Json     @map("key_points")
+  actionItems  Json     @map("action_items")
+  decisions    Json
+  questions    Json
+  chapters     Json
+  provider     String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  transcript MeetingTranscript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+
+  @@map("ai_summaries")
+}
+
+// ------------------------------------------------------------------------------
+// Chat
+// ------------------------------------------------------------------------------
+
+model ChatRoom {
+  id        String       @id @default(uuid())
+  type      ChatRoomType
+  meetingId String?      @unique @map("meeting_id")
+  classId   String?      @unique @map("class_id")
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  meeting  Meeting?      @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  class    Class?        @relation(fields: [classId], references: [id], onDelete: Cascade)
+  members  ChatMember[]
+  messages ChatMessage[]
+
+  @@map("chat_rooms")
+}
+
+model ChatMember {
+  id                 String    @id @default(uuid())
+  chatRoomId         String    @map("chat_room_id")
+  userId             String    @map("user_id")
+  lastReadMessageId  String?   @map("last_read_message_id")
+  joinedAt           DateTime  @default(now()) @map("joined_at")
+
+  chatRoom ChatRoom @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatRoomId, userId])
+  @@map("chat_members")
+}
+
+model ChatMessage {
+  id          String   @id @default(uuid())
+  chatRoomId  String   @map("chat_room_id")
+  senderId    String?  @map("sender_id")
+  body        String?
+  replyToId   String?  @map("reply_to_id")
+  isPrivate   Boolean  @default(false) @map("is_private")
+  toUserId    String?  @map("to_user_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  editedAt    DateTime? @map("edited_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  chatRoom    ChatRoom        @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+  sender      User?           @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+  replyTo     ChatMessage?    @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies     ChatMessage[]   @relation("MessageReplies")
+  reactions   ChatReaction[]
+  attachments ChatAttachment[]
+
+  @@index([chatRoomId, createdAt])
+  @@map("chat_messages")
+}
+
+model ChatReaction {
+  id        String   @id @default(uuid())
+  messageId String   @map("message_id")
+  userId    String   @map("user_id")
+  emoji     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@map("chat_reactions")
+}
+
+model ChatAttachment {
+  id        String   @id @default(uuid())
+  messageId String   @map("message_id")
+  fileId    String   @map("file_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  file    FileAsset   @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@map("chat_attachments")
+}
+
+// ------------------------------------------------------------------------------
+// Calls (1:1 / group, personal calling)
+// ------------------------------------------------------------------------------
+
+model Call {
+  id              String     @id @default(uuid())
+  type            CallType
+  status          CallStatus @default(RINGING)
+  initiatorId     String     @map("initiator_id")
+  livekitRoomName String     @unique @map("livekit_room_name")
+  startedAt       DateTime?  @map("started_at")
+  endedAt         DateTime?  @map("ended_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+
+  initiator    User              @relation("CallInitiator", fields: [initiatorId], references: [id])
+  participants CallParticipant[]
+
+  @@index([initiatorId])
+  @@map("calls")
+}
+
+model CallParticipant {
+  id        String                 @id @default(uuid())
+  callId    String                 @map("call_id")
+  userId    String                 @map("user_id")
+  status    CallParticipantStatus  @default(INVITED)
+  joinedAt  DateTime?              @map("joined_at")
+  leftAt    DateTime?              @map("left_at")
+  createdAt DateTime               @default(now()) @map("created_at")
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([callId, userId])
+  @@map("call_participants")
+}
+
+// ------------------------------------------------------------------------------
+// Classroom
+// ------------------------------------------------------------------------------
+
+model Class {
+  id              String   @id @default(uuid())
+  orgId           String?  @map("org_id")
+  ownerTeacherId  String   @map("owner_teacher_id")
+  title           String
+  description     String?
+  subject         String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  organization Organization?  @relation(fields: [orgId], references: [id])
+  teachers     ClassTeacher[]
+  students     ClassStudent[]
+  sessions     ClassSession[]
+  chatRoom     ChatRoom?
+
+  @@index([orgId])
+  @@index([ownerTeacherId])
+  @@map("classes")
+}
+
+model ClassTeacher {
+  id      String   @id @default(uuid())
+  classId String   @map("class_id")
+  userId  String   @map("user_id")
+  addedAt DateTime @default(now()) @map("added_at")
+
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, userId])
+  @@map("class_teachers")
+}
+
+model ClassStudent {
+  id         String              @id @default(uuid())
+  classId    String              @map("class_id")
+  userId     String              @map("user_id")
+  status     ClassStudentStatus  @default(ACTIVE)
+  enrolledAt DateTime            @default(now()) @map("enrolled_at")
+
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, userId])
+  @@map("class_students")
+}
+
+model ClassSession {
+  id          String   @id @default(uuid())
+  classId     String   @map("class_id")
+  meetingId   String   @unique @map("meeting_id")
+  sessionDate DateTime @map("session_date")
+  title       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  class      Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
+  meeting    Meeting      @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  attendance Attendance[]
+
+  @@index([classId, sessionDate])
+  @@map("class_sessions")
+}
+
+model Attendance {
+  id              String            @id @default(uuid())
+  classSessionId  String            @map("class_session_id")
+  userId          String            @map("user_id")
+  joinedAt        DateTime?         @map("joined_at")
+  leftAt          DateTime?         @map("left_at")
+  durationSeconds Int               @default(0) @map("duration_seconds")
+  rejoinCount     Int               @default(0) @map("rejoin_count")
+  status          AttendanceStatus  @default(ABSENT)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  classSession ClassSession @relation(fields: [classSessionId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([classSessionId, userId])
+  @@map("attendance")
+}
+
+// ------------------------------------------------------------------------------
+// Whiteboard
+// ------------------------------------------------------------------------------
+
+model Whiteboard {
+  id              String   @id @default(uuid())
+  meetingId       String   @map("meeting_id")
+  createdByUserId String   @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  meeting   Meeting          @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  createdBy User             @relation(fields: [createdByUserId], references: [id])
+  pages     WhiteboardPage[]
+
+  @@index([meetingId])
+  @@map("whiteboards")
+}
+
+model WhiteboardPage {
+  id           String   @id @default(uuid())
+  whiteboardId String   @map("whiteboard_id")
+  index        Int
+  /// Serialized scene graph (strokes/shapes/text) for this page.
+  data         Json     @default("{}")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  whiteboard Whiteboard @relation(fields: [whiteboardId], references: [id], onDelete: Cascade)
+
+  @@unique([whiteboardId, index])
+  @@map("whiteboard_pages")
+}
+
+// ------------------------------------------------------------------------------
+// Polls & Quizzes
+// ------------------------------------------------------------------------------
+
+model Poll {
+  id                      String     @id @default(uuid())
+  meetingId               String     @map("meeting_id")
+  createdByUserId         String     @map("created_by_user_id")
+  question                String
+  isMultipleChoice        Boolean    @default(false) @map("is_multiple_choice")
+  showResultsToParticipants Boolean  @default(true) @map("show_results_to_participants")
+  timerSeconds            Int?       @map("timer_seconds")
+  status                  PollStatus @default(DRAFT)
+  createdAt               DateTime   @default(now()) @map("created_at")
+  closedAt                DateTime?  @map("closed_at")
+
+  meeting   Meeting        @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  createdBy User           @relation(fields: [createdByUserId], references: [id])
+  options   PollOption[]
+  responses PollResponse[]
+
+  @@index([meetingId])
+  @@map("polls")
+}
+
+model PollOption {
+  id     String @id @default(uuid())
+  pollId String @map("poll_id")
+  text   String
+  order  Int    @default(0)
+
+  poll      Poll           @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  responses PollResponse[]
+
+  @@map("poll_options")
+}
+
+model PollResponse {
+  id        String   @id @default(uuid())
+  pollId    String   @map("poll_id")
+  optionId  String   @map("option_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  poll   Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId, optionId])
+  @@map("poll_responses")
+}
+
+model Quiz {
+  id                String     @id @default(uuid())
+  meetingId         String     @map("meeting_id")
+  createdByUserId   String     @map("created_by_user_id")
+  title             String
+  status            QuizStatus @default(DRAFT)
+  createdAt         DateTime   @default(now()) @map("created_at")
+  closedAt          DateTime?  @map("closed_at")
+
+  meeting   Meeting        @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  createdBy User           @relation(fields: [createdByUserId], references: [id])
+  questions QuizQuestion[]
+
+  @@index([meetingId])
+  @@map("quizzes")
+}
+
+model QuizQuestion {
+  id            String @id @default(uuid())
+  quizId        String @map("quiz_id")
+  question      String
+  order         Int    @default(0)
+  points        Int    @default(1)
+  timerSeconds  Int?   @map("timer_seconds")
+
+  quiz    Quiz              @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  options QuizOption[]
+  answers QuizAnswer[]
+
+  @@map("quiz_questions")
+}
+
+model QuizOption {
+  id         String  @id @default(uuid())
+  questionId String  @map("question_id")
+  text       String
+  isCorrect  Boolean @default(false) @map("is_correct")
+  order      Int     @default(0)
+
+  question QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answers  QuizAnswer[]
+
+  @@map("quiz_options")
+}
+
+model QuizAnswer {
+  id               String   @id @default(uuid())
+  questionId       String   @map("question_id")
+  userId           String   @map("user_id")
+  selectedOptionId String?  @map("selected_option_id")
+  isCorrect        Boolean  @default(false) @map("is_correct")
+  pointsAwarded    Int      @default(0) @map("points_awarded")
+  answeredAt       DateTime @default(now()) @map("answered_at")
+
+  question       QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selectedOption QuizOption?  @relation(fields: [selectedOptionId], references: [id], onDelete: SetNull)
+
+  @@unique([questionId, userId])
+  @@map("quiz_answers")
+}
+
+// ------------------------------------------------------------------------------
+// Breakout Rooms
+// ------------------------------------------------------------------------------
+
+model BreakoutRoom {
+  id              String    @id @default(uuid())
+  meetingId       String    @map("meeting_id")
+  name            String
+  livekitRoomName String    @unique @map("livekit_room_name")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  closedAt        DateTime? @map("closed_at")
+
+  meeting     Meeting                  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  assignments BreakoutRoomAssignment[]
+
+  @@index([meetingId])
+  @@map("breakout_rooms")
+}
+
+model BreakoutRoomAssignment {
+  id             String   @id @default(uuid())
+  breakoutRoomId String   @map("breakout_room_id")
+  userId         String   @map("user_id")
+  assignedAt     DateTime @default(now()) @map("assigned_at")
+
+  breakoutRoom BreakoutRoom @relation(fields: [breakoutRoomId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([breakoutRoomId, userId])
+  @@map("breakout_room_assignments")
+}
+
+// ------------------------------------------------------------------------------
+// Notifications
+// ------------------------------------------------------------------------------
+
+model Notification {
+  id        String              @id @default(uuid())
+  userId    String              @map("user_id")
+  type      NotificationType
+  channel   NotificationChannel
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime?           @map("read_at")
+  sentAt    DateTime?           @map("sent_at")
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+// ------------------------------------------------------------------------------
+// Files
+// ------------------------------------------------------------------------------
+
+model FileAsset {
+  id              String          @id @default(uuid())
+  uploaderUserId  String          @map("uploader_user_id")
+  scope           FileScope
+  meetingId       String?         @map("meeting_id")
+  orgId           String?         @map("org_id")
+  storageKey      String          @unique @map("storage_key")
+  originalName    String          @map("original_name")
+  mimeType        String          @map("mime_type")
+  sizeBytes       BigInt          @map("size_bytes")
+  checksum        String?
+  virusScanStatus VirusScanStatus @default(PENDING) @map("virus_scan_status")
+  isPublic        Boolean         @default(false) @map("is_public")
+  expiresAt       DateTime?       @map("expires_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  deletedAt       DateTime?       @map("deleted_at")
+
+  uploader    User             @relation(fields: [uploaderUserId], references: [id])
+  meeting     Meeting?         @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  organization Organization?   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  chatAttachments ChatAttachment[]
+
+  @@index([meetingId])
+  @@index([uploaderUserId])
+  @@map("files")
+}
+
+// ------------------------------------------------------------------------------
+// Audit Log
+// ------------------------------------------------------------------------------
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorUserId  String?  @map("actor_user_id")
+  orgId        String?  @map("org_id")
+  action       String
+  targetType   String?  @map("target_type")
+  targetId     String?  @map("target_id")
+  ip           String?
+  userAgent    String?  @map("user_agent")
+  metadata     Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  actor        User?         @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
+}

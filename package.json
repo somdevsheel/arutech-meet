@@ -1,0 +1,32 @@
+{
+  "name": "arutech-meet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Arutech Meet - Production-grade video meetings, online classrooms & calling platform",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
+    "db:generate": "pnpm --filter @arutech/database exec prisma generate",
+    "db:migrate": "pnpm --filter @arutech/database exec prisma migrate dev",
+    "db:studio": "pnpm --filter @arutech/database exec prisma studio",
+    "db:seed": "pnpm --filter @arutech/database exec prisma db seed"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "prettier": "^3.4.2",
+    "eslint": "^8.57.1",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0"
+  }
+}

@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: #0b0f19;
+  color: #e6e9f0;
+}
+
+@layer components {
+  .input {
+    @apply w-full rounded-lg border border-surface-border bg-surface-raised px-4 py-2.5 text-sm text-white outline-none focus:border-brand-500;
+  }
+}

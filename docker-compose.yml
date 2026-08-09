@@ -1,0 +1,126 @@
+version: "3.9"
+
+# Local development stack. Not the production topology (see docs/deployment.md and
+# infrastructure/kubernetes for that) — this brings up every service the app needs
+# to run the full meeting loop on one machine: Postgres, Redis, MinIO (S3-compatible
+# object storage), the LiveKit SFU, and the API/Web apps themselves in dev mode.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arutech
+      POSTGRES_PASSWORD: arutech_dev_password
+      POSTGRES_DB: arutech_meet
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arutech"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: arutech_minio
+      MINIO_ROOT_PASSWORD: arutech_minio_secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 arutech_minio arutech_minio_secret &&
+      mc mb -p local/arutech-meet-dev &&
+      mc anonymous set download local/arutech-meet-dev
+      "
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881/tcp"
+      - "50000-50100:50000-50100/udp"
+    volumes:
+      - ./infrastructure/docker/livekit.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      - api
+
+  api:
+    image: node:20-alpine
+    working_dir: /workspace
+    command: sh -c "corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --frozen-lockfile=false && pnpm --filter @arutech/database exec prisma migrate deploy && pnpm --filter @arutech/api dev"
+    env_file:
+      - .env.development
+    environment:
+      DATABASE_URL: postgresql://arutech:arutech_dev_password@postgres:5432/arutech_meet?schema=public
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      LIVEKIT_URL: ws://localhost:7880
+      LIVEKIT_HTTP_URL: http://livekit:7880
+    ports:
+      - "4000:4000"
+    volumes:
+      - .:/workspace
+      - api_node_modules:/workspace/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    image: node:20-alpine
+    working_dir: /workspace
+    command: sh -c "corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --frozen-lockfile=false && pnpm --filter @arutech/web dev"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      NEXT_PUBLIC_WS_URL: ws://localhost:4000
+      NEXT_PUBLIC_LIVEKIT_URL: ws://localhost:7880
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/workspace
+      - web_node_modules:/workspace/node_modules
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  api_node_modules:
+  web_node_modules:
