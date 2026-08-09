@@ -6,9 +6,9 @@ Tracks staged delivery per `docs/architecture.md`. Update the status column as w
 |---|---|---|
 | 1 | Monorepo, TS/lint/format config, env files | ✅ Done |
 | 2 | Backend foundation: Postgres, Prisma schema, Redis, auth (JWT + refresh rotation), users, orgs, RBAC | ✅ Done |
-| 3 | Meeting engine: meeting CRUD, join flow, LiveKit token service, WebSocket gateway (chat/presence/moderation), participant management | 🔶 In progress |
-| 4 | Meeting UI (web): lobby/pre-join, meeting room, participant grid, controls, chat panel, screen share | 🔶 In progress |
-| 5 | Mobile (React Native): auth, meeting list, join, A/V, push notifications | ⏳ Not started |
+| 3 | Meeting engine: meeting CRUD, join flow, LiveKit token service, WebSocket gateway (chat/presence/moderation), participant management | ✅ Done |
+| 4 | Meeting UI (web): lobby/pre-join, meeting room, participant grid, controls, chat panel, screen share | ✅ Done |
+| 5 | Mobile (React Native): auth, meeting list, join, A/V, push notifications | 🔶 Core loop done (see apps/mobile/README.md for gaps: no live pre-join preview, no waiting-room live-admit, no screen share, push notifications architecture-only) |
 | 6 | Classroom: classes, attendance, whiteboard, polls, quizzes, breakout rooms | ⏳ Schema done, UI/API pending |
 | 7 | Recording: egress worker, S3/MinIO storage, playback | ⏳ Schema + interfaces done, worker pending |
 | 8 | AI assistant: transcription pipeline, summary/action items, pluggable provider | ⏳ Schema + interfaces done, pipeline pending |

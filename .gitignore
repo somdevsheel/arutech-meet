@@ -3,6 +3,7 @@ node_modules/
 .pnp
 .pnp.js
 .pnpm-store/
+.npm-cache/
 
 # Build outputs
 dist/
@@ -47,7 +48,10 @@ Thumbs.db
 apps/mobile/ios/Pods/
 apps/mobile/ios/build/
 apps/mobile/android/.gradle/
+apps/mobile/android/build/
 apps/mobile/android/app/build/
+apps/mobile/android/app/.cxx/
+apps/mobile/android/local.properties
 apps/mobile/.expo/
 
 # Docker volumes / local storage

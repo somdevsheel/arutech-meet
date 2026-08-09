@@ -55,7 +55,8 @@ the full rationale. Full documentation: `docs/architecture.md`, `docs/database.m
 | Layer | Choice |
 |---|---|
 | Web | Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS |
-| Media client | `livekit-client` + `@livekit/components-react` |
+| Mobile | React Native 0.86 (bare CLI, real Android/iOS native projects), TypeScript, React Navigation |
+| Media client | `livekit-client` + `@livekit/components-react` (web), `@livekit/react-native` (mobile) |
 | Backend | NestJS (TypeScript), REST + Swagger/OpenAPI, Socket.IO (Redis adapter) |
 | Database | PostgreSQL via Prisma |
 | Cache / realtime infra | Redis (sessions cache, presence, pub/sub, rate limiting — never the source of truth) |
@@ -69,6 +70,7 @@ the full rationale. Full documentation: `docs/architecture.md`, `docs/database.m
 arutech-meet/
 ├── apps/
 │   ├── web/            Next.js web client
+│   ├── mobile/          React Native app (bare CLI — real Android/iOS native projects)
 │   └── api/             NestJS API + WebSocket gateway + LiveKit integration
 ├── packages/
 │   ├── types/            Shared roles, capability matrix, WS event contracts
@@ -82,8 +84,8 @@ arutech-meet/
 └── docker-compose.yml      Local dev stack: Postgres, Redis, MinIO, LiveKit, api, web
 ```
 
-`apps/mobile` and `apps/admin` are on the roadmap (Stages 5 and 9) and not yet scaffolded — see
-`docs/roadmap.md` before assuming they exist.
+`apps/admin` is on the roadmap (Stage 9) and not yet scaffolded — see `docs/roadmap.md` before assuming
+it exists. `apps/mobile` has its own setup/testing notes and known gaps in `apps/mobile/README.md`.
 
 ## Local setup
 
