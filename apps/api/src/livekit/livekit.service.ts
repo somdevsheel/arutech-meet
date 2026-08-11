@@ -1,12 +1,26 @@
 import { Inject, Injectable, InternalServerErrorException, Logger } from "@nestjs/common";
 import {
   AccessToken,
+  EgressClient,
+  EncodedFileOutput,
+  EncodedFileType,
   RoomServiceClient,
+  S3Upload,
   TrackSource,
   WebhookReceiver,
+  type EgressInfo,
   type VideoGrant,
 } from "livekit-server-sdk";
 import type { Env } from "@arutech/config";
+
+export interface S3UploadConfig {
+  accessKey: string;
+  secret: string;
+  region: string;
+  endpoint: string;
+  bucket: string;
+  forcePathStyle: boolean;
+}
 
 export interface GrantOptions {
   roomName: string;
@@ -27,10 +41,16 @@ export interface GrantOptions {
 export class LiveKitService {
   private readonly logger = new Logger(LiveKitService.name);
   private readonly roomService: RoomServiceClient;
+  private readonly egressClient: EgressClient;
   private readonly webhookReceiver: WebhookReceiver;
 
   constructor(@Inject("ENV") private readonly env: Env) {
     this.roomService = new RoomServiceClient(
+      this.env.LIVEKIT_HTTP_URL,
+      this.env.LIVEKIT_API_KEY,
+      this.env.LIVEKIT_API_SECRET,
+    );
+    this.egressClient = new EgressClient(
       this.env.LIVEKIT_HTTP_URL,
       this.env.LIVEKIT_API_KEY,
       this.env.LIVEKIT_API_SECRET,
@@ -140,6 +160,37 @@ export class LiveKitService {
       // updated grant will apply on their next token issuance regardless.
       this.logger.debug(`updateParticipantPermissions(${roomName}, ${identity}): ${String(err)}`);
     }
+  }
+
+  /**
+   * Starts server-side recording via LiveKit's Egress service — a composited
+   * (all-participants-visible) MP4, uploaded directly from the egress worker to
+   * S3/MinIO (the API process never streams the file through itself). Egress is
+   * a separate service from livekit-server (see infrastructure/docker/egress.yaml
+   * and docs/webrtc.md) that does the actual FFmpeg encoding + upload; this call
+   * just requests the job and gets back an egressId to track via webhooks.
+   */
+  async startRoomRecording(roomName: string, filepath: string, s3: S3UploadConfig): Promise<EgressInfo> {
+    const output = new EncodedFileOutput({
+      fileType: EncodedFileType.MP4,
+      filepath,
+      output: {
+        case: "s3",
+        value: new S3Upload({
+          accessKey: s3.accessKey,
+          secret: s3.secret,
+          region: s3.region,
+          endpoint: s3.endpoint,
+          bucket: s3.bucket,
+          forcePathStyle: s3.forcePathStyle,
+        }),
+      },
+    });
+    return this.egressClient.startRoomCompositeEgress(roomName, output, { layout: "speaker" });
+  }
+
+  async stopEgress(egressId: string): Promise<EgressInfo> {
+    return this.egressClient.stopEgress(egressId);
   }
 
   /** Verifies a LiveKit webhook payload's Authorization header signature and parses it. */

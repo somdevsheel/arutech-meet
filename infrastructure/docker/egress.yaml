@@ -1,0 +1,18 @@
+# Local development config for LiveKit's Egress service — a SEPARATE service from
+# livekit-server (see docker-compose.yml) that performs the actual recording:
+# headless Chrome renders a composite layout of the room, FFmpeg encodes it, and
+# the result uploads directly to S3/MinIO. The API process is never in this path
+# (see LiveKitService.startRoomRecording in apps/api, which only requests the job).
+log_level: info
+
+api_key: devkey
+api_secret: change-me-livekit-secret-min-32-chars
+ws_url: ws://livekit:7880
+
+redis:
+  address: redis:6379
+
+# Local dev only — production egress should run with more headroom and, ideally,
+# dedicated nodes (headless Chrome + FFmpeg is CPU/memory heavy per concurrent
+# recording). See docs/deployment.md.
+max_concurrent_egress: 2

@@ -76,11 +76,21 @@ implementation.
 | `apps/api` (NestJS) | Auth, users, orgs, RBAC, meetings, classes, chat persistence, scheduling, notifications, admin, LiveKit token issuance, webhook ingestion from LiveKit | PostgreSQL (source of truth) |
 | WebSocket Gateway (within `apps/api`, horizontally scaled) | Chat delivery, presence, whiteboard sync, poll/quiz live updates, waiting-room events | Redis (pub/sub across instances) |
 | LiveKit SFU | Media routing, simulcast, active-speaker detection, room state | In-memory + its own Redis coordination |
-| `services/recording` (Egress worker) | Consumes LiveKit Egress webhooks/output, finalizes recordings, writes metadata | PostgreSQL (recording metadata), S3 (media) |
+| LiveKit Egress (separate container, `livekit/egress`) | Actual recording: headless Chrome + FFmpeg compositing, uploads to S3 | S3 (media) — no DB access |
+| `apps/api`'s `RecordingsEventsService` | Consumes LiveKit Egress webhooks, finalizes recording status/metadata (implemented here, not as a standalone `services/recording` worker — see note below) | PostgreSQL (recording metadata) |
 | `services/transcription` | Pulls recording audio, calls STT provider, produces transcript + AI summary via pluggable `AiProvider` | PostgreSQL |
 | `apps/web` (Next.js) | Web client | — |
 | `apps/mobile` (React Native) | iOS/Android client | — |
 | `apps/admin` | Admin dashboard (can also be a protected route set inside `apps/web`) | — |
+
+> **Note on `services/recording`**: earlier drafts of this document planned a standalone worker under
+> `services/recording` to consume egress output. In implementation, LiveKit's own Egress service already
+> does the heavy lifting (recording + upload), so the remaining work — reacting to its webhooks and
+> updating Postgres — is a thin enough slice that it lives inside `apps/api` as `RecordingsEventsService`
+> rather than as a second deployable. `services/recording/` remains an empty placeholder for if/when that
+> logic outgrows living in the API process (e.g. custom post-processing, watermarking, or a
+> transcription hand-off heavy enough to need its own scaling). See `docs/webrtc.md` §Recording and
+> `docs/roadmap.md` Stage 7.
 
 ## 5. Authentication & session model
 

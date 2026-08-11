@@ -8,6 +8,14 @@ rtc:
   port_range_end: 50100
   use_external_ip: false
 
+# Required for Egress (recording) coordination: the egress worker is a SEPARATE
+# service/container (see docker-compose.yml's `egress` service and egress.yaml)
+# that talks to livekit-server via Redis pub/sub, not directly — without this,
+# RoomCompositeEgress requests from the API (LiveKitService.startRoomRecording)
+# will queue forever with no worker able to pick them up. See docs/webrtc.md.
+redis:
+  address: redis:6379
+
 keys:
   devkey: change-me-livekit-secret-min-32-chars
 

@@ -24,6 +24,14 @@ export const envSchema = z.object({
   CORS_ORIGINS: z.string().default(""),
 
   S3_ENDPOINT: z.string().min(1),
+  // Browser-reachable endpoint for presigned URLs (download links, playback).
+  // Distinct from S3_ENDPOINT because in Docker Compose dev, the API/egress talk
+  // to MinIO over the internal Docker network (http://minio:9000), but a signed
+  // URL handed to a user's browser must use a host their machine can resolve
+  // (http://localhost:9000) — see apps/api/src/storage/storage.service.ts and
+  // docs/deployment.md. Falls back to S3_ENDPOINT when unset (the common case in
+  // production, where there's usually one publicly-routable S3/CDN endpoint).
+  S3_PUBLIC_ENDPOINT: z.string().optional(),
   S3_REGION: z.string().default("us-east-1"),
   S3_BUCKET: z.string().min(1),
   S3_ACCESS_KEY: z.string().min(1),

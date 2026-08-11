@@ -7,10 +7,13 @@ interface Props {
   onToggleChat: () => void;
   onToggleParticipants: () => void;
   onToggleTools: () => void;
+  onToggleRecordings: () => void;
   onLeave: () => void;
   chatOpen: boolean;
   participantsOpen: boolean;
   toolsOpen: boolean;
+  recordingsOpen: boolean;
+  isRecording: boolean;
   canShareScreen: boolean;
 }
 
@@ -21,10 +24,13 @@ export function MeetingToolbar({
   onToggleChat,
   onToggleParticipants,
   onToggleTools,
+  onToggleRecordings,
   onLeave,
   chatOpen,
   participantsOpen,
   toolsOpen,
+  recordingsOpen,
+  isRecording,
   canShareScreen,
 }: Props) {
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } =
@@ -71,6 +77,11 @@ export function MeetingToolbar({
       <ToolbarButton active={participantsOpen} onClick={onToggleParticipants} label="Participants" />
       <ToolbarButton active={chatOpen} onClick={onToggleChat} label="Chat" />
       <ToolbarButton active={toolsOpen} onClick={onToggleTools} label="Tools" />
+      <ToolbarButton
+        active={recordingsOpen}
+        onClick={onToggleRecordings}
+        label={isRecording ? "● Recording" : "Record"}
+      />
       <button
         onClick={onLeave}
         className="ml-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"

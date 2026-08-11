@@ -14,7 +14,8 @@ A production-grade video meeting, online classroom, and calling platform, built 
 Arutech Meet provides three experiences on one account, across web and native mobile:
 
 - **Meetings** — instant/scheduled/recurring video meetings with waiting room, chat, screen share,
-  recording (architecture in place), and centrally-enforced host/co-host controls.
+  recording (real LiveKit Egress → S3/MinIO, not a stub — see `docs/webrtc.md` §Recording), and
+  centrally-enforced host/co-host controls.
 - **Online classrooms** — teacher/student sessions built on the exact same meeting engine (a class
   session is just a `Meeting` of type `CLASS`), with real attendance tracking (derived from LiveKit
   presence events), a live synced whiteboard, polls, quizzes with leaderboards, and breakout rooms.
@@ -82,9 +83,9 @@ arutech-meet/
 │   └── database/         Prisma schema + client singleton
 ├── services/              Recording / transcription workers (staged — see roadmap)
 ├── infrastructure/
-│   └── docker/            Production Dockerfiles + local LiveKit config
+│   └── docker/            Production Dockerfiles + local LiveKit/Egress config
 ├── docs/                   Architecture, database, API, realtime, WebRTC, security, deployment, roadmap
-└── docker-compose.yml      Local dev stack: Postgres, Redis, MinIO, LiveKit, api, web
+└── docker-compose.yml      Local dev stack: Postgres, Redis, MinIO, LiveKit, Egress, api, web
 ```
 
 `apps/admin` is on the roadmap (Stage 9) and not yet scaffolded — see `docs/roadmap.md` before assuming
@@ -99,7 +100,8 @@ cp .env.example .env.development   # already provided; edit if you change ports/
 pnpm install
 pnpm db:generate
 
-# Start Postgres, Redis, MinIO, LiveKit, and both apps in dev mode:
+# Start Postgres, Redis, MinIO, LiveKit, the Egress recording worker, and both
+# apps in dev mode:
 docker compose up
 
 # In a separate shot, once Postgres is up, run migrations + seed data:

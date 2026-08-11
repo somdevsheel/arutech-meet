@@ -57,6 +57,19 @@ hold the corresponding capability from `packages/types/src/permissions.ts` — s
 (`WS_EVENTS.CHAT_MESSAGE`) — see `docs/realtime.md`; there is deliberately no REST "send message"
 endpoint since delivery must be realtime.
 
+## Recordings (`/meetings/:meetingId/recordings`)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/` | participant | metadata only — no download link |
+| POST | `/start` | owner/`recording.start` | requests a LiveKit Egress job; 400 if one is already running for this meeting |
+| POST | `/:recordingId/stop` | owner/`recording.stop` | flips status to `PROCESSING`; `READY` arrives later via webhook |
+| GET | `/:recordingId/download` | participant | short-lived (10 min) presigned S3 URL; 400 if not yet `READY` |
+| DELETE | `/:recordingId` | owner/`recording.delete` | deletes the S3 object too, not just the row |
+
+See `docs/webrtc.md` §Recording for the full Egress architecture (separate worker service, webhook-driven
+status transitions, the two-S3-endpoint split for presigned URLs).
+
 ## Classes (`/classes`)
 
 | Method | Path | Notes |
@@ -97,7 +110,7 @@ Server-to-server only, authenticated by LiveKit's webhook signature (not a user 
 
 ## Not yet exposed as REST (schema + service interfaces exist; see docs/roadmap.md)
 
-Recordings, transcripts/AI summary, notifications, admin dashboard endpoints. Building these out is the
-next roadmap stage, following the same pattern established here: Zod DTOs in `@arutech/validation`, a
-`PermissionService` capability check, Prisma access via `PrismaService`, realtime fan-out via
+Transcripts/AI summary, notifications listing/preferences, admin dashboard endpoints. Building these out
+is the next roadmap stage, following the same pattern established here: Zod DTOs in `@arutech/validation`,
+a `PermissionService` capability check, Prisma access via `PrismaService`, realtime fan-out via
 `RealtimeBroadcastService` where relevant.

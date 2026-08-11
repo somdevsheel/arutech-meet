@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LiveKitRoom } from "@livekit/components-react";
 import "@livekit/components-styles";
+import { WS_EVENTS } from "@arutech/types";
 import { VideoGrid } from "./video-grid";
 import { MeetingToolbar } from "./meeting-toolbar";
 import { ChatPanel } from "./chat-panel";
 import { ParticipantsPanel } from "./participants-panel";
 import { WaitingRoomPanel } from "./waiting-room-panel";
 import { ClassroomPanel } from "./classroom/classroom-panel";
+import { RecordingsPanel } from "./recordings-panel";
 import { useMeetingSocket } from "@/hooks/use-meeting-socket";
 import { apiFetch } from "@/lib/api-client";
 
@@ -48,6 +50,8 @@ export function MeetingRoom({
   const [chatOpen, setChatOpen] = useState(false);
   const [participantsOpen, setParticipantsOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [recordingsOpen, setRecordingsOpen] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const [conn, setConn] = useState<ActiveConnection>({ token, url: livekitUrl, label: null });
   const isModerator = MODERATOR_ROLES.has(role);
 
@@ -60,6 +64,28 @@ export function MeetingRoom({
     sendMessage,
     socket,
   } = useMeetingSocket(meetingId, accessToken);
+
+  // Reflects whether a recording is currently in progress in the toolbar badge —
+  // seeded from the actual recording list (in case one was already running before
+  // this client joined) and then kept live via the same broadcast events
+  // RecordingsPanel listens to.
+  useEffect(() => {
+    apiFetch<{ status: string }[]>(`/meetings/${meetingId}/recordings`)
+      .then((recordings) => setIsRecording(recordings.some((r) => r.status === "RECORDING")))
+      .catch(() => {});
+  }, [meetingId]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onStarted = () => setIsRecording(true);
+    const onStopped = () => setIsRecording(false);
+    socket.on(WS_EVENTS.RECORDING_STARTED, onStarted);
+    socket.on(WS_EVENTS.RECORDING_STOPPED, onStopped);
+    return () => {
+      socket.off(WS_EVENTS.RECORDING_STARTED, onStarted);
+      socket.off(WS_EVENTS.RECORDING_STOPPED, onStopped);
+    };
+  }, [socket]);
 
   if (meetingEnded) {
     return <EndedScreen onLeave={onLeave} />;
@@ -116,7 +142,7 @@ export function MeetingRoom({
           <VideoGrid />
         </div>
 
-        {(chatOpen || participantsOpen || toolsOpen) && (
+        {(chatOpen || participantsOpen || toolsOpen || recordingsOpen) && (
           <aside className="w-80 border-l border-surface-border bg-surface-raised">
             {chatOpen && (
               <ChatPanel messages={messages} onSend={sendMessage} currentUserId={userId} />
@@ -141,6 +167,9 @@ export function MeetingRoom({
                 inBreakoutRoom={Boolean(conn.label)}
               />
             )}
+            {recordingsOpen && (
+              <RecordingsPanel meetingId={meetingId} socket={socket} isModerator={isModerator} />
+            )}
           </aside>
         )}
       </div>
@@ -149,9 +178,12 @@ export function MeetingRoom({
         chatOpen={chatOpen}
         participantsOpen={participantsOpen}
         toolsOpen={toolsOpen}
+        recordingsOpen={recordingsOpen}
+        isRecording={isRecording}
         onToggleChat={() => setChatOpen((v) => !v)}
         onToggleParticipants={() => setParticipantsOpen((v) => !v)}
         onToggleTools={() => setToolsOpen((v) => !v)}
+        onToggleRecordings={() => setRecordingsOpen((v) => !v)}
         onLeave={onLeave}
         canShareScreen={true}
       />

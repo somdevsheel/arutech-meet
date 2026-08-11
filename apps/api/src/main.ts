@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import "./common/lib/bigint-json";
 import { NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";

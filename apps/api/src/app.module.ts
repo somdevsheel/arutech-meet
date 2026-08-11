@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { ScheduleModule } from "@nestjs/schedule";
 import { ConfigModule } from "./config/config.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
@@ -18,12 +19,14 @@ import { WhiteboardModule } from "./whiteboard/whiteboard.module";
 import { PollsModule } from "./polls/polls.module";
 import { QuizzesModule } from "./quizzes/quizzes.module";
 import { BreakoutRoomsModule } from "./breakout-rooms/breakout-rooms.module";
+import { RecordingsModule } from "./recordings/recordings.module";
 
 @Module({
   imports: [
     ConfigModule,
     PrismaModule,
     RedisModule,
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot({
       throttlers: [{ ttl: 60_000, limit: 100 }],
     }),
@@ -40,6 +43,7 @@ import { BreakoutRoomsModule } from "./breakout-rooms/breakout-rooms.module";
     PollsModule,
     QuizzesModule,
     BreakoutRoomsModule,
+    RecordingsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

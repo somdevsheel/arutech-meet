@@ -9,4 +9,5 @@ module.exports = {
   collectCoverageFrom: ["**/*.(t|j)s"],
   coverageDirectory: "../coverage",
   testEnvironment: "node",
+  setupFiles: ["<rootDir>/common/lib/bigint-json.ts"],
 };

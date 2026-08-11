@@ -79,6 +79,23 @@ services:
     depends_on:
       - api
 
+  # Recording worker (Stage 7). A separate service from `livekit` itself — see the
+  # comment in infrastructure/docker/egress.yaml. Needs --privileged (or at least
+  # SYS_ADMIN) because it runs headless Chrome for room-composite recording.
+  egress:
+    image: livekit/egress:latest
+    restart: unless-stopped
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    volumes:
+      - ./infrastructure/docker/egress.yaml:/etc/egress.yaml:ro
+    cap_add:
+      - SYS_ADMIN
+    depends_on:
+      - livekit
+      - redis
+      - minio
+
   api:
     image: node:20-alpine
     working_dir: /workspace
@@ -88,7 +105,12 @@ services:
     environment:
       DATABASE_URL: postgresql://arutech:arutech_dev_password@postgres:5432/arutech_meet?schema=public
       REDIS_URL: redis://redis:6379
+      # Internal Docker network endpoint — used for server-to-server calls
+      # (delete) and passed to the egress container as its upload destination.
       S3_ENDPOINT: http://minio:9000
+      # Browser-reachable endpoint — used only when signing download URLs handed
+      # to clients. See packages/config/src/env.ts and StorageService.
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
       LIVEKIT_URL: ws://localhost:7880
       LIVEKIT_HTTP_URL: http://livekit:7880
     ports:
