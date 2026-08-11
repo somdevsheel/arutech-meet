@@ -70,6 +70,11 @@ export default function DashboardPage() {
           <Link href="/classes" className="text-sm text-slate-400 hover:text-white">
             Classes
           </Link>
+          {user.systemRole === "ADMIN" && (
+            <Link href="/admin" className="text-sm text-slate-400 hover:text-white">
+              Admin
+            </Link>
+          )}
           <button
             onClick={() => {
               clear();

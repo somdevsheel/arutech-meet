@@ -4,10 +4,11 @@ A production-grade video meeting, online classroom, and calling platform, built 
 **Arutech Consultancy Services LLP**.
 
 > Status: active development. The core meeting loop (register → login → create meeting → join from a
-> second session → two-way audio/video → chat → screen share → host controls → leave/end) and the
-> classroom loop (class → session → attendance → whiteboard → poll → quiz → breakout rooms) are both
-> implemented end-to-end, on web; a React Native mobile app covers the meeting loop. See `docs/roadmap.md`
-> for exactly what's built vs. staged.
+> second session → two-way audio/video → chat → screen share → host controls → leave/end), the
+> classroom loop (class → session → attendance → whiteboard → poll → quiz → breakout rooms), recording
+> (real LiveKit Egress → S3/MinIO), and an admin dashboard are all implemented end-to-end on web; a React
+> Native mobile app covers the meeting loop. AI meeting assistant (transcription/summary) is deliberately
+> deferred — see `docs/roadmap.md` for exactly what's built vs. staged.
 
 ## Product overview
 
@@ -116,7 +117,8 @@ Then open:
 - MinIO console: http://localhost:9001 (`arutech_minio` / `arutech_minio_secret`)
 - LiveKit: ws://localhost:7880
 
-Seeded login: `owner@arutech.dev` / `Password123!` (see `packages/database/prisma/seed.ts`).
+Seeded login: `owner@arutech.dev` / `Password123!`, or `admin@arutech.dev` / `Password123!` for the admin
+dashboard at `/admin` (see `packages/database/prisma/seed.ts`).
 
 ### Running without Docker
 

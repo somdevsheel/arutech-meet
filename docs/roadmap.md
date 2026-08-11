@@ -11,8 +11,8 @@ Tracks staged delivery per `docs/architecture.md`. Update the status column as w
 | 5 | Mobile (React Native): auth, meeting list, join, A/V, push notifications | 🔶 Core loop done (see apps/mobile/README.md for gaps: no live pre-join preview, no waiting-room live-admit, no screen share, push notifications architecture-only) |
 | 6 | Classroom: classes, attendance, whiteboard, polls, quizzes, breakout rooms | ✅ Backend + web UI done (mobile classroom UI not yet built — see apps/mobile/README.md) |
 | 7 | Recording: egress worker, S3/MinIO storage, playback | ✅ Backend + web UI done (real LiveKit Egress integration; not end-to-end verified in this environment — see docs/webrtc.md §Recording) |
-| 8 | AI assistant: transcription pipeline, summary/action items, pluggable provider | ⏳ Schema + interfaces done, pipeline pending |
-| 9 | Admin dashboard | ⏳ Not started |
+| 8 | AI assistant: transcription pipeline, summary/action items, pluggable provider | ⏸️ Deliberately deferred (user decision) — schema (`meeting_transcripts`, `transcript_segments`, `ai_summaries`) and the "pluggable `AiProvider`, don't hardcode one vendor" architectural intent are in place; no pipeline code yet. Revisit as a future upgrade. |
+| 9 | Admin dashboard | ✅ Backend + web UI done — Users, Organizations, Meetings, Classes, Recordings, Audit Logs, dashboard stats, system health. "Reports" and a dedicated Abuse/Security moderation queue are not built (see note below); admin has no dedicated mobile UI. |
 | 10 | Production infra: k8s/Helm, Terraform, CI/CD, observability wiring | ⏳ Docker Compose done, rest pending |
 
 ## Definition of Done — core meeting loop (Stage 1-4 target)
@@ -61,4 +61,28 @@ API exactly and the business logic (guard against double-recording, disabled-rec
 only once `READY`) is unit tested (`recordings.service.spec.ts`), but actually starting a recording,
 watching it land in MinIO, and playing it back has not been exercised here — that's the natural next
 verification step, e.g. via `docker compose up`.
+
+## Admin dashboard (Stage 9)
+
+Gated end-to-end by `systemRole: ADMIN` (`SystemAdminGuard` on every `/admin/*` API route — see
+`docs/security.md`; the web app's `/admin` layout redirects non-admins as a UX nicety on top of that, not
+instead of it). `pnpm db:seed` creates `admin@arutech.dev` / `Password123!` for local testing.
+
+Implemented, backed by real queries (no placeholder numbers) — see `docs/api.md` §Admin:
+
+- **Dashboard stats**: total users, active sessions (30-day proxy for active users — see the caveat the
+  endpoint itself returns in its `notes` field), organizations, meetings today, live meetings now, classes
+  today, recording count/total storage.
+- **System health**: Postgres connectivity, API process uptime/memory, recent recording failures.
+- **Users**: search, suspend (also revokes all of that user's active sessions immediately, not just a
+  future-login block) / reactivate.
+- **Organizations, Meetings, Classes, Recordings**: read-only listing tables.
+- **Audit Logs**: reads from a previously-unused `audit_logs` table — nothing wrote to it before this
+  stage. Now populated for participant removal, co-host promotion, recording deletion, and admin user
+  suspend/activate (`AuditLogService`, deliberately wired into a handful of genuinely privileged actions
+  rather than every request, which would just be noise).
+
+**Deliberately not built**: bandwidth/packet-loss/jitter figures (need the Stage 10 observability stack,
+not just a DB query — the dashboard says so explicitly rather than showing a fake number), a dedicated
+"Reports" export UI, and an Abuse/Security moderation queue beyond what Users/suspend already covers.
 

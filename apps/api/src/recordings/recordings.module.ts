@@ -6,9 +6,10 @@ import { PermissionModule } from "../meetings/permission.module";
 import { LiveKitModule } from "../livekit/livekit.module";
 import { StorageModule } from "../storage/storage.module";
 import { RealtimeBroadcastModule } from "../realtime/realtime-broadcast.module";
+import { AuditLogModule } from "../audit/audit-log.module";
 
 @Module({
-  imports: [PermissionModule, LiveKitModule, StorageModule, RealtimeBroadcastModule],
+  imports: [PermissionModule, LiveKitModule, StorageModule, RealtimeBroadcastModule, AuditLogModule],
   controllers: [RecordingsController],
   providers: [RecordingsService, RecordingsCleanupService],
   exports: [RecordingsService],

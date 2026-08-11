@@ -12,6 +12,7 @@ import { LiveKitService } from "../livekit/livekit.service";
 import { StorageService } from "../storage/storage.service";
 import { PermissionService } from "../meetings/permission.service";
 import { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service";
+import { AuditLogService } from "../audit/audit-log.service";
 
 const RETENTION_DAYS = 90;
 
@@ -25,6 +26,7 @@ export class RecordingsService {
     private readonly storage: StorageService,
     private readonly permissions: PermissionService,
     private readonly broadcast: RealtimeBroadcastService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   async start(meetingId: string, callerUserId: string) {
@@ -116,6 +118,13 @@ export class RecordingsService {
     await this.prisma.client.meetingRecording.update({
       where: { id: recordingId },
       data: { status: "DELETED", deletedAt: new Date() },
+    });
+    await this.auditLog.record({
+      actorUserId: callerUserId,
+      action: "recording.delete",
+      targetType: "meeting_recording",
+      targetId: recordingId,
+      metadata: { meetingId },
     });
   }
 

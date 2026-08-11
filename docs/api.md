@@ -108,9 +108,23 @@ All of the above require the corresponding capability from `packages/types/src/p
 Server-to-server only, authenticated by LiveKit's webhook signature (not a user JWT) — see
 `apps/api/src/livekit/livekit-webhook.controller.ts` and `docs/webrtc.md`.
 
+## Admin (`/admin/*`) — requires `systemRole: ADMIN`
+
+Every route here is behind `SystemAdminGuard`, layered on top of the global `JwtAuthGuard` — a valid
+token from a non-admin user gets a 403, not a 404. See `docs/security.md` and `docs/roadmap.md` Stage 9.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/admin/stats` | dashboard counters (see the response's own `notes` field for what's a proxy metric vs. exact) |
+| GET | `/admin/system-health` | Postgres connectivity, API process uptime/memory, recent recording failures |
+| GET | `/admin/users?search=&take=&skip=` | paginated, searches email/displayName/username |
+| POST | `/admin/users/:id/suspend` / `/admin/users/:id/activate` | suspend also revokes all of that user's active sessions immediately |
+| GET | `/admin/organizations` \| `/admin/meetings?status=` \| `/admin/classes` \| `/admin/recordings` | read-only listings |
+| GET | `/admin/audit-logs` | reads `audit_logs`, written by `AuditLogService` — see `docs/security.md` for which actions are logged |
+
 ## Not yet exposed as REST (schema + service interfaces exist; see docs/roadmap.md)
 
-Transcripts/AI summary, notifications listing/preferences, admin dashboard endpoints. Building these out
-is the next roadmap stage, following the same pattern established here: Zod DTOs in `@arutech/validation`,
-a `PermissionService` capability check, Prisma access via `PrismaService`, realtime fan-out via
+Transcripts/AI summary (Stage 8, deliberately deferred) and notification listing/preferences. Building
+these out follows the same pattern established here: Zod DTOs in `@arutech/validation`, a
+`PermissionService` capability check, Prisma access via `PrismaService`, realtime fan-out via
 `RealtimeBroadcastService` where relevant.

@@ -34,6 +34,22 @@ async function main() {
     },
   });
 
+  // Platform-level admin (systemRole ADMIN) — distinct from an org OWNER, which
+  // only has authority within its own organization. Gates access to /admin in
+  // the web app and every /admin/* API route (SystemAdminGuard).
+  const admin = await prisma.user.upsert({
+    where: { email: "admin@arutech.dev" },
+    update: {},
+    create: {
+      email: "admin@arutech.dev",
+      username: "admin",
+      displayName: "Platform Admin",
+      passwordHash,
+      systemRole: "ADMIN",
+      emailVerifiedAt: new Date(),
+    },
+  });
+
   const org = await prisma.organization.upsert({
     where: { slug: "arutech-consultancy" },
     update: {},
@@ -51,8 +67,8 @@ async function main() {
     },
   });
 
-  console.log({ owner: owner.email, guest: guest.email, org: org.slug });
-  console.log("Seed complete. Login with owner@arutech.dev / Password123!");
+  console.log({ owner: owner.email, guest: guest.email, admin: admin.email, org: org.slug });
+  console.log("Seed complete. Login with owner@arutech.dev / Password123! (or admin@arutech.dev for /admin)");
 }
 
 main()

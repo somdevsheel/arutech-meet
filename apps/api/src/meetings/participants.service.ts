@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { LiveKitService } from "../livekit/livekit.service";
 import { PermissionService } from "./permission.service";
 import { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service";
+import { AuditLogService } from "../audit/audit-log.service";
 
 @Injectable()
 export class ParticipantsService {
@@ -12,6 +13,7 @@ export class ParticipantsService {
     private readonly liveKit: LiveKitService,
     private readonly permissions: PermissionService,
     private readonly broadcast: RealtimeBroadcastService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   async listWaitingRoom(meetingId: string, callerUserId: string) {
@@ -89,6 +91,13 @@ export class ParticipantsService {
       data: { status: "REMOVED", leftAt: new Date() },
     });
     await this.logEvent(meetingId, participantId, "MODERATION_REMOVE");
+    await this.auditLog.record({
+      actorUserId: callerUserId,
+      action: "participant.remove",
+      targetType: "meeting_participant",
+      targetId: participantId,
+      metadata: { meetingId, removedUserId: participant.userId },
+    });
     await this.broadcast.publish(meetingId, WS_EVENTS.MODERATION_REMOVE, { participantId });
   }
 
@@ -107,6 +116,13 @@ export class ParticipantsService {
       canPublishScreenShare: true,
     });
     await this.logEvent(meetingId, participantId, "MODERATION_PROMOTE_CO_HOST");
+    await this.auditLog.record({
+      actorUserId: callerUserId,
+      action: "participant.promote_co_host",
+      targetType: "meeting_participant",
+      targetId: participantId,
+      metadata: { meetingId, promotedUserId: participant.userId },
+    });
     await this.broadcast.publish(meetingId, WS_EVENTS.MODERATION_ROLE_CHANGE, {
       participantId,
       role: "CO_HOST",

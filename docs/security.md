@@ -19,7 +19,14 @@
 
 ## Authorization
 
-- **Org-level**: `memberships.role` (`OWNER`/`ADMIN`/`MEMBER`) — org/admin-dashboard/billing access.
+- **Platform-level**: `users.systemRole` (`USER`/`ADMIN`) — gates the entire `/admin/*` API surface via
+  `SystemAdminGuard` (`apps/api/src/common/guards/system-admin.guard.ts`), checked against the
+  `systemRole` claim embedded in the access token at login (see Authentication above — a role change
+  takes effect on that user's next token refresh, not instantly). This is a distinct, separate concept
+  from org-level `ADMIN` below: platform admin is "can use the Arutech Meet admin dashboard", org admin is
+  "can manage members within one specific organization". A user can be one, both, or neither.
+- **Org-level**: `memberships.role` (`OWNER`/`ADMIN`/`MEMBER`) — org membership/billing management scoped
+  to that organization only.
 - **Meeting-level**: `meeting_participants.role` against the capability matrix in
   `packages/types/src/permissions.ts` (`CAPABILITIES`, `ROLE_CAPABILITIES`, `can()`). This is the single
   definition of "what can role X do" — see `docs/architecture.md` §6.
@@ -34,6 +41,15 @@
   (`RoomServiceClient`) so the SFU itself stops the media, not just the UI. Promoted roles get a
   `roomAdmin` grant applied immediately via `updateParticipantPermissions`, not just on next token
   issuance.
+
+## Audit trail
+
+`audit_logs` is written by a single service (`AuditLogService`, `apps/api/src/audit/audit-log.service.ts`)
+called from the handful of actions that actually matter for a security review, not every request (which
+would just be noise an attacker's real action gets lost in): participant removal, co-host promotion,
+recording deletion, and admin-initiated user suspend/activate. Readable via `GET /admin/audit-logs`
+(platform-admin only). Extending coverage to more actions means calling `AuditLogService.record()` from
+that action's service, not building a second logging mechanism.
 
 ## Transport & headers
 

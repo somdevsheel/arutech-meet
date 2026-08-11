@@ -20,6 +20,7 @@ import { PollsModule } from "./polls/polls.module";
 import { QuizzesModule } from "./quizzes/quizzes.module";
 import { BreakoutRoomsModule } from "./breakout-rooms/breakout-rooms.module";
 import { RecordingsModule } from "./recordings/recordings.module";
+import { AdminModule } from "./admin/admin.module";
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { RecordingsModule } from "./recordings/recordings.module";
     QuizzesModule,
     BreakoutRoomsModule,
     RecordingsModule,
+    AdminModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

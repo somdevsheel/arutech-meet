@@ -5,6 +5,7 @@ import type { LiveKitService } from "../livekit/livekit.service";
 import type { StorageService } from "../storage/storage.service";
 import type { PermissionService } from "../meetings/permission.service";
 import type { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service";
+import type { AuditLogService } from "../audit/audit-log.service";
 
 function makeDeps(overrides?: {
   meeting?: Partial<{ id: string; livekitRoomName: string; settings: { allowRecording: boolean } | null }>;
@@ -46,14 +47,15 @@ function makeDeps(overrides?: {
   } as unknown as PermissionService;
 
   const broadcast = { publish: jest.fn() } as unknown as RealtimeBroadcastService;
+  const auditLog = { record: jest.fn() } as unknown as AuditLogService;
 
-  return { prisma, liveKit, storage, permissions, broadcast };
+  return { prisma, liveKit, storage, permissions, broadcast, auditLog };
 }
 
 describe("RecordingsService.start", () => {
   it("rejects when the meeting has recording disabled in its settings", async () => {
     const deps = makeDeps({ meeting: { settings: { allowRecording: false } } });
-    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast);
+    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast, deps.auditLog);
 
     await expect(service.start("meeting-1", "host-1")).rejects.toBeInstanceOf(ForbiddenException);
     expect(deps.liveKit.startRoomRecording).not.toHaveBeenCalled();
@@ -61,7 +63,7 @@ describe("RecordingsService.start", () => {
 
   it("rejects starting a second recording while one is already active", async () => {
     const deps = makeDeps({ existingActiveRecording: { id: "rec-existing", status: "RECORDING" } });
-    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast);
+    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast, deps.auditLog);
 
     await expect(service.start("meeting-1", "host-1")).rejects.toBeInstanceOf(BadRequestException);
     expect(deps.liveKit.startRoomRecording).not.toHaveBeenCalled();
@@ -69,7 +71,7 @@ describe("RecordingsService.start", () => {
 
   it("starts egress and persists a RECORDING row when allowed", async () => {
     const deps = makeDeps();
-    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast);
+    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast, deps.auditLog);
 
     const recording = await service.start("meeting-1", "host-1");
 
@@ -92,7 +94,7 @@ describe("RecordingsService.getDownloadUrl", () => {
       status: "PROCESSING",
       storageKey: "recordings/meeting-1/foo.mp4",
     });
-    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast);
+    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast, deps.auditLog);
 
     await expect(service.getDownloadUrl("meeting-1", "user-1", "rec-1")).rejects.toBeInstanceOf(
       BadRequestException,
@@ -108,7 +110,7 @@ describe("RecordingsService.getDownloadUrl", () => {
       status: "READY",
       storageKey: "recordings/meeting-1/foo.mp4",
     });
-    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast);
+    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast, deps.auditLog);
 
     const result = await service.getDownloadUrl("meeting-1", "user-1", "rec-1");
 
