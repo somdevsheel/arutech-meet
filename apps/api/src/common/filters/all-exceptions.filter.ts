@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { ZodError } from "zod";
+import { Sentry } from "../../observability/sentry";
 
 /**
  * Converts every thrown error into a structured, client-safe JSON error body.
@@ -40,10 +41,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
           ? body
           : ((body as { message?: string | string[] }).message ?? exception.message);
     } else if (exception instanceof Error) {
-      // Unexpected error: log full detail server-side, return a safe generic message.
+      // Unexpected (5xx-class) error: log full detail server-side, report it to
+      // Sentry (no-op if SENTRY_DSN isn't configured — see observability/sentry.ts),
+      // and return only a safe generic message to the client.
       this.logger.error(
         JSON.stringify({ requestId, message: exception.message, stack: exception.stack }),
       );
+      Sentry.captureException(exception, { tags: { requestId } });
     }
 
     response.status(status).json({

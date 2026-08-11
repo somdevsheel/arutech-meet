@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { MetricsService } from "../observability/metrics.service";
 
 /**
  * Standalone from RecordingsService (which needs LiveKit/Storage/Permissions —
@@ -12,7 +13,10 @@ import { PrismaService } from "../prisma/prisma.service";
 export class RecordingsEventsService {
   private readonly logger = new Logger(RecordingsEventsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly metrics: MetricsService,
+  ) {}
 
   /** Called by LiveKitWebhookController in response to egress_started/updated/ended —
    * this is how a recording actually transitions PROCESSING -> READY/FAILED, since
@@ -38,6 +42,10 @@ export class RecordingsEventsService {
         endedAt: status === "READY" || status === "FAILED" ? new Date() : undefined,
       },
     });
+
+    if (status === "FAILED") {
+      this.metrics.recordingFailuresTotal.inc();
+    }
 
     if (status === "READY") {
       await this.prisma.client.notification.create({

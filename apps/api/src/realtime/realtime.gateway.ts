@@ -19,6 +19,7 @@ import { TokenService } from "../common/lib/tokens";
 import { PermissionService } from "../meetings/permission.service";
 import { ChatService } from "../chat/chat.service";
 import { WsExceptionFilter } from "./ws-exception.filter";
+import { MetricsService } from "../observability/metrics.service";
 
 interface SocketData {
   userId: string;
@@ -50,6 +51,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly tokens: TokenService,
     private readonly permissions: PermissionService,
     private readonly chat: ChatService,
+    private readonly metrics: MetricsService,
     @Inject("REDIS") private readonly redis: Redis,
     @Inject("ENV") private readonly env: Env,
   ) {}
@@ -92,6 +94,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const payload = this.tokens.verifyAccessToken(token);
       const data: SocketData = { userId: payload.sub, email: payload.email };
       client.data = data;
+      this.metrics.websocketConnections.inc();
     } catch {
       client.emit(WS_EVENTS.ERROR, { message: "Invalid or expired token" });
       client.disconnect(true);
@@ -99,6 +102,14 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   }
 
   handleDisconnect(client: Socket) {
+    // Only decrement if this socket actually made it through auth (client.data
+    // is only ever populated on the success path in handleConnection) — a
+    // rejected/unauthenticated socket never incremented the gauge, so
+    // unconditionally decrementing here would drift it negative over time
+    // (e.g. under a stream of failed connection attempts).
+    if ((client.data as SocketData | undefined)?.userId) {
+      this.metrics.websocketConnections.dec();
+    }
     const meetingId = [...client.rooms].find((r) => r.startsWith("meeting:"))?.split(":")[1];
     if (meetingId) {
       this.server.to(meetingRoom(meetingId)).emit(WS_EVENTS.PARTICIPANT_LEFT, {

@@ -5,6 +5,17 @@
 
 generator client {
   provider = "prisma-client-js"
+  // "native" covers local dev (whatever OS this is generated on). The two
+  // Alpine/musl targets are for the Docker images (infrastructure/docker/*.Dockerfile,
+  // both FROM node:20-alpine): Prisma cannot reliably auto-detect which OpenSSL
+  // an Alpine base ships (see the "Defaulting to openssl-1.1.x" warning it prints
+  // when it guesses wrong) and downloads the wrong engine binary as a result —
+  // this was only caught by actually running the built image, not by review.
+  // Alpine 3.17+ (including the node:20-alpine tag in use here, Alpine 3.23)
+  // ships OpenSSL 3.x with no 1.1 compatibility package available, so
+  // `linux-musl-openssl-3.0.x` is the one that actually matches; the older
+  // `linux-musl` target is kept only in case a future base image reverts to 1.1.
+  binaryTargets = ["native", "linux-musl", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {

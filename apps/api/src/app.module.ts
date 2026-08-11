@@ -21,10 +21,14 @@ import { QuizzesModule } from "./quizzes/quizzes.module";
 import { BreakoutRoomsModule } from "./breakout-rooms/breakout-rooms.module";
 import { RecordingsModule } from "./recordings/recordings.module";
 import { AdminModule } from "./admin/admin.module";
+import { ObservabilityLoggingModule } from "./observability/logging.module";
+import { ObservabilityModule } from "./observability/observability.module";
 
 @Module({
   imports: [
     ConfigModule,
+    ObservabilityLoggingModule,
+    ObservabilityModule,
     PrismaModule,
     RedisModule,
     ScheduleModule.forRoot(),

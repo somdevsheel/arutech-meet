@@ -1,8 +1,15 @@
+// Must be the very first imports in the process — see the header comments in
+// each file for why (OTel patches modules at require-time; Sentry wants to be
+// initialized before anything that might throw).
+import "./observability/tracing";
+import "./observability/sentry";
+
 import "reflect-metadata";
 import "./common/lib/bigint-json";
 import { NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import { Logger } from "nestjs-pino";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { AppModule } from "./app.module";
@@ -13,10 +20,15 @@ import type { Env } from "@arutech/config";
 async function bootstrap() {
   // rawBody: true preserves the raw request buffer (req.rawBody) alongside the
   // parsed JSON body, needed to verify the LiveKit webhook's HMAC signature.
+  // bufferLogs: true holds log calls made during module initialization until
+  // app.useLogger() below swaps in the structured pino logger, so nothing is
+  // lost or printed in Nest's default (non-JSON) format before that happens.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
     rawBody: true,
   });
+  app.useLogger(app.get(Logger));
+
   const env = app.get<Env>("ENV");
 
   app.use(helmet());
@@ -33,7 +45,9 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
   app.useGlobalInterceptors(new RequestIdInterceptor());
 
-  app.setGlobalPrefix("api/v1", { exclude: ["health", "docs"] });
+  app.setGlobalPrefix("api/v1", { exclude: ["health", "metrics", "docs"] });
+
+  app.enableShutdownHooks();
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle("Arutech Meet API")
@@ -56,8 +70,10 @@ async function bootstrap() {
   SwaggerModule.setup("docs", app, document);
 
   await app.listen(env.API_PORT);
-  // eslint-disable-next-line no-console
-  console.log(`Arutech Meet API listening on :${env.API_PORT} (docs at /docs)`);
+  app.get(Logger).log(
+    { port: env.API_PORT },
+    "Arutech Meet API listening (docs at /docs, metrics at /metrics)",
+  );
 }
 
 bootstrap();

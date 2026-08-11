@@ -1,6 +1,7 @@
+# syntax=docker/dockerfile:1.7
+#
 # Build context MUST be the repo root:
 #   docker build -f infrastructure/docker/web.Dockerfile -t arutech-meet-web .
-syntax=docker/dockerfile:1.7
 
 FROM node:20-alpine AS base
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
@@ -23,7 +24,11 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
 COPY packages/types ./packages/types
 COPY packages/validation ./packages/validation
 COPY apps/web ./apps/web
-RUN pnpm --filter @arutech/web build
+# @arutech/types and @arutech/validation's package.json "main"/"types" point at
+# their compiled dist/ output (not raw .ts source — see the comment in
+# packages/types/package.json history / docs/deployment.md), so they must be
+# built before `next build` can resolve them, same as api.Dockerfile.
+RUN pnpm --filter "@arutech/web..." build
 
 FROM base AS runtime
 ENV NODE_ENV=production
