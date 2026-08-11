@@ -40,6 +40,17 @@ export class UsersService {
     });
   }
 
+  /** Used by class-enrollment UI (a teacher enters a student's email to find their
+   * userId) — deliberately returns only public-profile fields, same as findPublicProfile. */
+  async findByEmail(email: string) {
+    const user = await this.prisma.client.user.findUnique({
+      where: { email },
+      select: { id: true, displayName: true, username: true, avatarUrl: true },
+    });
+    if (!user) throw new NotFoundException("No user with that email");
+    return user;
+  }
+
   async listSessions(userId: string) {
     return this.prisma.client.session.findMany({
       where: { userId, revokedAt: null },

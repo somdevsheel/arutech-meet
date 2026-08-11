@@ -6,9 +6,11 @@ import { useState } from "react";
 interface Props {
   onToggleChat: () => void;
   onToggleParticipants: () => void;
+  onToggleTools: () => void;
   onLeave: () => void;
   chatOpen: boolean;
   participantsOpen: boolean;
+  toolsOpen: boolean;
   canShareScreen: boolean;
 }
 
@@ -18,9 +20,11 @@ interface Props {
 export function MeetingToolbar({
   onToggleChat,
   onToggleParticipants,
+  onToggleTools,
   onLeave,
   chatOpen,
   participantsOpen,
+  toolsOpen,
   canShareScreen,
 }: Props) {
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } =
@@ -66,6 +70,7 @@ export function MeetingToolbar({
       )}
       <ToolbarButton active={participantsOpen} onClick={onToggleParticipants} label="Participants" />
       <ToolbarButton active={chatOpen} onClick={onToggleChat} label="Chat" />
+      <ToolbarButton active={toolsOpen} onClick={onToggleTools} label="Tools" />
       <button
         onClick={onLeave}
         className="ml-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"

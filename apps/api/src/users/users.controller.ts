@@ -36,6 +36,11 @@ export class UsersController {
     return this.usersService.listSessions(user.id);
   }
 
+  @Get("by-email/:email")
+  findByEmail(@Param("email") email: string) {
+    return this.usersService.findByEmail(email);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.usersService.findPublicProfile(id);

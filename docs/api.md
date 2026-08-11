@@ -21,6 +21,7 @@ Base path: `/api/v1` (health check lives outside the prefix, at `/health`).
 |---|---|
 | GET / PATCH | `/users/me` |
 | GET | `/users/me/sessions` (active device/session list) |
+| GET | `/users/by-email/:email` (public-profile lookup — used by class enrollment UI) |
 | GET | `/users/:id` (public profile) |
 
 ## Organizations (`/organizations`)
@@ -56,6 +57,39 @@ hold the corresponding capability from `packages/types/src/permissions.ts` — s
 (`WS_EVENTS.CHAT_MESSAGE`) — see `docs/realtime.md`; there is deliberately no REST "send message"
 endpoint since delivery must be realtime.
 
+## Classes (`/classes`)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/classes` | creates a class; caller becomes its first teacher |
+| GET | `/classes` | classes I teach or am enrolled in |
+| GET / PATCH | `/classes/:id` | |
+| POST | `/classes/:id/teachers` | add a co-teacher (teacher-only) |
+| POST | `/classes/:id/students` | enroll a student by userId (teacher-only) |
+| DELETE | `/classes/:id/students/:studentUserId` | soft-removes enrollment |
+| POST | `/classes/:id/sessions` | starts a new session — creates a `Meeting` (`type: CLASS`) 1:1-linked via `class_sessions`, reusing the full meeting engine |
+| GET | `/classes/:id/sessions` | session history |
+
+## Attendance (`/class-sessions/:sessionId/attendance`)
+
+`POST /recompute` (teacher-only; derives attendance from the session's LiveKit presence events — see
+`docs/database.md` §Attendance computation), `GET /` (roster with status), `GET /export.csv`.
+
+## Whiteboard / Polls / Quizzes / Breakout rooms (all under `/meetings/:meetingId/...`)
+
+These are meeting-scoped, not class-scoped — any meeting host can use them, not just class teachers
+(feature parity by design, see `docs/roadmap.md` Stage 6 notes).
+
+| Feature | Endpoints |
+|---|---|
+| Whiteboard | `GET /whiteboard`, `POST /whiteboard/pages`, `POST /whiteboard/pages/save` — live stroke sync is WebSocket-only (`WS_EVENTS.WHITEBOARD_OP`), these are checkpoint/page-management only |
+| Polls | `GET /polls`, `POST /polls`, `POST /polls/:pollId/respond`, `POST /polls/:pollId/close` |
+| Quizzes | `GET /quizzes`, `POST /quizzes`, `POST /quizzes/:quizId/questions/:questionId/answer`, `POST /quizzes/:quizId/close` — correctness is withheld from the answer-key until a student answers or the quiz closes |
+| Breakout rooms | `GET /breakout-rooms`, `POST /breakout-rooms` (create + auto-assign), `POST /breakout-rooms/assign`, `POST /breakout-rooms/:id/token` (LiveKit token for that room), `POST /breakout-rooms/broadcast`, `POST /breakout-rooms/close-all` |
+
+All of the above require the corresponding capability from `packages/types/src/permissions.ts`
+(`whiteboard.edit`, `poll.create`/`poll.respond`, `quiz.create`/`quiz.answer`, `breakout.manage`).
+
 ## LiveKit webhook (`/livekit/webhook`)
 
 Server-to-server only, authenticated by LiveKit's webhook signature (not a user JWT) — see
@@ -63,7 +97,7 @@ Server-to-server only, authenticated by LiveKit's webhook signature (not a user 
 
 ## Not yet exposed as REST (schema + service interfaces exist; see docs/roadmap.md)
 
-Classes/attendance, whiteboard, polls, quizzes, breakout rooms, recordings, transcripts/AI summary,
-notifications, admin dashboard endpoints. Building these out is the next roadmap stage, following the
-same pattern established here: Zod DTOs in `@arutech/validation`, a `PermissionService` capability check,
-Prisma access via `PrismaService`, realtime fan-out via `RealtimeBroadcastService` where relevant.
+Recordings, transcripts/AI summary, notifications, admin dashboard endpoints. Building these out is the
+next roadmap stage, following the same pattern established here: Zod DTOs in `@arutech/validation`, a
+`PermissionService` capability check, Prisma access via `PrismaService`, realtime fan-out via
+`RealtimeBroadcastService` where relevant.

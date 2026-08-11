@@ -48,6 +48,15 @@ export const WS_EVENTS = {
   QUIZ_ANSWER: "quiz:answer",
   QUIZ_CLOSED: "quiz:closed",
 
+  // Breakout rooms
+  BREAKOUT_ROOMS_CREATED: "breakout:created",
+  BREAKOUT_ROOM_ASSIGNED: "breakout:assigned",
+  BREAKOUT_BROADCAST: "breakout:broadcast",
+  BREAKOUT_ROOMS_CLOSED: "breakout:closed",
+
+  // Attendance
+  ATTENDANCE_UPDATED: "attendance:updated",
+
   // Recording
   RECORDING_STARTED: "recording:started",
   RECORDING_STOPPED: "recording:stopped",
@@ -79,4 +88,15 @@ export interface ParticipantPresencePayload {
   cameraEnabled: boolean;
   isScreenSharing: boolean;
   handRaised: boolean;
+}
+
+export interface WhiteboardOpPayload {
+  meetingId: string;
+  pageIndex: number;
+  op: {
+    type: "stroke" | "shape" | "text" | "sticky-note" | "erase" | "clear";
+    id: string;
+    data: Record<string, unknown>;
+  };
+  fromUserId: string;
 }

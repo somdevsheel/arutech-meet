@@ -8,6 +8,7 @@ import { MeetingToolbar } from "./meeting-toolbar";
 import { ChatPanel } from "./chat-panel";
 import { ParticipantsPanel } from "./participants-panel";
 import { WaitingRoomPanel } from "./waiting-room-panel";
+import { ClassroomPanel } from "./classroom/classroom-panel";
 import { useMeetingSocket } from "@/hooks/use-meeting-socket";
 import { apiFetch } from "@/lib/api-client";
 
@@ -26,6 +27,12 @@ export interface MeetingRoomProps {
 
 const MODERATOR_ROLES = new Set(["OWNER", "HOST", "CO_HOST", "TEACHER"]);
 
+interface ActiveConnection {
+  token: string;
+  url: string;
+  label: string | null; // null = the main meeting room
+}
+
 export function MeetingRoom({
   meetingId,
   meetingCode,
@@ -40,6 +47,8 @@ export function MeetingRoom({
 }: MeetingRoomProps) {
   const [chatOpen, setChatOpen] = useState(false);
   const [participantsOpen, setParticipantsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [conn, setConn] = useState<ActiveConnection>({ token, url: livekitUrl, label: null });
   const isModerator = MODERATOR_ROLES.has(role);
 
   const {
@@ -49,6 +58,7 @@ export function MeetingRoom({
     meetingEnded,
     waitingRoomCount,
     sendMessage,
+    socket,
   } = useMeetingSocket(meetingId, accessToken);
 
   if (meetingEnded) {
@@ -65,32 +75,48 @@ export function MeetingRoom({
     });
   }
 
+  function joinBreakoutRoom(breakoutToken: string, breakoutUrl: string, label: string) {
+    setConn({ token: breakoutToken, url: breakoutUrl, label });
+  }
+
+  function returnToMain() {
+    setConn({ token, url: livekitUrl, label: null });
+  }
+
   return (
+    // `key` forces LiveKitRoom to fully unmount/remount (cleanly disconnecting
+    // from whichever LiveKit room it was in) whenever we switch between the main
+    // meeting and a breakout room — LiveKitRoom doesn't reconnect on its own if
+    // `token`/`serverUrl` change under it.
     <LiveKitRoom
-      token={token}
-      serverUrl={livekitUrl}
+      key={conn.label ?? "main"}
+      token={conn.token}
+      serverUrl={conn.url}
       connect
       video
       audio
-      onDisconnected={onLeave}
+      onDisconnected={conn.label ? returnToMain : onLeave}
       data-lk-theme="default"
       className="flex h-screen flex-col bg-surface"
     >
       <header className="flex items-center justify-between border-b border-surface-border px-4 py-3">
         <div>
           <h1 className="text-sm font-medium text-white">{title}</h1>
-          <p className="text-xs text-slate-500">Code: {meetingCode}</p>
+          <p className="text-xs text-slate-500">
+            Code: {meetingCode}
+            {conn.label && <span className="ml-2 text-amber-400">· In breakout: {conn.label}</span>}
+          </p>
         </div>
       </header>
 
-      {isModerator && <WaitingRoomPanel meetingId={meetingId} refreshSignal={waitingRoomCount} />}
+      {isModerator && !conn.label && <WaitingRoomPanel meetingId={meetingId} refreshSignal={waitingRoomCount} />}
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 p-3">
           <VideoGrid />
         </div>
 
-        {(chatOpen || participantsOpen) && (
+        {(chatOpen || participantsOpen || toolsOpen) && (
           <aside className="w-80 border-l border-surface-border bg-surface-raised">
             {chatOpen && (
               <ChatPanel messages={messages} onSend={sendMessage} currentUserId={userId} />
@@ -105,6 +131,16 @@ export function MeetingRoom({
                 onPromote={(id) => moderate("promote-co-host", id)}
               />
             )}
+            {toolsOpen && (
+              <ClassroomPanel
+                meetingId={meetingId}
+                socket={socket}
+                isModerator={isModerator}
+                onJoinBreakoutRoom={joinBreakoutRoom}
+                onReturnToMain={returnToMain}
+                inBreakoutRoom={Boolean(conn.label)}
+              />
+            )}
           </aside>
         )}
       </div>
@@ -112,8 +148,10 @@ export function MeetingRoom({
       <MeetingToolbar
         chatOpen={chatOpen}
         participantsOpen={participantsOpen}
+        toolsOpen={toolsOpen}
         onToggleChat={() => setChatOpen((v) => !v)}
         onToggleParticipants={() => setParticipantsOpen((v) => !v)}
+        onToggleTools={() => setToolsOpen((v) => !v)}
         onLeave={onLeave}
         canShareScreen={true}
       />

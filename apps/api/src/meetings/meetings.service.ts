@@ -172,6 +172,28 @@ export class MeetingsService {
     const isOwner = caller.userId === meeting.ownerId;
     let role: ParticipantRole = isOwner ? "HOST" : caller.userId ? "PARTICIPANT" : "GUEST";
 
+    // Class sessions assign TEACHER/STUDENT from the class roster instead of the
+    // generic HOST/PARTICIPANT default, so classroom capabilities (whiteboard,
+    // polls, quizzes, attendance) resolve correctly via the same capability
+    // matrix meetings already use — see packages/types/src/permissions.ts.
+    if (!isOwner && caller.userId) {
+      const classSession = await this.prisma.client.classSession.findUnique({
+        where: { meetingId: meeting.id },
+      });
+      if (classSession) {
+        const [isTeacher, isStudent] = await Promise.all([
+          this.prisma.client.classTeacher.findUnique({
+            where: { classId_userId: { classId: classSession.classId, userId: caller.userId } },
+          }),
+          this.prisma.client.classStudent.findUnique({
+            where: { classId_userId: { classId: classSession.classId, userId: caller.userId } },
+          }),
+        ]);
+        if (isTeacher) role = "TEACHER";
+        else if (isStudent) role = "STUDENT";
+      }
+    }
+
     // Existing participant reconnecting keeps their previously assigned role
     // (e.g. a promoted co-host doesn't get demoted just by refreshing the page).
     const existing = caller.userId
@@ -186,7 +208,11 @@ export class MeetingsService {
     }
 
     const requiresWaiting =
-      meeting.settings.waitingRoomEnabled && role !== "HOST" && role !== "CO_HOST" && !isOwner;
+      meeting.settings.waitingRoomEnabled &&
+      role !== "HOST" &&
+      role !== "CO_HOST" &&
+      role !== "TEACHER" &&
+      !isOwner;
     const status: "WAITING" | "ADMITTED" = requiresWaiting ? "WAITING" : "ADMITTED";
 
     const livekitIdentity = existing?.livekitIdentity ?? `${caller.userId ?? "guest"}-${nanoid(8)}`;

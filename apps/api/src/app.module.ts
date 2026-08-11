@@ -13,6 +13,11 @@ import { ChatModule } from "./chat/chat.module";
 import { RealtimeModule } from "./realtime/realtime.module";
 import { LiveKitModule } from "./livekit/livekit.module";
 import { HealthModule } from "./health/health.module";
+import { ClassesModule } from "./classes/classes.module";
+import { WhiteboardModule } from "./whiteboard/whiteboard.module";
+import { PollsModule } from "./polls/polls.module";
+import { QuizzesModule } from "./quizzes/quizzes.module";
+import { BreakoutRoomsModule } from "./breakout-rooms/breakout-rooms.module";
 
 @Module({
   imports: [
@@ -30,6 +35,11 @@ import { HealthModule } from "./health/health.module";
     RealtimeModule,
     LiveKitModule,
     HealthModule,
+    ClassesModule,
+    WhiteboardModule,
+    PollsModule,
+    QuizzesModule,
+    BreakoutRoomsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

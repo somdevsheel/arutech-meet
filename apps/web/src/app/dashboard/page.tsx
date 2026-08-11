@@ -66,15 +66,20 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-semibold text-white">Welcome, {user.displayName}</h1>
           <p className="text-sm text-slate-400">@{user.username}</p>
         </div>
-        <button
-          onClick={() => {
-            clear();
-            router.push("/");
-          }}
-          className="text-sm text-slate-400 hover:text-white"
-        >
-          Sign out
-        </button>
+        <div className="flex items-center gap-4">
+          <Link href="/classes" className="text-sm text-slate-400 hover:text-white">
+            Classes
+          </Link>
+          <button
+            onClick={() => {
+              clear();
+              router.push("/");
+            }}
+            className="text-sm text-slate-400 hover:text-white"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
 
       <div className="mb-10 flex gap-2 rounded-xl border border-surface-border bg-surface-raised p-4">

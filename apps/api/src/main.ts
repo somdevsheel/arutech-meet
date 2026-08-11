@@ -48,6 +48,7 @@ async function bootstrap() {
     .addTag("meetings/participants")
     .addTag("meetings/chat")
     .addTag("meetings/recordings")
+    .addTag("classes")
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup("docs", app, document);

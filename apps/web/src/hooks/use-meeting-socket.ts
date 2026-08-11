@@ -117,5 +117,10 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
     waitingRoomCount,
     sendMessage,
     raiseHand,
+    /** Escape hatch for feature panels (whiteboard, polls, quizzes, breakout
+     * rooms) that need their own event subscriptions without growing this hook
+     * indefinitely — see components/meeting/classroom/*. Always the same
+     * connection this hook manages; do not call .disconnect() on it directly. */
+    socket: socketRef.current,
   };
 }

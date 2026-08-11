@@ -13,7 +13,7 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import type Redis from "ioredis";
 import type { Server, Socket } from "socket.io";
 import { WS_EVENTS, type ParticipantPresencePayload } from "@arutech/types";
-import { sendChatMessageSchema } from "@arutech/validation";
+import { sendChatMessageSchema, whiteboardOpSchema } from "@arutech/validation";
 import type { Env } from "@arutech/config";
 import { TokenService } from "../common/lib/tokens";
 import { PermissionService } from "../meetings/permission.service";
@@ -193,6 +193,28 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   onHandLower(@ConnectedSocket() client: Socket, @MessageBody() body: { meetingId: string }) {
     this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.HAND_LOWER, {
       userId: (client.data as SocketData).userId,
+    });
+  }
+
+  /** Live stroke-by-stroke whiteboard sync. High-frequency and ephemeral by
+   * design — this does NOT persist to whiteboard_pages on every op (that would
+   * be a write per pen-move); the client periodically checkpoints the full page
+   * via POST /meetings/:id/whiteboard/pages/save instead (see WhiteboardService).
+   * The capability check still runs per-op so a participant without
+   * `whiteboard.edit` can't inject draw events even though this channel is
+   * otherwise fire-and-forget. */
+  @SubscribeMessage(WS_EVENTS.WHITEBOARD_OP)
+  async onWhiteboardOp(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: Record<string, unknown>,
+  ) {
+    const { userId } = client.data as SocketData;
+    const dto = whiteboardOpSchema.parse(body);
+    await this.permissions.requireCapability(dto.meetingId, userId, "whiteboard.edit");
+
+    client.to(meetingRoom(dto.meetingId)).emit(WS_EVENTS.WHITEBOARD_OP, {
+      ...dto,
+      fromUserId: userId,
     });
   }
 }

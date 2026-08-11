@@ -4,17 +4,20 @@ A production-grade video meeting, online classroom, and calling platform, built 
 **Arutech Consultancy Services LLP**.
 
 > Status: active development. The core meeting loop (register → login → create meeting → join from a
-> second session → two-way audio/video → chat → screen share → host controls → leave/end) is implemented
-> end-to-end. See `docs/roadmap.md` for what's built vs. staged.
+> second session → two-way audio/video → chat → screen share → host controls → leave/end) and the
+> classroom loop (class → session → attendance → whiteboard → poll → quiz → breakout rooms) are both
+> implemented end-to-end, on web; a React Native mobile app covers the meeting loop. See `docs/roadmap.md`
+> for exactly what's built vs. staged.
 
 ## Product overview
 
-Arutech Meet provides three experiences on one account, across web (and, per the roadmap, native mobile):
+Arutech Meet provides three experiences on one account, across web and native mobile:
 
 - **Meetings** — instant/scheduled/recurring video meetings with waiting room, chat, screen share,
   recording (architecture in place), and centrally-enforced host/co-host controls.
-- **Online classrooms** — teacher/student sessions with attendance, whiteboard, polls, quizzes, and
-  breakout rooms (schema + service interfaces in place; UI/API being built out per `docs/roadmap.md`).
+- **Online classrooms** — teacher/student sessions built on the exact same meeting engine (a class
+  session is just a `Meeting` of type `CLASS`), with real attendance tracking (derived from LiveKit
+  presence events), a live synced whiteboard, polls, quizzes with leaderboards, and breakout rooms.
 - **Calls** — 1:1 and group calling, sharing the same LiveKit-based media engine as meetings rather than a
   second, parallel implementation.
 
