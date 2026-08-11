@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "arutech-meet.fullname" . }}-web
+  labels:
+    {{- include "arutech-meet.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "arutech-meet.selectorLabels" (dict "Release" .Release "Chart" .Chart "component" "web") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP

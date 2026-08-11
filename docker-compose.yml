@@ -140,6 +140,23 @@ services:
     depends_on:
       - api
 
+  # Optional: fronts web+api behind the same reverse proxy config used in
+  # production (infrastructure/nginx/nginx.conf), useful for testing that
+  # config itself or for exercising the app the way it's actually reached in
+  # prod (single origin, /api/ prefix). Not started by a plain `docker compose
+  # up` — opt in with `docker compose --profile nginx up`.
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    profiles: ["nginx"]
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+      - web
+
 volumes:
   pgdata:
   redisdata:

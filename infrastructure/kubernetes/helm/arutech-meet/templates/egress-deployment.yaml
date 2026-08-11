@@ -1,0 +1,56 @@
+{{- if .Values.egress.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arutech-meet.fullname" . }}-egress
+  labels:
+    {{- include "arutech-meet.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.egress.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "arutech-meet.selectorLabels" (dict "Release" .Release "Chart" .Chart "component" "egress") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "arutech-meet.selectorLabels" (dict "Release" .Release "Chart" .Chart "component" "egress") | nindent 8 }}
+    spec:
+      containers:
+        - name: egress
+          image: {{ .Values.egress.image }}
+          env:
+            - name: EGRESS_CONFIG_FILE
+              value: /etc/egress.yaml
+          volumeMounts:
+            - name: config
+              mountPath: /etc/egress.yaml
+              subPath: egress.yaml
+          resources:
+            {{- toYaml .Values.egress.resources | nindent 12 }}
+          securityContext:
+            # Headless Chrome (room-composite recording) needs this — same
+            # requirement as the `cap_add: [SYS_ADMIN]` in docker-compose.yml's
+            # egress service.
+            capabilities:
+              add: ["SYS_ADMIN"]
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "arutech-meet.fullname" . }}-egress-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "arutech-meet.fullname" . }}-egress-config
+  labels:
+    {{- include "arutech-meet.labels" . | nindent 4 }}
+data:
+  egress.yaml: |
+    log_level: info
+    api_key: {{ .Values.secrets.livekitApiKey | quote }}
+    api_secret: {{ .Values.secrets.livekitApiSecret | quote }}
+    ws_url: {{ .Values.secrets.livekitUrl | quote }}
+    redis:
+      address: {{ .Values.livekit.redisAddress | default "REPLACE_ME:6379" | quote }}
+    max_concurrent_egress: 4
+{{- end }}

@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "arutech-meet.fullname" . }}-config
+  labels:
+    {{- include "arutech-meet.labels" . | nindent 4 }}
+data:
+  NODE_ENV: {{ .Values.config.nodeEnv | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  API_PORT: {{ .Values.api.port | quote }}
+  API_URL: "https://{{ .Values.ingress.host }}/api"
+  WEB_URL: "https://{{ .Values.ingress.host }}"
+  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  S3_REGION: {{ .Values.config.s3Region | quote }}
+  S3_BUCKET: {{ .Values.config.s3Bucket | quote }}
+  S3_FORCE_PATH_STYLE: {{ .Values.config.s3ForcePathStyle | quote }}
+  JWT_ACCESS_EXPIRES_IN: {{ .Values.config.jwtAccessExpiresIn | quote }}
+  JWT_REFRESH_EXPIRES_IN: {{ .Values.config.jwtRefreshExpiresIn | quote }}
+  RATE_LIMIT_WINDOW_MS: {{ .Values.config.rateLimitWindowMs | quote }}
+  RATE_LIMIT_MAX: {{ .Values.config.rateLimitMax | quote }}
+  # NEXT_PUBLIC_* below are set here for reference/consistency only — Next.js
+  # inlines NEXT_PUBLIC_* variables into the client JS bundle at `next build`
+  # time (web.Dockerfile's build stage takes them as --build-arg), NOT read
+  # from the environment at container start. Setting them in this ConfigMap
+  # does not change already-built pods; the web image must be (re)built with
+  # matching --build-arg values for a given environment. This is a real,
+  # easy-to-hit Next.js + Kubernetes footgun, documented here rather than
+  # silently left for someone to discover the hard way.
+  NEXT_PUBLIC_API_URL: "https://{{ .Values.ingress.host }}/api"
+  NEXT_PUBLIC_WS_URL: "wss://{{ .Values.ingress.host }}"
+  NEXT_PUBLIC_LIVEKIT_URL: "wss://livekit.{{ .Values.ingress.host }}"

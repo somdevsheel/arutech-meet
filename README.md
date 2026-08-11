@@ -7,7 +7,9 @@ A production-grade video meeting, online classroom, and calling platform, built 
 > second session → two-way audio/video → chat → screen share → host controls → leave/end), the
 > classroom loop (class → session → attendance → whiteboard → poll → quiz → breakout rooms), recording
 > (real LiveKit Egress → S3/MinIO), and an admin dashboard are all implemented end-to-end on web; a React
-> Native mobile app covers the meeting loop. AI meeting assistant (transcription/summary) is deliberately
+> Native mobile app covers the meeting loop. Production infrastructure (observability, NGINX, Kubernetes/
+> Helm, Terraform, CI/CD image builds) is in place and validated with each tool's own real
+> checker — see `docs/deployment.md`. AI meeting assistant (transcription/summary) is deliberately
 > deferred — see `docs/roadmap.md` for exactly what's built vs. staged.
 
 ## Product overview
@@ -82,15 +84,20 @@ arutech-meet/
 │   ├── validation/       Shared Zod DTOs (client + server)
 │   ├── config/           Validated env schema
 │   └── database/         Prisma schema + client singleton
-├── services/              Recording / transcription workers (staged — see roadmap)
+├── services/              Transcription worker (staged — see roadmap; recording uses LiveKit's own
+│                           Egress service instead of a custom services/recording worker, see docs/architecture.md §4)
 ├── infrastructure/
-│   └── docker/            Production Dockerfiles + local LiveKit/Egress config
+│   ├── docker/            Production Dockerfiles + local LiveKit/Egress config
+│   ├── nginx/              Reverse proxy config (validated with `nginx -t`)
+│   ├── kubernetes/helm/    Helm chart for api/web/LiveKit/Egress (validated with `helm lint`/`template`)
+│   └── terraform/          AWS reference infra: VPC/EKS/RDS/ElastiCache/S3 (validated with `terraform validate`)
 ├── docs/                   Architecture, database, API, realtime, WebRTC, security, deployment, roadmap
-└── docker-compose.yml      Local dev stack: Postgres, Redis, MinIO, LiveKit, Egress, api, web
+└── docker-compose.yml      Local dev stack: Postgres, Redis, MinIO, LiveKit, Egress, api, web, optional nginx
 ```
 
-`apps/admin` is on the roadmap (Stage 9) and not yet scaffolded — see `docs/roadmap.md` before assuming
-it exists. `apps/mobile` has its own setup/testing notes and known gaps in `apps/mobile/README.md`.
+The admin dashboard is a protected route set inside `apps/web` (`/admin`), not a separate `apps/admin` —
+see `docs/roadmap.md` Stage 9. `apps/mobile` has its own setup/testing notes and known gaps in
+`apps/mobile/README.md`.
 
 ## Local setup
 
@@ -147,9 +154,12 @@ are on the roadmap.
 
 ## Deployment
 
-See `docs/deployment.md` for the production topology, Dockerfiles (`infrastructure/docker/`), and CI
-(`.github/workflows/ci.yml`). Kubernetes/Terraform manifests are not yet implemented (Stage 10 in
-`docs/roadmap.md`).
+See `docs/deployment.md` for the full production topology: Dockerfiles (`infrastructure/docker/`), a
+reverse-proxy config (`infrastructure/nginx/`), a Helm chart (`infrastructure/kubernetes/helm/`), an AWS
+Terraform reference (`infrastructure/terraform/`), and CI (`.github/workflows/ci.yml`, which builds and
+Trivy-scans both Docker images on every PR). Every one of those was validated with its own real tool
+(`docker build` + container boot, `nginx -t`, `helm lint`/`template`, `terraform validate`) — see
+`docs/roadmap.md` Stage 10 for exactly what was and wasn't exercised end-to-end.
 
 ## Security
 

@@ -1,0 +1,29 @@
+Arutech Meet has been deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+  Web:      https://{{ .Values.ingress.host }}
+  API docs: https://{{ .Values.ingress.host }}/docs
+  Health:   https://{{ .Values.ingress.host }}/health
+
+Before this is actually usable:
+
+  1. Replace every "REPLACE_ME" in your values file (secrets.*, livekit.redisAddress)
+     with real values — see values.yaml's comments. Prefer passing them via
+     --set-string / an external secrets operator over editing values.yaml directly.
+  2. Point DNS for {{ .Values.ingress.host }} at your ingress controller's LB.
+  3. If ingress.tls.enabled, make sure cert-manager (or your TLS solution) is
+     installed and can issue for that host.
+  4. Rebuild the web image with --build-arg NEXT_PUBLIC_API_URL/NEXT_PUBLIC_WS_URL/
+     NEXT_PUBLIC_LIVEKIT_URL matching this environment — the ConfigMap's
+     NEXT_PUBLIC_* entries are for reference only and do NOT affect an
+     already-built image (see configmap.yaml's comment).
+  5. Run database migrations before traffic hits the new api pods:
+       kubectl run -it --rm migrate --image={{ .Values.image.registry }}/{{ .Values.image.apiRepository }}:{{ .Values.image.tag }} \
+         --env="DATABASE_URL=<...>" --restart=Never -- \
+         node_modules/.bin/prisma migrate deploy --schema=packages/database/prisma/schema.prisma
+     (This chart does not run migrations automatically — see docs/deployment.md
+     for why applying migrations is treated as its own deploy step, not baked
+     into the api container's startup command.)
+
+Not deployed by this chart (see docs/deployment.md and Chart.yaml): PostgreSQL,
+Redis, and S3 — bring your own managed instances and populate secrets.databaseUrl
+/ redisUrl / s3*.

@@ -1,0 +1,13 @@
+apiVersion: v2
+name: arutech-meet
+description: >-
+  Arutech Meet — video meetings, online classrooms, and calling platform.
+  Deploys the api and web tiers plus LiveKit SFU + Egress recording worker.
+  PostgreSQL, Redis, and S3 are expected to be managed/external services in
+  production (see docs/deployment.md) — this chart does not deploy them.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/arutech/arutech-meet
+maintainers:
+  - name: Arutech Consultancy Services LLP

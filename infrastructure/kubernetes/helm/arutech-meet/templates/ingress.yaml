@@ -1,0 +1,62 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "arutech-meet.fullname" . }}
+  labels:
+    {{- include "arutech-meet.labels" . | nindent 4 }}
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.ingress.className }}
+    # Socket.IO connections are long-lived — the default ingress-nginx proxy
+    # timeouts (60s) would silently kill idle-but-alive chat/presence sockets.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    {{- if .Values.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "arutech-meet.fullname" . }}-api
+                port: { number: 80 }
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "arutech-meet.fullname" . }}-api
+                port: { number: 80 }
+          - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "arutech-meet.fullname" . }}-api
+                port: { number: 80 }
+          - path: /socket.io
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "arutech-meet.fullname" . }}-api
+                port: { number: 80 }
+          # Deliberately no /metrics rule here — that endpoint should be
+          # scraped in-cluster (Prometheus, via the pod annotations on the api
+          # Deployment) rather than exposed through the public ingress.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "arutech-meet.fullname" . }}-web
+                port: { number: 80 }
+{{- end }}

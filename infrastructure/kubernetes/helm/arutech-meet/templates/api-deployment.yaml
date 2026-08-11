@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arutech-meet.fullname" . }}-api
+  labels:
+    {{- include "arutech-meet.labels" . | nindent 4 }}
+    {{- include "arutech-meet.selectorLabels" (dict "Release" .Release "Chart" .Chart "component" "api") | nindent 4 }}
+spec:
+  # Not set explicitly when autoscaling.enabled — the HPA (api-hpa.yaml) owns
+  # replica count in that case, and a static `replicas:` here would fight it
+  # (Helm re-asserting the initial count on every upgrade).
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "arutech-meet.selectorLabels" (dict "Release" .Release "Chart" .Chart "component" "api") | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # never drop below desired capacity mid-rollout — meetings are in progress
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "arutech-meet.selectorLabels" (dict "Release" .Release "Chart" .Chart "component" "api") | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.api.port | quote }}
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 30 # gives enableShutdownHooks() (apps/api/src/main.ts) time to drain
+      containers:
+        - name: api
+          image: "{{ .Values.image.registry }}/{{ .Values.image.apiRepository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "arutech-meet.fullname" . }}-config
+            - secretRef:
+                name: {{ include "arutech-meet.fullname" . }}-secrets
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.api.probes.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.api.probes.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.probes.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.api.probes.path }}
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false # pino/nest may write temp files; tighten further per-environment if needed

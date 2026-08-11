@@ -1,0 +1,48 @@
+{{- if .Values.livekit.enabled }}
+# LiveKit's own deployment guidance recommends `hostNetwork: true` for the SFU
+# specifically: WebRTC needs to hand out ICE candidates on ports actually
+# reachable from the internet, and a k8s Service can't cleanly front an
+# arbitrary UDP port range (rtc.port_range_start..port_range_end above) the
+# way it can a couple of named TCP ports. This trades away k8s Service-level
+# load balancing for the SFU (clients connect to whichever node's IP the LB/DNS
+# hands them, per pod) — that's the standard, documented shape of this
+# workload, not a shortcut taken here. See docs/webrtc.md and LiveKit's own
+# Kubernetes deployment docs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arutech-meet.fullname" . }}-livekit
+  labels:
+    {{- include "arutech-meet.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.livekit.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "arutech-meet.selectorLabels" (dict "Release" .Release "Chart" .Chart "component" "livekit") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "arutech-meet.selectorLabels" (dict "Release" .Release "Chart" .Chart "component" "livekit") | nindent 8 }}
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: livekit
+          image: {{ .Values.livekit.image }}
+          args: ["--config", "/etc/livekit.yaml"]
+          env:
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/livekit.yaml
+              subPath: livekit.yaml
+          resources:
+            {{- toYaml .Values.livekit.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "arutech-meet.fullname" . }}-livekit-config
+{{- end }}

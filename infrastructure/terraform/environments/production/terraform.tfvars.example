@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars (gitignored) and adjust for your account/region.
+aws_region         = "us-east-1"
+environment        = "production"
+availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+db_instance_class = "db.t4g.medium"
+db_multi_az       = true
+
+redis_node_type          = "cache.t4g.medium"
+redis_num_cache_clusters = 2
+
+eks_node_desired_size = 3
+eks_node_min_size     = 3
+eks_node_max_size     = 15

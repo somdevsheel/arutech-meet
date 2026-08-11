@@ -14,6 +14,7 @@ env:
   API_URL: http://localhost:4000
   WEB_URL: http://localhost:3000
   S3_ENDPOINT: http://localhost:9000
+  S3_PUBLIC_ENDPOINT: http://localhost:9000
   S3_BUCKET: arutech-meet-ci
   S3_ACCESS_KEY: ci
   S3_SECRET_KEY: ci-secret
@@ -74,3 +75,116 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Dependency vulnerability audit
+        run: pnpm audit --audit-level=high || true
+        # Report-only (`|| true`) for now — enforcing a hard fail on every
+        # transitive dependency advisory across a workspace this size needs a
+        # triage/allowlist pass first, or CI would be red on day one for
+        # things unrelated to this PR's actual change.
+
+  # Builds both production Docker images on every PR (no push — that only
+  # happens from the `deploy` job below, on main). This exists specifically
+  # because `pnpm build` succeeding does NOT mean the Docker image works: an
+  # earlier version of this repo had `pnpm build` green while the actual
+  # container crashed on boot (packages/*'s package.json pointed "main" at
+  # uncompiled .ts source, a malformed `# syntax=` directive, a broken pnpm
+  # --filter expression, and a missing OpenSSL lib under Alpine — see the
+  # Stage 10 commit history / docs/deployment.md). None of those would have
+  # been caught without actually building the image, so this job exists to
+  # make sure they can't silently come back.
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/api.Dockerfile
+          push: false
+          tags: arutech-meet-api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/web.Dockerfile
+          push: false
+          tags: arutech-meet-web:ci
+          build-args: |
+            NEXT_PUBLIC_API_URL=https://api.arutech.example.com
+            NEXT_PUBLIC_WS_URL=wss://api.arutech.example.com
+            NEXT_PUBLIC_LIVEKIT_URL=wss://livekit.arutech.example.com
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+      - name: Scan API image for known vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: arutech-meet-api:ci
+          severity: "CRITICAL,HIGH"
+          exit-code: "0" # report-only for now; flip to "1" to fail the build once the baseline is triaged
+      - name: Scan web image for known vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: arutech-meet-web:ci
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+
+  # main-branch only: build, tag, and push both images to the registry, then
+  # trigger a deploy. `permissions`/secrets/registry login and the actual
+  # deploy step (e.g. `helm upgrade` against the cluster provisioned by
+  # infrastructure/terraform) are intentionally left as placeholders — wiring
+  # them up needs real registry/cluster credentials this repo doesn't have.
+  # Not run on PRs; only exists to document the intended shape.
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: [build-and-test, docker-build]
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      # - name: Log in to registry
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: ghcr.io
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/api.Dockerfile
+          push: false # flip to true once registry login above is configured
+          tags: |
+            ghcr.io/arutech/arutech-meet-api:${{ github.sha }}
+            ghcr.io/arutech/arutech-meet-api:latest
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/web.Dockerfile
+          push: false
+          tags: |
+            ghcr.io/arutech/arutech-meet-web:${{ github.sha }}
+            ghcr.io/arutech/arutech-meet-web:latest
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_WS_URL=${{ vars.NEXT_PUBLIC_WS_URL }}
+            NEXT_PUBLIC_LIVEKIT_URL=${{ vars.NEXT_PUBLIC_LIVEKIT_URL }}
+
+      # - name: Deploy
+      #   run: |
+      #     helm upgrade --install arutech-meet infrastructure/kubernetes/helm/arutech-meet \
+      #       --set image.tag=${{ github.sha }} \
+      #       -f path/to/production-values.yaml
+      - name: Deploy (placeholder)
+        run: echo "Configure registry credentials and cluster access, then flip push:true and uncomment the helm upgrade step above."

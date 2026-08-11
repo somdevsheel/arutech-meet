@@ -1,0 +1,107 @@
+# Default values for arutech-meet. Override per-environment with
+# `helm install -f values-production.yaml` or `--set`. Never commit a values
+# file containing real secrets — see the `secrets:` section below, which is
+# designed to be populated via `--set-string secrets.jwtSecret=...` (or, better,
+# an external-secrets operator / sealed-secrets, referenced instead of plain
+# values in a real production setup) rather than checked into git.
+
+image:
+  registry: ghcr.io/arutech
+  apiRepository: arutech-meet-api
+  webRepository: arutech-meet-web
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+api:
+  replicaCount: 3
+  port: 4000
+  resources:
+    requests: { cpu: "250m", memory: "256Mi" }
+    limits: { cpu: "1", memory: "512Mi" }
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+  # Liveness/readiness both hit /health (apps/api/src/health/health.controller.ts),
+  # which checks real Postgres + Redis connectivity — a pod that can't reach its
+  # dependencies is correctly reported unready rather than silently serving 500s.
+  probes:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+web:
+  replicaCount: 2
+  port: 3000
+  resources:
+    requests: { cpu: "100m", memory: "192Mi" }
+    limits: { cpu: "500m", memory: "384Mi" }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+livekit:
+  enabled: true
+  replicaCount: 1 # LiveKit clusters via its own Redis coordination, not k8s replica scaling alone — see docs/webrtc.md
+  image: livekit/livekit-server:latest
+  # Managed Redis address (host:port) LiveKit uses for cluster coordination —
+  # a DIFFERENT concern from the app's own REDIS_URL secret, though they may
+  # point at the same instance in a small deployment.
+  redisAddress: "REPLACE_ME:6379"
+  resources:
+    requests: { cpu: "500m", memory: "512Mi" }
+    limits: { cpu: "2", memory: "1Gi" }
+
+egress:
+  enabled: true
+  replicaCount: 1
+  image: livekit/egress:latest
+  resources:
+    # Headless Chrome + FFmpeg per concurrent recording — size generously.
+    requests: { cpu: "1", memory: "1Gi" }
+    limits: { cpu: "2", memory: "2Gi" }
+
+ingress:
+  enabled: true
+  className: nginx
+  host: meet.arutech.example.com
+  tls:
+    enabled: true
+    secretName: arutech-meet-tls
+
+# Non-secret configuration — becomes a ConfigMap (templates/configmap.yaml).
+# Mirrors .env.production.example; keep the two in sync.
+config:
+  nodeEnv: production
+  logLevel: info
+  corsOrigins: "https://meet.arutech.example.com"
+  s3Region: us-east-1
+  s3Bucket: arutech-meet-prod
+  s3ForcePathStyle: "false"
+  jwtAccessExpiresIn: 15m
+  jwtRefreshExpiresIn: 30d
+  rateLimitWindowMs: "60000"
+  rateLimitMax: "100"
+
+# Secrets — becomes a Secret (templates/secret.yaml). Every value here is
+# intentionally a placeholder; override via `--set-string secrets.xxx=...`
+# from a CI secret store, never by editing this file with real values.
+secrets:
+  databaseUrl: "REPLACE_ME"
+  redisUrl: "REPLACE_ME"
+  jwtSecret: "REPLACE_ME"
+  jwtRefreshSecret: "REPLACE_ME"
+  cookieSecret: "REPLACE_ME"
+  s3AccessKey: "REPLACE_ME"
+  s3SecretKey: "REPLACE_ME"
+  s3Endpoint: "REPLACE_ME"
+  s3PublicEndpoint: "REPLACE_ME"
+  livekitApiKey: "REPLACE_ME"
+  livekitApiSecret: "REPLACE_ME"
+  livekitUrl: "REPLACE_ME"
+  livekitHttpUrl: "REPLACE_ME"
+  sentryDsn: ""
+  otelExporterOtlpEndpoint: ""
