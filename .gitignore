@@ -13,10 +13,12 @@ out/
 *.tsbuildinfo
 .turbo/
 
-# Env
-.env
-.env.local
-.env.*.local
+# Env — catch-all (not just the exact ".env"/".env.*.local" filenames the
+# previous version of this pattern matched, which would have silently let a
+# real secrets file through if named anything else, e.g. ".env.production" or
+# ".env.lightsail" — see docs/deployment-lightsail.md). Only the checked-in
+# templates below are exempted.
+.env*
 !.env.example
 !.env.development
 !.env.test

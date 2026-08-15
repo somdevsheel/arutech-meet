@@ -47,6 +47,7 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
   const [results, setResults] = useState<SearchResults | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications(accessToken);
+  const chatUnreadCount = notifications.filter((n) => n.type === "CHAT_MESSAGE" && !n.readAt).length;
 
   useEffect(() => {
     const q = query.trim();
@@ -165,9 +166,14 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
                         key={n.id}
                         onClick={() => {
                           if (!n.readAt) markRead(n.id);
-                          if (n.type === "RECORDING_READY" || n.type === "CALL_INCOMING") {
-                            const meetingId = (n.data as { meetingId?: string } | null)?.meetingId;
-                            if (meetingId) router.push("/dashboard");
+                          setNotifOpen(false);
+                          const data = n.data as { meetingCode?: string; chatRoomId?: string } | null;
+                          if (n.type === "CALL_INCOMING" && data?.meetingCode) {
+                            router.push(`/meeting/${data.meetingCode}`);
+                          } else if (n.type === "RECORDING_READY") {
+                            router.push("/recordings");
+                          } else if (n.type === "CHAT_MESSAGE" && data?.chatRoomId) {
+                            router.push(`/chat?room=${data.chatRoomId}`);
                           }
                         }}
                         className={`block w-full border-b border-surface-border/60 px-3 py-2.5 text-left last:border-0 hover:bg-surface-field ${!n.readAt ? "bg-brand-tint3" : ""}`}
@@ -253,7 +259,7 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
             <path d="M12 3 2 8l10 5 10-5-10-5Z" />
             <path d="M6 10.5V16c0 1.5 2.7 3 6 3s6-1.5 6-3v-5.5" />
           </SidebarLink>
-          <SidebarLink href="/chat" label="Team Chat" active={active === "chat"}>
+          <SidebarLink href="/chat" label="Team Chat" active={active === "chat"} badge={chatUnreadCount}>
             <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.2A8 8 0 1 1 21 12Z" />
           </SidebarLink>
           <SidebarLink href="/contacts" label="Contacts" active={active === "contacts"}>
@@ -322,11 +328,13 @@ function SidebarLink({
   href,
   label,
   active,
+  badge,
   children,
 }: {
   href: string;
   label: string;
   active: boolean;
+  badge?: number;
   children: React.ReactNode;
 }) {
   return (
@@ -348,6 +356,11 @@ function SidebarLink({
         {children}
       </svg>
       {label}
+      {!!badge && (
+        <span className="ml-auto grid h-4 min-w-[16px] place-items-center rounded-full bg-danger px-1 text-[9px] font-semibold text-white">
+          {badge > 9 ? "9+" : badge}
+        </span>
+      )}
     </Link>
   );
 }

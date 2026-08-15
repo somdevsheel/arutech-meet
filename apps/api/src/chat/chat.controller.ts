@@ -52,4 +52,9 @@ export class ChatRoomsController {
   markRead(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.chatService.markRoomRead(id, user.id);
   }
+
+  @Post(":id/leave")
+  leave(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.chatService.leaveRoom(id, user.id);
+  }
 }

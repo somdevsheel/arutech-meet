@@ -21,6 +21,7 @@ import { ChatService } from "../chat/chat.service";
 import { WsExceptionFilter } from "./ws-exception.filter";
 import { MetricsService } from "../observability/metrics.service";
 import { roomBroadcastChannel } from "./realtime-broadcast.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 interface SocketData {
   userId: string;
@@ -61,6 +62,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly permissions: PermissionService,
     private readonly chat: ChatService,
     private readonly metrics: MetricsService,
+    private readonly notifications: NotificationsService,
     @Inject("REDIS") private readonly redis: Redis,
     @Inject("ENV") private readonly env: Env,
   ) {}
@@ -263,11 +265,28 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     };
     // Members who have this room's tab open (joined chatRoomChannel) get it
     // immediately; members who don't still get it via their personal
-    // `user:{id}` room, so an unread badge can update even off-screen.
+    // `user:{id}` room, so an unread badge can update even off-screen. Anyone
+    // who isn't actively viewing this room right now (not just "offline" —
+    // also true for someone on a different page of the app) additionally gets
+    // a real, persisted Notification, or a message sent while you're away
+    // would otherwise vanish into an unread badge nobody's there to see.
     this.server.to(chatRoomChannel(body.chatRoomId)).emit(WS_EVENTS.ROOM_MESSAGE, payload);
-    const room = await this.chat.getRoomMemberIds(body.chatRoomId);
-    for (const memberId of room) {
-      if (memberId !== userId) this.server.to(userRoom(memberId)).emit(WS_EVENTS.ROOM_MESSAGE, payload);
+    const viewingSockets = await this.server.in(chatRoomChannel(body.chatRoomId)).fetchSockets();
+    const viewingUserIds = new Set(viewingSockets.map((s) => (s.data as SocketData).userId));
+
+    const memberIds = await this.chat.getRoomMemberIds(body.chatRoomId);
+    for (const memberId of memberIds) {
+      if (memberId === userId) continue;
+      this.server.to(userRoom(memberId)).emit(WS_EVENTS.ROOM_MESSAGE, payload);
+      if (!viewingUserIds.has(memberId)) {
+        await this.notifications.create({
+          userId: memberId,
+          type: "CHAT_MESSAGE",
+          title: `${payload.senderName}`,
+          body: payload.body?.slice(0, 140) ?? "",
+          data: { chatRoomId: body.chatRoomId },
+        });
+      }
     }
   }
 

@@ -44,6 +44,23 @@ export class NotificationsService {
     });
   }
 
+  /** Called when a chat room is opened (ChatService.markRoomRead) so the
+   * sidebar's notification-driven unread badge and the room list's own
+   * read-receipt-driven badge stay consistent — without this, reading a
+   * room's messages wouldn't clear the CHAT_MESSAGE notifications that led
+   * you there, leaving a stale badge count. */
+  async markChatRoomNotificationsRead(userId: string, chatRoomId: string) {
+    await this.prisma.client.notification.updateMany({
+      where: {
+        userId,
+        type: "CHAT_MESSAGE",
+        readAt: null,
+        data: { path: ["chatRoomId"], equals: chatRoomId },
+      },
+      data: { readAt: new Date() },
+    });
+  }
+
   /** Every notification in the app should be created through here (not a raw
    * prisma.notification.create) so the real-time push is never forgotten. */
   async create(params: {

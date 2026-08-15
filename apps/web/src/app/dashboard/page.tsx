@@ -10,6 +10,7 @@ import { ScheduleMeetingModal } from "@/components/dashboard/schedule-meeting-mo
 import { JoinMeetingModal } from "@/components/dashboard/join-meeting-modal";
 import { TodayRail } from "@/components/dashboard/today-rail";
 import { RecordingsRow } from "@/components/dashboard/recordings-row";
+import { PersonalRoomSettingsModal } from "@/components/dashboard/personal-room-settings-modal";
 
 interface Meeting {
   id: string;
@@ -20,6 +21,7 @@ interface Meeting {
   createdAt: string;
   scheduledStart: string | null;
   scheduledEnd: string | null;
+  settings?: { waitingRoomEnabled: boolean; allowChat: boolean; allowRecording: boolean } | null;
 }
 
 function greeting(hour: number) {
@@ -40,6 +42,7 @@ export default function DashboardPage() {
   const [hour, setHour] = useState<number | null>(null);
   const [personalRoom, setPersonalRoom] = useState<Meeting | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [showRoomSettings, setShowRoomSettings] = useState(false);
 
   useEffect(() => {
     setHour(new Date().getHours());
@@ -172,6 +175,16 @@ export default function DashboardPage() {
               <p className="mt-0.5 text-xs text-ink-muted">Code: {personalRoom.code} — always the same link</p>
             </div>
             <button
+              onClick={() => setShowRoomSettings(true)}
+              aria-label="Personal room settings"
+              className="grid h-9 w-9 flex-none place-items-center rounded-lg text-ink-muted hover:bg-surface-field hover:text-ink-2"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7.9 19.4l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3 15H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 8.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 10 4.6V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1.3Z" />
+              </svg>
+            </button>
+            <button
               onClick={() => {
                 navigator.clipboard.writeText(`${window.location.origin}/meeting/${personalRoom.code}`);
                 setLinkCopied(true);
@@ -188,6 +201,18 @@ export default function DashboardPage() {
               Start
             </button>
           </section>
+        )}
+
+        {showRoomSettings && personalRoom?.settings && (
+          <PersonalRoomSettingsModal
+            meetingId={personalRoom.id}
+            initial={personalRoom.settings}
+            onClose={() => setShowRoomSettings(false)}
+            onSaved={(settings) => {
+              setPersonalRoom((prev) => (prev ? { ...prev, settings } : prev));
+              setShowRoomSettings(false);
+            }}
+          />
         )}
 
         <RecordingsRow />

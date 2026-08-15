@@ -99,21 +99,29 @@ function TeamChatPage() {
       if (payload.chatRoomId === selectedId) {
         setMessages((prev) => (prev.some((m) => m.id === payload.id) ? prev : [...prev, payload]));
       }
-      setRooms((prev) =>
-        prev
-          ? prev
-              .map((r) =>
-                r.id === payload.chatRoomId
-                  ? { ...r, messages: [{ id: payload.id, body: payload.body, createdAt: payload.createdAt }] }
-                  : r,
-              )
-              .sort((a, b) => {
-                const at = a.messages[0]?.createdAt ?? "";
-                const bt = b.messages[0]?.createdAt ?? "";
-                return at < bt ? 1 : -1;
-              })
-          : prev,
-      );
+      setRooms((prev) => {
+        if (!prev) return prev;
+        const known = prev.some((r) => r.id === payload.chatRoomId);
+        if (!known) {
+          // First message of a conversation someone else just started with us
+          // (e.g. Alice clicked "Message" on Contacts) — this room doesn't
+          // exist in our list yet, so patching it in-place would silently
+          // no-op. Re-fetch the room list instead of guessing its shape.
+          apiFetch<RoomSummary[]>("/chat-rooms").then(setRooms);
+          return prev;
+        }
+        return prev
+          .map((r) =>
+            r.id === payload.chatRoomId
+              ? { ...r, messages: [{ id: payload.id, body: payload.body, createdAt: payload.createdAt }] }
+              : r,
+          )
+          .sort((a, b) => {
+            const at = a.messages[0]?.createdAt ?? "";
+            const bt = b.messages[0]?.createdAt ?? "";
+            return at < bt ? 1 : -1;
+          });
+      });
     };
     socket.on(WS_EVENTS.ROOM_MESSAGE, onMessage);
     return () => {
@@ -127,6 +135,12 @@ function TeamChatPage() {
     if (!body || !selectedId || !accessToken) return;
     getSocket(accessToken).emit(WS_EVENTS.ROOM_MESSAGE, { chatRoomId: selectedId, body });
     setDraft("");
+  }
+
+  async function leaveRoom(roomId: string) {
+    await apiFetch(`/chat-rooms/${roomId}/leave`, { method: "POST" });
+    setRooms((prev) => prev?.filter((r) => r.id !== roomId) ?? null);
+    if (selectedId === roomId) setSelectedId(null);
   }
 
   if (!user) return null;
@@ -196,10 +210,20 @@ function TeamChatPage() {
         <div className="flex min-w-0 flex-1 flex-col rounded-xl border border-surface-border bg-surface-raised">
           {selected ? (
             <>
-              <div className="border-b border-surface-border px-4 py-3">
-                <p className="text-sm font-semibold text-white">{roomTitle(selected, user.id)}</p>
+              <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold text-white">{roomTitle(selected, user.id)}</p>
+                  {selected.type === "GROUP" && (
+                    <p className="text-xs text-ink-muted">{selected.members.length} members</p>
+                  )}
+                </div>
                 {selected.type === "GROUP" && (
-                  <p className="text-xs text-ink-muted">{selected.members.length} members</p>
+                  <button
+                    onClick={() => leaveRoom(selected.id)}
+                    className="rounded-lg px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10"
+                  >
+                    Leave
+                  </button>
                 )}
               </div>
               <div className="flex-1 space-y-3 overflow-y-auto p-4">

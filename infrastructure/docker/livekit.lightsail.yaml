@@ -1,0 +1,40 @@
+# LiveKit SFU config for a single-instance AWS Lightsail deployment — see
+# docs/deployment-lightsail.md. Differs from the local dev config
+# (infrastructure/docker/livekit.yaml) in exactly the ways that matter for
+# being reachable from a real device over the real internet, not just from
+# other containers on the same Docker network:
+#
+#   - use_external_ip: true — without this, LiveKit hands out ICE candidates
+#     using the instance's private/container IP, which a real phone or laptop
+#     on the internet can never route to. `true` makes it ask a STUN server
+#     (Google's public one, LiveKit's default) what its actual public IP is
+#     and advertise that instead. This is the single most common reason a
+#     "works on localhost, black screen on a real device" report happens.
+#   - keys/webhook secrets are placeholders — generate real ones per the
+#     deployment doc, never reuse the local dev "change-me"/"devkey" values.
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: true
+
+redis:
+  address: redis:6379
+
+keys:
+  # Replaced at deploy time — see docs/deployment-lightsail.md §Secrets.
+  REPLACE_WITH_LIVEKIT_API_KEY: REPLACE_WITH_LIVEKIT_API_SECRET_MIN_32_CHARS
+
+room:
+  auto_create: true
+  empty_timeout: 300
+  max_participants: 100
+
+webhook:
+  api_key: REPLACE_WITH_LIVEKIT_API_KEY
+  urls:
+    - http://api:4000/api/v1/livekit/webhook
+
+logging:
+  level: info

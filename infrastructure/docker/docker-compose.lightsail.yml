@@ -1,0 +1,189 @@
+# Single-instance production-shaped stack for AWS Lightsail — see
+# docs/deployment-lightsail.md for the full walkthrough. NOT the same file as
+# the repo-root docker-compose.yml (that one runs the app in dev mode with the
+# source bind-mounted and every backing service's port exposed to 0.0.0.0 —
+# fine on a laptop, not fine on a box with a public IP). This one:
+#   - builds the real production images from infrastructure/docker/*.Dockerfile
+#   - never publishes Postgres/Redis/MinIO to the host at all (only reachable
+#     by other containers on this compose network)
+#   - terminates real TLS at nginx (see nginx.lightsail.conf) instead of
+#     serving plain HTTP
+#   - points LiveKit at real generated secrets and use_external_ip: true
+#
+# Run from the repo root (build context needs the whole pnpm workspace):
+#   docker compose -f infrastructure/docker/docker-compose.lightsail.yml --env-file .env.lightsail up -d --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arutech
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: arutech_meet
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arutech"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional — only started with `--profile minio` (see docs/deployment-lightsail.md
+  # §Storage). Recommended default is real AWS S3 instead: it already has
+  # valid, publicly-trusted TLS with zero extra certificate work, whereas
+  # exposing MinIO's presigned download URLs to a real external device would
+  # need MinIO to terminate its own TLS too (proxying it through nginx like
+  # the other services breaks AWS SigV4 signature validation — the signature
+  # covers the exact host/path used at signing time, and a path-prefixed
+  # proxy changes that). If you do use this profile, recording playback
+  # (presigned download links) will only work from clients that can reach
+  # `minio` directly and unencrypted — i.e. not a real device over the
+  # internet — which is why it's opt-in and not the default here.
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    profiles: ["minio"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    profiles: ["minio"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${S3_ACCESS_KEY} ${S3_SECRET_KEY} &&
+      mc mb -p local/${S3_BUCKET} &&
+      mc anonymous set download local/${S3_BUCKET}
+      "
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    ports:
+      # Signaling (7880) is NOT published here — nginx proxies it with real
+      # TLS (see nginx.lightsail.conf's third server block) and reaches this
+      # container over the internal compose network instead. Only the raw
+      # UDP media range has to hit this container directly (SRTP already
+      # encrypts the payload — that's inherent to WebRTC, no separate TLS
+      # wrapper needed or possible for it).
+      - "7881:7881/tcp" # TCP fallback for networks that block/throttle UDP
+      - "50000-50100:50000-50100/udp"
+    volumes:
+      - ./livekit.lightsail.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      - redis
+
+  egress:
+    image: livekit/egress:latest
+    restart: unless-stopped
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    volumes:
+      - ./egress.lightsail.yaml:/etc/egress.yaml:ro
+    cap_add:
+      - SYS_ADMIN
+    depends_on:
+      # Not `minio` — that's profile-gated (see above) and Compose errors on a
+      # depends_on referencing a service excluded by the active profile set.
+      # Egress doesn't need it up at start anyway: the upload destination is
+      # passed per-job by the API (LiveKitService.startRoomRecording), not a
+      # static config here, whichever S3-compatible endpoint that ends up being.
+      - livekit
+      - redis
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/api.Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../../.env.lightsail
+    environment:
+      DATABASE_URL: postgresql://arutech:${POSTGRES_PASSWORD}@postgres:5432/arutech_meet?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      # S3_ENDPOINT / S3_PUBLIC_ENDPOINT / S3_* credentials all come from
+      # .env.lightsail — see docs/deployment-lightsail.md §Storage. Real AWS
+      # S3 needs no S3_PUBLIC_ENDPOINT override at all (S3_ENDPOINT is already
+      # browser-reachable); the `minio` profile needs one and accepts the
+      # limitation documented on that service above.
+      LIVEKIT_URL: wss://${DOMAIN}:7880
+      LIVEKIT_HTTP_URL: http://livekit:7880
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/web.Dockerfile
+      args:
+        # Baked into the built JS bundle at image-build time, NOT read from
+        # the environment at container startup — see docs/deployment.md's
+        # note on this exact footgun. If DOMAIN changes, the web image must
+        # be rebuilt, not just restarted with a new .env.lightsail.
+        NEXT_PUBLIC_API_URL: https://${DOMAIN}
+        NEXT_PUBLIC_WS_URL: wss://${DOMAIN}
+        NEXT_PUBLIC_LIVEKIT_URL: wss://${DOMAIN}:7880
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx.lightsail.conf:/etc/nginx/nginx.conf:ro
+      - certbot-conf:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+    ports:
+      - "80:80"
+      - "443:443"
+      - "7880:7880" # TLS-terminated LiveKit signaling — see the service comment above
+    depends_on:
+      - api
+      - web
+      - livekit
+
+  # One-shot / periodic — see docs/deployment-lightsail.md §TLS for how this
+  # is actually invoked (not started by `up -d`, run on demand instead).
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["certbot"]
+    volumes:
+      - certbot-conf:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  certbot-conf:
+  certbot-www:

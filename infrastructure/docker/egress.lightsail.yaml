@@ -1,0 +1,17 @@
+# Egress (recording) config for the Lightsail deployment — see
+# docs/deployment-lightsail.md. Talks to livekit-server over the internal
+# Docker network (ws://livekit:7880), same as local dev; it never needs the
+# public URL, only the API key/secret have to match livekit.lightsail.yaml.
+log_level: info
+
+api_key: REPLACE_WITH_LIVEKIT_API_KEY
+api_secret: REPLACE_WITH_LIVEKIT_API_SECRET_MIN_32_CHARS
+ws_url: ws://livekit:7880
+
+redis:
+  address: redis:6379
+
+# Headless Chrome + FFmpeg per concurrent recording is CPU/memory heavy — keep
+# this low on a small instance. Raise only if you've sized the instance for it
+# (see the sizing table in docs/deployment-lightsail.md).
+max_concurrent_egress: 1

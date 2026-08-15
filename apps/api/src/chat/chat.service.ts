@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/commo
 import type { SendChatMessageDto, CreateChatRoomDto, SendRoomChatMessageDto } from "@arutech/validation";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService } from "../meetings/permission.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 const MEMBER_SELECT = {
   id: true,
@@ -15,6 +16,7 @@ export class ChatService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async getMeetingChatRoom(meetingId: string) {
@@ -157,11 +159,29 @@ export class ChatService {
     return message;
   }
 
+  /** Leaving a GROUP room just removes your own membership row — the room and
+   * its history keep existing for whoever's left. DIRECT rooms aren't
+   * leavable (there's no "remove yourself but keep the other person's DM
+   * open" concept that makes sense for a 1:1 — same UX call most chat apps make). */
+  async leaveRoom(chatRoomId: string, userId: string) {
+    const room = await this.prisma.client.chatRoom.findUnique({ where: { id: chatRoomId } });
+    if (!room) throw new NotFoundException("Chat room not found");
+    if (room.type !== "GROUP") throw new ForbiddenException("Only group chats can be left");
+    await this.requireMember(chatRoomId, userId);
+    await this.prisma.client.chatMember.delete({
+      where: { chatRoomId_userId: { chatRoomId, userId } },
+    });
+  }
+
   /** Marks a room read up to its latest message — real read-receipt tracking
    * (ChatMember.lastReadMessageId) rather than a client-side-only "seen" flag,
    * so an unread badge is correct across devices/reloads. */
   async markRoomRead(chatRoomId: string, userId: string) {
     await this.requireMember(chatRoomId, userId);
+    // Also clears any CHAT_MESSAGE notifications for this room — without
+    // this, the sidebar's notification-driven unread badge would stay lit
+    // after the room's own unread indicator was already cleared by reading it.
+    await this.notifications.markChatRoomNotificationsRead(userId, chatRoomId);
     const latest = await this.prisma.client.chatMessage.findFirst({
       where: { chatRoomId, deletedAt: null },
       orderBy: { createdAt: "desc" },
