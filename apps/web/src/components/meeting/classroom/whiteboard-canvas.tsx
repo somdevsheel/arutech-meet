@@ -171,13 +171,13 @@ export function WhiteboardCanvas({
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setTool("pen")}
-            className={`rounded px-2 py-1 text-xs ${tool === "pen" ? "bg-brand-500 text-white" : "bg-surface-border text-slate-300"}`}
+            className={`rounded px-2 py-1 text-xs ${tool === "pen" ? "bg-brand-500 text-white" : "bg-surface-border text-ink-3"}`}
           >
             Pen
           </button>
           <button
             onClick={() => setTool("eraser")}
-            className={`rounded px-2 py-1 text-xs ${tool === "eraser" ? "bg-brand-500 text-white" : "bg-surface-border text-slate-300"}`}
+            className={`rounded px-2 py-1 text-xs ${tool === "eraser" ? "bg-brand-500 text-white" : "bg-surface-border text-ink-3"}`}
           >
             Eraser
           </button>
@@ -190,7 +190,7 @@ export function WhiteboardCanvas({
               aria-label={`Color ${c}`}
             />
           ))}
-          <button onClick={clear} className="ml-auto rounded bg-surface-border px-2 py-1 text-xs text-slate-300">
+          <button onClick={clear} className="ml-auto rounded bg-surface-border px-2 py-1 text-xs text-ink-3">
             Clear
           </button>
           <button
@@ -214,7 +214,7 @@ export function WhiteboardCanvas({
         onPointerLeave={onPointerUp}
       />
 
-      <div className="flex items-center justify-center gap-3 text-xs text-slate-400">
+      <div className="flex items-center justify-center gap-3 text-xs text-ink-muted">
         <button
           disabled={pageIndex === 0}
           onClick={() => setPageIndex((i) => Math.max(0, i - 1))}

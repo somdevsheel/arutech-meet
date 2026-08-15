@@ -5,7 +5,7 @@ import { LiveKitRoom } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { WS_EVENTS } from "@arutech/types";
 import { VideoGrid } from "./video-grid";
-import { MeetingToolbar } from "./meeting-toolbar";
+import { MeetingToolbar, type PanelKind } from "./meeting-toolbar";
 import { ChatPanel } from "./chat-panel";
 import { ParticipantsPanel } from "./participants-panel";
 import { WaitingRoomPanel } from "./waiting-room-panel";
@@ -29,6 +29,13 @@ export interface MeetingRoomProps {
 
 const MODERATOR_ROLES = new Set(["OWNER", "HOST", "CO_HOST", "TEACHER"]);
 
+const PANEL_TABS: { key: PanelKind; label: string }[] = [
+  { key: "participants", label: "Participants" },
+  { key: "chat", label: "Chat" },
+  { key: "tools", label: "Tools" },
+  { key: "recordings", label: "Record" },
+];
+
 interface ActiveConnection {
   token: string;
   url: string;
@@ -47,12 +54,11 @@ export function MeetingRoom({
   accessToken,
   onLeave,
 }: MeetingRoomProps) {
-  const [chatOpen, setChatOpen] = useState(false);
-  const [participantsOpen, setParticipantsOpen] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [recordingsOpen, setRecordingsOpen] = useState(false);
+  const [panel, setPanel] = useState<PanelKind | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [conn, setConn] = useState<ActiveConnection>({ token, url: livekitUrl, label: null });
+  const [elapsed, setElapsed] = useState(0);
+  const [seenChatCount, setSeenChatCount] = useState(0);
   const isModerator = MODERATOR_ROLES.has(role);
 
   const {
@@ -64,6 +70,17 @@ export function MeetingRoom({
     sendMessage,
     socket,
   } = useMeetingSocket(meetingId, accessToken);
+
+  useEffect(() => {
+    const id = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Real unread tracking: whatever's arrived since the chat tab was last open.
+  useEffect(() => {
+    if (panel === "chat") setSeenChatCount(messages.length);
+  }, [panel, messages.length]);
+  const unreadChatCount = panel === "chat" ? 0 : messages.length - seenChatCount;
 
   // Reflects whether a recording is currently in progress in the toolbar badge —
   // seeded from the actual recording list (in case one was already running before
@@ -109,6 +126,8 @@ export function MeetingRoom({
     setConn({ token, url: livekitUrl, label: null });
   }
 
+  const timerLabel = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+
   return (
     // `key` forces LiveKitRoom to fully unmount/remount (cleanly disconnecting
     // from whichever LiveKit room it was in) whenever we switch between the main
@@ -123,71 +142,118 @@ export function MeetingRoom({
       audio
       onDisconnected={conn.label ? returnToMain : onLeave}
       data-lk-theme="default"
-      className="flex h-screen flex-col bg-surface"
+      className="flex h-screen flex-col overflow-hidden bg-surface"
     >
-      <header className="flex items-center justify-between border-b border-surface-border px-4 py-3">
-        <div>
-          <h1 className="text-sm font-medium text-white">{title}</h1>
-          <p className="text-xs text-slate-500">
-            Code: {meetingCode}
-            {conn.label && <span className="ml-2 text-amber-400">· In breakout: {conn.label}</span>}
-          </p>
+      <header className="flex h-14 flex-none items-center justify-between gap-4 border-b border-surface-border px-5">
+        <div className="flex items-center gap-2">
+          <Pill>
+            <span className="h-2.5 w-2.5 rounded-full bg-success" />
+            Encrypted
+          </Pill>
+          {isRecording && (
+            <Pill>
+              <span className="h-2.5 w-2.5 rounded-full bg-danger" />
+              Recording
+            </Pill>
+          )}
+          {conn.label && (
+            <Pill>
+              <span className="h-2.5 w-2.5 rounded-full bg-warn" />
+              Breakout: {conn.label}
+            </Pill>
+          )}
+        </div>
+        <div className="min-w-0 text-center">
+          <h1 className="truncate text-sm font-semibold text-white">{title}</h1>
+          <p className="text-[11px] text-ink-muted">Code: {meetingCode}</p>
+        </div>
+        <div className="flex items-center justify-end gap-3" style={{ minWidth: 120 }}>
+          <span className="font-mono text-[13px] tabular-nums text-ink-muted">{timerLabel}</span>
         </div>
       </header>
 
       {isModerator && !conn.label && <WaitingRoomPanel meetingId={meetingId} refreshSignal={waitingRoomCount} />}
 
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 p-3">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="min-h-0 min-w-0 flex-1 p-3">
           <VideoGrid />
         </div>
 
-        {(chatOpen || participantsOpen || toolsOpen || recordingsOpen) && (
-          <aside className="w-80 border-l border-surface-border bg-surface-raised">
-            {chatOpen && (
-              <ChatPanel messages={messages} onSend={sendMessage} currentUserId={userId} />
-            )}
-            {participantsOpen && (
-              <ParticipantsPanel
-                participants={participants}
-                isModerator={isModerator}
-                onMute={(id) => moderate("mute", id)}
-                onDisableCamera={(id) => moderate("disable-camera", id)}
-                onRemove={(id) => moderate("remove", id)}
-                onPromote={(id) => moderate("promote-co-host", id)}
-              />
-            )}
-            {toolsOpen && (
-              <ClassroomPanel
-                meetingId={meetingId}
-                socket={socket}
-                isModerator={isModerator}
-                onJoinBreakoutRoom={joinBreakoutRoom}
-                onReturnToMain={returnToMain}
-                inBreakoutRoom={Boolean(conn.label)}
-              />
-            )}
-            {recordingsOpen && (
-              <RecordingsPanel meetingId={meetingId} socket={socket} isModerator={isModerator} />
-            )}
+        {panel && (
+          <aside className="flex w-[320px] flex-none flex-col border-l border-surface-border bg-surface-raised">
+            <div className="flex gap-1 border-b border-surface-border px-3 pt-3">
+              {PANEL_TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setPanel(tab.key)}
+                  className={`border-b-2 px-1 pb-2.5 text-[13px] font-medium transition ${
+                    panel === tab.key
+                      ? "border-brand-500 text-white"
+                      : "border-transparent text-ink-muted hover:text-ink-2"
+                  }`}
+                >
+                  {tab.label === "Participants" ? `Participants (${participants.length})` : tab.label}
+                </button>
+              ))}
+              <button
+                onClick={() => setPanel(null)}
+                aria-label="Close panel"
+                className="ml-auto mb-2.5 self-start text-ink-muted hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {panel === "participants" && (
+                <ParticipantsPanel
+                  participants={participants}
+                  isModerator={isModerator}
+                  onMute={(id) => moderate("mute", id)}
+                  onDisableCamera={(id) => moderate("disable-camera", id)}
+                  onRemove={(id) => moderate("remove", id)}
+                  onPromote={(id) => moderate("promote-co-host", id)}
+                />
+              )}
+              {panel === "chat" && (
+                <ChatPanel messages={messages} onSend={sendMessage} currentUserId={userId} />
+              )}
+              {panel === "tools" && (
+                <ClassroomPanel
+                  meetingId={meetingId}
+                  socket={socket}
+                  isModerator={isModerator}
+                  onJoinBreakoutRoom={joinBreakoutRoom}
+                  onReturnToMain={returnToMain}
+                  inBreakoutRoom={Boolean(conn.label)}
+                />
+              )}
+              {panel === "recordings" && (
+                <RecordingsPanel meetingId={meetingId} socket={socket} isModerator={isModerator} />
+              )}
+            </div>
           </aside>
         )}
       </div>
 
       <MeetingToolbar
-        chatOpen={chatOpen}
-        participantsOpen={participantsOpen}
-        toolsOpen={toolsOpen}
-        recordingsOpen={recordingsOpen}
-        isRecording={isRecording}
-        onToggleChat={() => setChatOpen((v) => !v)}
-        onToggleParticipants={() => setParticipantsOpen((v) => !v)}
-        onToggleTools={() => setToolsOpen((v) => !v)}
-        onToggleRecordings={() => setRecordingsOpen((v) => !v)}
+        activePanel={panel}
+        onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
         onLeave={onLeave}
+        isRecording={isRecording}
         canShareScreen={true}
+        participantCount={participants.length}
+        unreadChatCount={unreadChatCount}
       />
     </LiveKitRoom>
+  );
+}
+
+function Pill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-md bg-surface-chip px-2.5 py-1.5 text-xs font-medium text-ink-2">
+      {children}
+    </span>
   );
 }
 

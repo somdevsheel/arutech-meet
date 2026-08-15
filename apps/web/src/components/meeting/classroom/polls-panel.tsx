@@ -115,7 +115,7 @@ export function PollsPanel({
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
       {canCreate && (
         <div className="space-y-2 rounded-lg border border-surface-border bg-surface-raised/50 p-3">
-          <p className="text-xs font-medium uppercase text-slate-500">New poll</p>
+          <p className="text-xs font-medium uppercase text-ink-muted">New poll</p>
           <input
             className="input"
             placeholder="Question"
@@ -135,7 +135,7 @@ export function PollsPanel({
             <button onClick={() => setOptions((prev) => [...prev, ""])} className="text-xs text-brand-300">
               + Add option
             </button>
-            <label className="flex items-center gap-1 text-xs text-slate-400">
+            <label className="flex items-center gap-1 text-xs text-ink-muted">
               <input type="checkbox" checked={multi} onChange={(e) => setMulti(e.target.checked)} />
               Multiple choice
             </label>
@@ -151,7 +151,7 @@ export function PollsPanel({
       )}
 
       <div className="space-y-3">
-        {polls.length === 0 && <p className="text-xs text-slate-500">No polls yet.</p>}
+        {polls.length === 0 && <p className="text-xs text-ink-muted">No polls yet.</p>}
         {polls.map((poll) => {
           const pollResults = results[poll.id];
           const totalVotes = pollResults?.reduce((s, r) => s + r.votes, 0) ?? 0;
@@ -160,7 +160,7 @@ export function PollsPanel({
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm font-medium text-white">{poll.question}</p>
                 {canCreate && poll.status === "OPEN" && (
-                  <button onClick={() => closePoll(poll.id)} className="text-xs text-red-400">
+                  <button onClick={() => closePoll(poll.id)} className="text-xs text-danger">
                     Close
                   </button>
                 )}
@@ -183,7 +183,7 @@ export function PollsPanel({
                           style={{ width: `${pct}%` }}
                         />
                       )}
-                      <span className="relative text-slate-200">
+                      <span className="relative text-ink-2">
                         {opt.text} {pollResults && `— ${result?.votes ?? 0} (${pct}%)`}
                       </span>
                     </button>

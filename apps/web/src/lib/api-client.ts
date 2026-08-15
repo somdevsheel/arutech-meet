@@ -84,5 +84,11 @@ export async function apiFetch<T = unknown>(
   }
 
   if (response.status === 204) return undefined as T;
-  return response.json();
+  // A void-returning Nest controller method (e.g. markRead, remove) still
+  // sends 200/201 with an empty body, not 204 — response.json() throws
+  // "Unexpected end of JSON input" on that empty body if called
+  // unconditionally. Read as text first and only parse when there's
+  // something to parse.
+  const text = await response.text();
+  return text ? (JSON.parse(text) as T) : (undefined as T);
 }

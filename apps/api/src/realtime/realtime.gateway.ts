@@ -13,13 +13,14 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import type Redis from "ioredis";
 import type { Server, Socket } from "socket.io";
 import { WS_EVENTS, type ParticipantPresencePayload } from "@arutech/types";
-import { sendChatMessageSchema, whiteboardOpSchema } from "@arutech/validation";
+import { sendChatMessageSchema, sendRoomChatMessageSchema, whiteboardOpSchema } from "@arutech/validation";
 import type { Env } from "@arutech/config";
 import { TokenService } from "../common/lib/tokens";
 import { PermissionService } from "../meetings/permission.service";
 import { ChatService } from "../chat/chat.service";
 import { WsExceptionFilter } from "./ws-exception.filter";
 import { MetricsService } from "../observability/metrics.service";
+import { roomBroadcastChannel } from "./realtime-broadcast.service";
 
 interface SocketData {
   userId: string;
@@ -28,6 +29,14 @@ interface SocketData {
 
 function meetingRoom(meetingId: string): string {
   return `meeting:${meetingId}`;
+}
+
+function userRoom(userId: string): string {
+  return `user:${userId}`;
+}
+
+function chatRoomChannel(chatRoomId: string): string {
+  return `chatroom:${chatRoomId}`;
 }
 
 /**
@@ -78,6 +87,23 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       }
     });
 
+    // Second bridge for RealtimeBroadcastService.publishToRoom — unlike the
+    // meeting one above, the target room is carried in the message body
+    // rather than reconstructed from the channel name, since that
+    // reconstruction (split on ":", keep the last segment) silently mangles
+    // any room name that isn't a bare meeting id — e.g. `user:{id}` for
+    // personal notification delivery.
+    const roomBridge = this.redis.duplicate();
+    await roomBridge.subscribe(roomBroadcastChannel(this.env));
+    roomBridge.on("message", (channel, message) => {
+      try {
+        const { room, event, payload } = JSON.parse(message);
+        this.server.to(room).emit(event, payload);
+      } catch (err) {
+        this.logger.warn(`Failed to relay room broadcast on ${channel}: ${String(err)}`);
+      }
+    });
+
     this.logger.log("RealtimeGateway initialized with Redis adapter + broadcast bridge");
   }
 
@@ -94,6 +120,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const payload = this.tokens.verifyAccessToken(token);
       const data: SocketData = { userId: payload.sub, email: payload.email };
       client.data = data;
+      // Personal channel every authenticated socket gets for free — used to
+      // push notifications (NotificationsService.create) and direct/group
+      // team-chat messages (see onJoinChatRoom below) without a per-feature
+      // join step, the same way `meeting:{id}` rooms work for meeting events.
+      await client.join(userRoom(payload.sub));
       this.metrics.websocketConnections.inc();
     } catch {
       client.emit(WS_EVENTS.ERROR, { message: "Invalid or expired token" });
@@ -190,6 +221,53 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       }
     } else {
       this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.CHAT_MESSAGE, payload);
+    }
+  }
+
+  // ── Team chat (standing GROUP/DIRECT rooms) ─────────────────────────────
+  // Mirrors the JOIN_MEETING/CHAT_MESSAGE pair above, scoped to a ChatRoom
+  // instead of a Meeting — membership (ChatService.requireMember) is the
+  // authorization check, there's no capability matrix to consult here.
+
+  @SubscribeMessage(WS_EVENTS.ROOM_JOIN)
+  async onJoinChatRoom(@ConnectedSocket() client: Socket, @MessageBody() body: { chatRoomId: string }) {
+    const { userId } = client.data as SocketData;
+    await this.chat.requireMember(body.chatRoomId, userId);
+    await client.join(chatRoomChannel(body.chatRoomId));
+  }
+
+  @SubscribeMessage(WS_EVENTS.ROOM_LEAVE)
+  async onLeaveChatRoom(@ConnectedSocket() client: Socket, @MessageBody() body: { chatRoomId: string }) {
+    await client.leave(chatRoomChannel(body.chatRoomId));
+  }
+
+  @SubscribeMessage(WS_EVENTS.ROOM_MESSAGE)
+  async onRoomMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { chatRoomId: string } & Record<string, unknown>,
+  ) {
+    const { userId } = client.data as SocketData;
+    const dto = sendRoomChatMessageSchema.parse(body);
+    const message = await this.chat.persistRoomMessage(body.chatRoomId, userId, dto);
+
+    const payload = {
+      id: message.id,
+      chatRoomId: message.chatRoomId,
+      senderId: message.senderId,
+      senderName: message.sender?.displayName ?? "Unknown",
+      body: message.body,
+      replyToId: message.replyToId,
+      isPrivate: false,
+      toUserId: null,
+      createdAt: message.createdAt.toISOString(),
+    };
+    // Members who have this room's tab open (joined chatRoomChannel) get it
+    // immediately; members who don't still get it via their personal
+    // `user:{id}` room, so an unread badge can update even off-screen.
+    this.server.to(chatRoomChannel(body.chatRoomId)).emit(WS_EVENTS.ROOM_MESSAGE, payload);
+    const room = await this.chat.getRoomMemberIds(body.chatRoomId);
+    for (const memberId of room) {
+      if (memberId !== userId) this.server.to(userRoom(memberId)).emit(WS_EVENTS.ROOM_MESSAGE, payload);
     }
   }
 

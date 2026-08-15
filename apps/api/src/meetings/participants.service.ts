@@ -49,6 +49,20 @@ export class ParticipantsService {
       where: { id: participantId },
       data: { status: "ADMITTED" },
     });
+    // Broadcasting only to the meeting room (below) doesn't reach the admitted
+    // participant themselves: RealtimeGateway.onJoinMeeting deliberately
+    // refuses to let a WAITING participant's socket join that room at all
+    // (they're not admitted yet — that's the whole point of a waiting room),
+    // so they were never in it to receive this event. Their personal
+    // `user:{id}` room (joined on every socket connect, auth-gated so guests
+    // don't have one — same limitation guests already have elsewhere) is what
+    // actually delivers it to them; the meeting-room publish below is kept for
+    // any other listener (e.g. a host's own UI reacting to the admit).
+    if (participant.userId) {
+      await this.broadcast.publishToRoom(`user:${participant.userId}`, WS_EVENTS.WAITING_ROOM_ADMIT, {
+        participantId,
+      });
+    }
     await this.broadcast.publish(meetingId, WS_EVENTS.WAITING_ROOM_ADMIT, { participantId });
   }
 

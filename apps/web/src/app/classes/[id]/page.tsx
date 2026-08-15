@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
+import { AppShell } from "@/components/layout/app-shell";
 
 interface ClassDetail {
   id: string;
@@ -26,7 +27,7 @@ interface ClassSession {
 export default function ClassDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const user = useAuthStore((s) => s.user);
+  const { user, accessToken, clear } = useAuthStore();
   const [klass, setKlass] = useState<ClassDetail | null>(null);
   const [sessions, setSessions] = useState<ClassSession[]>([]);
   const [studentEmail, setStudentEmail] = useState("");
@@ -69,86 +70,98 @@ export default function ClassDetailPage() {
     }
   }
 
-  if (!klass) return null;
+  if (!user || !klass) return null;
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-12">
-      <Link href="/classes" className="text-sm text-slate-400 hover:text-white">
-        ← Classes
-      </Link>
-      <h1 className="mt-2 text-2xl font-semibold text-white">{klass.title}</h1>
-      {klass.subject && <p className="text-sm text-slate-500">{klass.subject}</p>}
+    <AppShell
+      user={user}
+      active="classes"
+      accessToken={accessToken}
+      onSignOut={() => {
+        clear();
+        router.push("/");
+      }}
+    >
+      <div className="flex flex-col gap-7">
+        <div>
+          <Link href="/classes" className="text-sm text-ink-muted hover:text-white">
+            ← Classes
+          </Link>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">{klass.title}</h1>
+          {klass.subject && <p className="text-sm text-ink-muted">{klass.subject}</p>}
+        </div>
 
-      {isTeacher && (
-        <button
-          onClick={startSession}
-          disabled={startingSession}
-          className="mt-4 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
-        >
-          {startingSession ? "Starting…" : "Start a class session"}
-        </button>
-      )}
-
-      <section className="mt-10">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-slate-500">
-          Students ({klass.students.length})
-        </h2>
         {isTeacher && (
-          <div className="mb-3 flex gap-2">
-            <input
-              value={studentEmail}
-              onChange={(e) => setStudentEmail(e.target.value)}
-              placeholder="Student email"
-              className="input"
-            />
-            <button
-              onClick={enrollStudent}
-              className="whitespace-nowrap rounded-lg bg-surface-border px-4 py-2.5 text-sm font-medium text-white"
-            >
-              Enroll
-            </button>
-          </div>
+          <button
+            onClick={startSession}
+            disabled={startingSession}
+            className="self-start rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+          >
+            {startingSession ? "Starting…" : "Start a class session"}
+          </button>
         )}
-        {enrollError && <p className="mb-2 text-sm text-red-400">{enrollError}</p>}
-        <ul className="space-y-1">
-          {klass.students.map((s) => (
-            <li key={s.userId} className="text-sm text-slate-300">
-              {s.user.displayName}
-            </li>
-          ))}
-          {klass.students.length === 0 && <li className="text-sm text-slate-500">No students enrolled yet.</li>}
-        </ul>
-      </section>
 
-      <section className="mt-10">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-slate-500">Sessions</h2>
-        <ul className="space-y-2">
-          {sessions.length === 0 && <li className="text-sm text-slate-500">No sessions yet.</li>}
-          {sessions.map((s) => (
-            <li
-              key={s.id}
-              className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised px-4 py-3"
-            >
-              <div>
-                <p className="text-sm text-white">{new Date(s.sessionDate).toLocaleString()}</p>
-                <p className="text-xs text-slate-500">{s.meeting.status}</p>
-              </div>
-              <div className="flex gap-3 text-xs">
-                {s.meeting.status === "LIVE" && (
-                  <Link href={`/meeting/${s.meeting.code}`} className="text-brand-300">
-                    Join
-                  </Link>
-                )}
-                {isTeacher && (
-                  <Link href={`/classes/${params.id}/sessions/${s.id}/attendance`} className="text-brand-300">
-                    Attendance
-                  </Link>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </main>
+        <section>
+          <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-ink-muted">
+            Students ({klass.students.length})
+          </h2>
+          {isTeacher && (
+            <div className="mb-3 flex gap-2">
+              <input
+                value={studentEmail}
+                onChange={(e) => setStudentEmail(e.target.value)}
+                placeholder="Student email"
+                className="input"
+              />
+              <button
+                onClick={enrollStudent}
+                className="whitespace-nowrap rounded-lg bg-surface-chip px-4 py-2.5 text-sm font-medium text-white hover:brightness-110"
+              >
+                Enroll
+              </button>
+            </div>
+          )}
+          {enrollError && <p className="mb-2 text-sm text-danger">{enrollError}</p>}
+          <ul className="flex flex-col gap-1">
+            {klass.students.map((s) => (
+              <li key={s.userId} className="text-sm text-ink-3">
+                {s.user.displayName}
+              </li>
+            ))}
+            {klass.students.length === 0 && <li className="text-sm text-ink-muted">No students enrolled yet.</li>}
+          </ul>
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-ink-muted">Sessions</h2>
+          <ul className="flex flex-col gap-2">
+            {sessions.length === 0 && <li className="text-sm text-ink-muted">No sessions yet.</li>}
+            {sessions.map((s) => (
+              <li
+                key={s.id}
+                className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised px-4 py-3"
+              >
+                <div>
+                  <p className="text-sm text-white">{new Date(s.sessionDate).toLocaleString()}</p>
+                  <p className="text-xs text-ink-muted">{s.meeting.status}</p>
+                </div>
+                <div className="flex gap-3 text-xs">
+                  {s.meeting.status === "LIVE" && (
+                    <Link href={`/meeting/${s.meeting.code}`} className="text-brand-300">
+                      Join
+                    </Link>
+                  )}
+                  {isTeacher && (
+                    <Link href={`/classes/${params.id}/sessions/${s.id}/attendance`} className="text-brand-300">
+                      Attendance
+                    </Link>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+    </AppShell>
   );
 }

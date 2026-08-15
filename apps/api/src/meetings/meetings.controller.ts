@@ -32,6 +32,13 @@ export class MeetingsController {
     return this.meetingsService.listMine(user.id);
   }
 
+  // Must be registered before the `:code` route below, or Nest/Express would
+  // match the literal path segment "personal" as a :code param instead.
+  @Get("personal")
+  getPersonalRoom(@CurrentUser() user: AuthenticatedUser) {
+    return this.meetingsService.getOrCreatePersonalRoom(user.id);
+  }
+
   // Public so an unauthenticated guest can preview a meeting (title/whether a
   // password is required) before deciding to join — no participant data leaks here.
   @Public()

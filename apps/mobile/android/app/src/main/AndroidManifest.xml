@@ -9,6 +9,14 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Screen share: @livekit/react-native-webrtc's own manifest (merged into this
+         one at build time) declares the FOREGROUND_SERVICE permission and its
+         MediaProjectionService with foregroundServiceType="mediaProjection", but not
+         this permission — required in addition to FOREGROUND_SERVICE specifically for
+         that service type since Android 14 (API 34). This app targets SDK 36, so
+         without it, starting the foreground service that screen capture depends on
+         throws at runtime. See MeetingToolbar's "Share screen" button. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

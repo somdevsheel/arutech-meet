@@ -10,24 +10,37 @@ A proper React Native app (bare CLI, real native Android/iOS projects — not a 
 - Meeting list, create instant meeting, join by code
 - Real camera/mic permission flow (`PermissionsAndroid` on Android; iOS prompts natively) and a
   join-options screen (mic/camera start state, password, guest name)
+- **A live camera self-preview before joining.** `@livekit/react-native`'s own components don't have a
+  `<PreJoin>`-equivalent, but `livekit-client` (the core package underneath, already a dependency here)
+  exposes `createLocalVideoTrack()` — a plain getUserMedia-based capture with no Room required — and
+  `@livekit/react-native`'s `VideoView` renders any raw track, not just ones attached to a Room. Combining
+  the two gets a real preview; see `PreJoinScreen`.
+- **Live wait-for-admit when the host has a waiting room enabled**, for logged-in users: the same
+  socket-driven `WAITING_ROOM_ADMIT` flow web uses. Guests still get an informative fallback message
+  instead (see the gap below — unchanged, and inherent to guests having no JWT).
 - A real LiveKit Room connection via `@livekit/react-native` — actual audio/video tracks, not simulated:
   video grid, mic/camera toggle, leave
+- **Real screen sharing on Android.** `useLocalParticipant` (and its `setScreenShareEnabled`) come from
+  `@livekit/components-react` under the hood — the same headless hooks web uses, just re-exported by
+  `@livekit/react-native` — so it's the identical call web makes. It works because
+  `@livekit/react-native-webrtc`'s `registerGlobals()` wires a real `navigator.mediaDevices.getDisplayMedia`
+  backed by Android's `MediaProjection` API. Required one manifest fix: this app targets SDK 36 (Android
+  15), which needs `FOREGROUND_SERVICE_MEDIA_PROJECTION` in addition to the `FOREGROUND_SERVICE` permission
+  the library's own manifest already contributes — added to `android/app/src/main/AndroidManifest.xml`.
+  Verified with a real `./gradlew :app:assembleDebug` (the permission shows up correctly in the merged
+  manifest); not verified against an actual device/emulator capture, since none is available here.
 - The same Socket.IO app-level channel as web (chat, presence, moderation events) via
   `@arutech/types`'s `WS_EVENTS` contract — see `../../docs/realtime.md`
 
 ## Known gaps vs. the web client (honest, not hidden)
 
-- **No live camera self-preview before joining.** `@livekit/react-native` doesn't ship an equivalent to
-  the web SDK's `<PreJoin>` (which previews the camera before a Room even exists) — `PreJoinScreen` here
-  is a permission + options screen instead. Tracked in `../../docs/roadmap.md`.
 - **Guests get media but not chat/presence.** Same limitation as web (the WebSocket gateway requires a
   JWT) — see `../../docs/realtime.md`.
-- **No live wait-for-admit screen when the waiting room is enabled.** `PreJoinScreen` surfaces a clear
-  error asking the host to disable the waiting room or admit first, rather than pretending to support the
-  live-admit flow web has. Wiring the same socket-driven admit flow here is straightforward follow-up
-  work, not a redesign.
-- **No screen sharing.** RN screen capture needs a platform broadcast extension (iOS ReplayKit / Android
-  `MediaProjection` foreground service) that isn't configured in this pass.
+- **No screen sharing on iOS.** Apple requires screen capture to run in a separate Broadcast Upload
+  Extension target, which has to be created in Xcode (new target + entitlements + App Group) — Xcode only
+  runs on macOS, and this was developed on Linux. Android's screen share (above) needed no equivalent
+  extra native project surgery, just a manifest permission and a JS-level toggle, which is why it's real
+  and iOS's isn't yet.
 - **Push notifications are an architecture stub, not wired to a live provider** — see
   `src/services/push-notifications.ts` for exactly what's missing and why (adding Firebase without real
   `google-services.json` credentials would break the native build for anyone who clones this repo).

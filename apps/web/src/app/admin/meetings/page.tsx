@@ -35,14 +35,14 @@ export default function AdminMeetingsPage() {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-white">Meetings ({total})</h1>
-        <label className="flex items-center gap-2 text-sm text-slate-400">
+        <label className="flex items-center gap-2 text-sm text-ink-muted">
           <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} />
           Active only
         </label>
       </div>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border text-left text-xs uppercase text-slate-500">
+          <tr className="border-b border-surface-border text-left text-xs uppercase text-ink-muted">
             <th className="py-2">Title</th>
             <th className="py-2">Code</th>
             <th className="py-2">Type</th>
@@ -55,18 +55,18 @@ export default function AdminMeetingsPage() {
           {meetings.map((m) => (
             <tr key={m.id} className="border-b border-surface-border/50">
               <td className="py-2 text-white">{m.title}</td>
-              <td className="py-2 text-slate-400">{m.code}</td>
-              <td className="py-2 text-slate-400">{m.type}</td>
-              <td className={`py-2 font-medium ${m.status === "LIVE" ? "text-green-400" : "text-slate-400"}`}>
+              <td className="py-2 text-ink-muted">{m.code}</td>
+              <td className="py-2 text-ink-muted">{m.type}</td>
+              <td className={`py-2 font-medium ${m.status === "LIVE" ? "text-success" : "text-ink-muted"}`}>
                 {m.status}
               </td>
-              <td className="py-2 text-slate-400">{m._count.participants}</td>
-              <td className="py-2 text-slate-400">{new Date(m.createdAt).toLocaleString()}</td>
+              <td className="py-2 text-ink-muted">{m._count.participants}</td>
+              <td className="py-2 text-ink-muted">{new Date(m.createdAt).toLocaleString()}</td>
             </tr>
           ))}
           {meetings.length === 0 && (
             <tr>
-              <td colSpan={6} className="py-6 text-center text-slate-500">
+              <td colSpan={6} className="py-6 text-center text-ink-muted">
                 No meetings found.
               </td>
             </tr>

@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/lib/auth-store";
+import { AppShell } from "@/components/layout/app-shell";
 
 const NAV = [
   { href: "/admin", label: "Dashboard" },
@@ -25,9 +26,13 @@ const NAV = [
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, accessToken } = useAuthStore();
+  const { user, accessToken, clear, hasHydrated } = useAuthStore();
 
   useEffect(() => {
+    // See auth-store.ts: the persisted session hydrates asynchronously, so this
+    // must wait for it before treating a fresh page load as "logged out" — a
+    // hard refresh on /admin would otherwise always bounce a real admin out.
+    if (!hasHydrated) return;
     if (!accessToken) {
       router.replace("/login");
       return;
@@ -35,34 +40,38 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     if (user && user.systemRole !== "ADMIN") {
       router.replace("/dashboard");
     }
-  }, [user, accessToken, router]);
+  }, [hasHydrated, user, accessToken, router]);
 
-  if (!user || user.systemRole !== "ADMIN") return null;
+  if (!hasHydrated || !user || user.systemRole !== "ADMIN") return null;
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="w-56 shrink-0 border-r border-surface-border bg-surface-raised p-4">
-        <Link href="/dashboard" className="mb-6 block text-sm text-slate-400 hover:text-white">
-          ← Back to app
-        </Link>
-        <p className="mb-4 text-xs font-medium uppercase tracking-wide text-slate-500">Admin</p>
-        <nav className="space-y-1">
+    <AppShell
+      user={user}
+      active="admin"
+      accessToken={accessToken}
+      onSignOut={() => {
+        clear();
+        router.push("/");
+      }}
+    >
+      <div className="flex flex-col gap-6">
+        <nav className="flex flex-wrap gap-1 border-b border-surface-border pb-3" aria-label="Admin sections">
           {NAV.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className={`block rounded-lg px-3 py-2 text-sm ${
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                 pathname === item.href
-                  ? "bg-brand-500 text-white"
-                  : "text-slate-300 hover:bg-surface-border hover:text-white"
+                  ? "bg-brand-tint2 text-white"
+                  : "text-ink-3 hover:bg-surface-elevated hover:text-white"
               }`}
             >
               {item.label}
             </Link>
           ))}
         </nav>
-      </aside>
-      <main className="flex-1 overflow-x-auto p-8">{children}</main>
-    </div>
+        {children}
+      </div>
+    </AppShell>
   );
 }

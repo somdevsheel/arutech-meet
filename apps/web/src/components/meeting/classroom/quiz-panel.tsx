@@ -127,7 +127,7 @@ export function QuizPanel({
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
       {canCreate && (
         <div className="space-y-2 rounded-lg border border-surface-border bg-surface-raised/50 p-3">
-          <p className="text-xs font-medium uppercase text-slate-500">New quiz question</p>
+          <p className="text-xs font-medium uppercase text-ink-muted">New quiz question</p>
           <input
             className="input"
             placeholder="Question"
@@ -151,7 +151,7 @@ export function QuizPanel({
               />
             </div>
           ))}
-          <label className="flex items-center gap-2 text-xs text-slate-400">
+          <label className="flex items-center gap-2 text-xs text-ink-muted">
             Points
             <input
               type="number"
@@ -172,12 +172,12 @@ export function QuizPanel({
         </div>
       )}
 
-      {!activeQuiz && <p className="text-xs text-slate-500">No active quiz question.</p>}
+      {!activeQuiz && <p className="text-xs text-ink-muted">No active quiz question.</p>}
 
       {activeQuiz && (
         <div className="rounded-lg border border-surface-border p-3">
           <p className="mb-2 text-sm font-medium text-white">{activeQuiz.questions[0]!.question}</p>
-          <p className="mb-2 text-xs text-slate-500">{answeredCount} answered</p>
+          <p className="mb-2 text-xs text-ink-muted">{answeredCount} answered</p>
 
           {!closed && (
             <div className="space-y-1.5">
@@ -186,11 +186,11 @@ export function QuizPanel({
                   key={opt.id}
                   disabled={Boolean(myAnswer)}
                   onClick={() => answer(opt.id)}
-                  className={`w-full rounded border px-2 py-1.5 text-left text-xs text-slate-200 ${
+                  className={`w-full rounded border px-2 py-1.5 text-left text-xs text-ink-2 ${
                     myAnswer?.optionId === opt.id
                       ? myAnswer.isCorrect
                         ? "border-green-500 bg-green-500/10"
-                        : "border-red-500 bg-red-500/10"
+                        : "border-danger bg-danger/10"
                       : "border-surface-border"
                   }`}
                 >
@@ -198,7 +198,7 @@ export function QuizPanel({
                 </button>
               ))}
               {myAnswer && (
-                <p className={`text-xs ${myAnswer.isCorrect ? "text-green-400" : "text-red-400"}`}>
+                <p className={`text-xs ${myAnswer.isCorrect ? "text-green-400" : "text-danger"}`}>
                   {myAnswer.isCorrect ? "Correct!" : "Not quite."}
                 </p>
               )}
@@ -206,17 +206,17 @@ export function QuizPanel({
           )}
 
           {canCreate && !closed && (
-            <button onClick={closeQuiz} className="mt-2 rounded bg-red-600 px-3 py-1 text-xs text-white">
+            <button onClick={closeQuiz} className="mt-2 rounded bg-danger-strong px-3 py-1 text-xs text-white">
               Close & show results
             </button>
           )}
 
           {closed && leaderboard && (
             <div className="mt-3 space-y-1">
-              <p className="text-xs font-medium uppercase text-slate-500">Leaderboard</p>
-              {leaderboard.length === 0 && <p className="text-xs text-slate-500">No answers submitted.</p>}
+              <p className="text-xs font-medium uppercase text-ink-muted">Leaderboard</p>
+              {leaderboard.length === 0 && <p className="text-xs text-ink-muted">No answers submitted.</p>}
               {leaderboard.map((entry, i) => (
-                <div key={entry.userId} className="flex justify-between text-xs text-slate-300">
+                <div key={entry.userId} className="flex justify-between text-xs text-ink-3">
                   <span>
                     {i + 1}. {entry.displayName}
                   </span>

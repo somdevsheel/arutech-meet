@@ -50,11 +50,8 @@ export class LiveKitWebhookController {
   }) {
     // FileInfo.duration is a raw int64 with no unit documented on the generated
     // type; LiveKit's egress service is implemented in Go using time.Duration
-    // internally (nanoseconds), which is the convention followed here. This is
-    // best-effort, not verified against a real completed egress in this
-    // environment (no way to run headless-Chrome egress in this sandbox) — worth
-    // double-checking against one real recording before trusting displayed
-    // durations in production.
+    // internally (nanoseconds), which is the convention followed here — confirmed
+    // correct against a real completed egress (see docs/roadmap.md §Recording).
     const file = egressInfo.fileResults[0];
     const fileSummary = file
       ? { location: file.location, sizeBytes: Number(file.size), durationSeconds: Number(file.duration) / 1_000_000_000 }

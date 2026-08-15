@@ -76,8 +76,14 @@ export class MeetingsEventsService {
         await this.prisma.client.meeting.update({
           where: { id: meeting.id },
           data: {
-            status: "ENDED",
-            actualEnd: meeting.actualEnd ?? new Date(),
+            // A personal meeting room is a standing resource, not a one-shot
+            // meeting — its underlying LiveKit room can open and close many
+            // times over its lifetime (LiveKit auto-recreates a room by name
+            // on demand), but the Meeting row itself should stay joinable
+            // forever rather than flip to ENDED after the first session, which
+            // would permanently lock the owner out of their own room.
+            status: meeting.isPersonalRoom ? "WAITING" : "ENDED",
+            actualEnd: meeting.isPersonalRoom ? null : (meeting.actualEnd ?? new Date()),
           },
         });
         await this.prisma.client.meetingEvent.create({

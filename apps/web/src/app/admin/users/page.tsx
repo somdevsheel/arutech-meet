@@ -67,7 +67,7 @@ export default function AdminUsersPage() {
 
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border text-left text-xs uppercase text-slate-500">
+          <tr className="border-b border-surface-border text-left text-xs uppercase text-ink-muted">
             <th className="py-2">Name</th>
             <th className="py-2">Email</th>
             <th className="py-2">Role</th>
@@ -80,14 +80,14 @@ export default function AdminUsersPage() {
           {users.map((u) => (
             <tr key={u.id} className="border-b border-surface-border/50">
               <td className="py-2 text-white">{u.displayName}</td>
-              <td className="py-2 text-slate-400">{u.email}</td>
-              <td className="py-2 text-slate-400">{u.systemRole}</td>
+              <td className="py-2 text-ink-muted">{u.email}</td>
+              <td className="py-2 text-ink-muted">{u.systemRole}</td>
               <td
-                className={`py-2 font-medium ${u.status === "ACTIVE" ? "text-green-400" : "text-red-400"}`}
+                className={`py-2 font-medium ${u.status === "ACTIVE" ? "text-success" : "text-danger"}`}
               >
                 {u.status}
               </td>
-              <td className="py-2 text-slate-400">{new Date(u.createdAt).toLocaleDateString()}</td>
+              <td className="py-2 text-ink-muted">{new Date(u.createdAt).toLocaleDateString()}</td>
               <td className="py-2 text-right">
                 <button
                   onClick={() => toggleStatus(u)}
@@ -101,7 +101,7 @@ export default function AdminUsersPage() {
           ))}
           {users.length === 0 && (
             <tr>
-              <td colSpan={6} className="py-6 text-center text-slate-500">
+              <td colSpan={6} className="py-6 text-center text-ink-muted">
                 No users found.
               </td>
             </tr>

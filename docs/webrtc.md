@@ -111,12 +111,12 @@ path, matching the "no raw media through the app server" rule for live calls.
 - **Expiration**: `MeetingRecording.expiresAt` is set 90 days out at creation;
   `RecordingsCleanupService` (a daily `@Cron` job) deletes the S3 object and marks the row `DELETED` once
   past that date — the same effect a manual delete has, just time-triggered. See `docs/roadmap.md`.
-- **Not verified end-to-end in this environment** — there is no way to run headless-Chrome egress inside
-  this sandbox, so the actual "does a real MP4 land in MinIO and play back" path has not been exercised
-  here. The integration code is real (not mocked) and follows LiveKit's documented Egress API exactly, but
-  running `docker compose up` and testing a real recording is the natural next verification step. The
-  `FileInfo.duration` unit (nanoseconds, assumed from LiveKit's Go implementation) is flagged as
-  best-effort in `LiveKitWebhookController` for the same reason.
+- **Verified end-to-end**: ran the real `livekit/egress` worker against a live meeting, watched
+  `RECORDING` → `PROCESSING` → `READY` happen for real, confirmed the MP4 in MinIO, and played it back via
+  a presigned URL. Found and fixed two real bugs in the process — see `docs/roadmap.md` §Recording for
+  both. The `FileInfo.duration` unit (nanoseconds, assumed from LiveKit's Go implementation) is now
+  confirmed correct against a real recording (an ~8s capture reported as 6 real seconds of actual
+  recorded content, not off by a factor of 1e6/1e9 the way a unit mistake would show up).
 
 ## End-to-end encryption
 

@@ -81,6 +81,46 @@ export class MeetingsService {
     return meeting;
   }
 
+  /** "My personal meeting room" — a Meeting that's created once per user and
+   * reused forever (same code, same link) rather than a fresh one per call.
+   * Uniqueness per owner is enforced here (findFirst-before-create) rather than
+   * a DB constraint — see the isPersonalRoom comment on the Meeting model. */
+  async getOrCreatePersonalRoom(userId: string) {
+    const existing = await this.prisma.client.meeting.findFirst({
+      where: { ownerId: userId, isPersonalRoom: true, deletedAt: null },
+      include: { settings: true },
+    });
+    if (existing) return existing;
+
+    const code = generateMeetingCode();
+    return this.prisma.client.meeting.create({
+      data: {
+        code,
+        title: "Personal meeting room",
+        type: "INSTANT",
+        ownerId: userId,
+        isPersonalRoom: true,
+        livekitRoomName: generateLiveKitRoomName(code),
+        status: "WAITING",
+        settings: {
+          create: {
+            waitingRoomEnabled: false,
+            allowJoinBeforeHost: true,
+            muteOnEntry: true,
+            screenShareScope: "ALL_PARTICIPANTS",
+            allowChat: true,
+            allowRecording: true,
+            allowParticipantsUnmuteSelf: true,
+            lockAfterStart: false,
+            maxParticipants: 100,
+          },
+        },
+        chatRoom: { create: { type: "MEETING" } },
+      },
+      include: { settings: true },
+    });
+  }
+
   async findByCode(code: string) {
     const meeting = await this.prisma.client.meeting.findUnique({
       where: { code },

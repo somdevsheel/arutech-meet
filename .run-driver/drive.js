@@ -49,7 +49,6 @@ async function shot(page, label) {
   await shot(page, "dashboard");
 
   console.log("STEP: create an instant meeting");
-  await page.fill('input[placeholder="Meeting title (optional)"]', "Live Demo Meeting");
   await page.click('button:has-text("New meeting")');
   await page.waitForURL("**/meeting/**", { timeout: 15000 });
   await page.waitForTimeout(2000); // let the PreJoin device-preview component mount

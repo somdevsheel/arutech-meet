@@ -13,6 +13,13 @@ room:
   empty_timeout: 300
   max_participants: 100
 
+# Required for the egress worker to receive room-composite recording jobs —
+# livekit-server dispatches them over Redis, it doesn't call egress directly.
+# Without this, EgressClient.startRoomCompositeEgress() hangs until the API's
+# HTTP client times out, since livekit-server has nowhere to hand the job off.
+redis:
+  address: localhost:6389
+
 webhook:
   api_key: devkey
   urls:

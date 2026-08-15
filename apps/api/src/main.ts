@@ -29,6 +29,19 @@ async function bootstrap() {
   });
   app.useLogger(app.get(Logger));
 
+  // The default JSON body parser (registered above via rawBody: true) only
+  // captures req.rawBody for requests whose Content-Type is exactly
+  // "application/json" — but LiveKit sends webhooks as
+  // "application/webhook+json" (see its webhook docs), a type the default
+  // matcher silently ignores. Every LiveKit webhook was therefore arriving
+  // with an empty req.body/req.rawBody and failing signature verification in
+  // LiveKitWebhookController with a 400, invisibly: no recording ever
+  // progressed past PROCESSING, and presence/attendance events derived from
+  // webhooks never landed either. Re-registering the json parser to also
+  // match LiveKit's content type (still json underneath) fixes this without
+  // touching anything else that depends on the default parser.
+  app.useBodyParser("json", { type: ["application/json", "application/webhook+json"] });
+
   const env = app.get<Env>("ENV");
 
   app.use(helmet());

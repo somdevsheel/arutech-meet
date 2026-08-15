@@ -33,7 +33,7 @@ export function ClassroomPanel({
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 py-2 capitalize ${tab === t ? "border-b-2 border-brand-500 text-white" : "text-slate-500"}`}
+            className={`flex-1 py-2 capitalize ${tab === t ? "border-b-2 border-brand-500 text-white" : "text-ink-muted"}`}
           >
             {t}
           </button>

@@ -60,6 +60,21 @@ export const WS_EVENTS = {
   // Recording
   RECORDING_STARTED: "recording:started",
   RECORDING_STOPPED: "recording:stopped",
+  // Fired on every egress webhook-driven status change (RECORDING -> PROCESSING
+  // -> READY/FAILED). RECORDING_STARTED/STOPPED only cover the user-initiated
+  // edges of that lifecycle — without this, a client has no way to learn a
+  // recording finished processing short of re-opening the panel.
+  RECORDING_UPDATED: "recording:updated",
+
+  // Notifications (personal channel — every socket auto-joins `user:{id}` on
+  // connect, see RealtimeGateway.handleConnection)
+  NOTIFICATION_CREATED: "notification:created",
+
+  // Team chat (standing chat rooms outside any meeting — GROUP/DIRECT
+  // ChatRoom types; distinct from CHAT_MESSAGE above, which is meeting-scoped)
+  ROOM_JOIN: "room:join",
+  ROOM_LEAVE: "room:leave",
+  ROOM_MESSAGE: "room:message",
 
   // Errors
   ERROR: "error",

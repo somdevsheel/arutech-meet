@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { RecordingsController } from "./recordings.controller";
+import { RecordingsController, MyRecordingsController } from "./recordings.controller";
 import { RecordingsService } from "./recordings.service";
 import { RecordingsCleanupService } from "./recordings-cleanup.service";
 import { PermissionModule } from "../meetings/permission.module";
@@ -10,7 +10,7 @@ import { AuditLogModule } from "../audit/audit-log.module";
 
 @Module({
   imports: [PermissionModule, LiveKitModule, StorageModule, RealtimeBroadcastModule, AuditLogModule],
-  controllers: [RecordingsController],
+  controllers: [RecordingsController, MyRecordingsController],
   providers: [RecordingsService, RecordingsCleanupService],
   exports: [RecordingsService],
 })

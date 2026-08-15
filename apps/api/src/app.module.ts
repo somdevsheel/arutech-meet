@@ -21,6 +21,10 @@ import { QuizzesModule } from "./quizzes/quizzes.module";
 import { BreakoutRoomsModule } from "./breakout-rooms/breakout-rooms.module";
 import { RecordingsModule } from "./recordings/recordings.module";
 import { AdminModule } from "./admin/admin.module";
+import { NotesModule } from "./notes/notes.module";
+import { ContactsModule } from "./contacts/contacts.module";
+import { NotificationsModule } from "./notifications/notifications.module";
+import { SearchModule } from "./search/search.module";
 import { ObservabilityLoggingModule } from "./observability/logging.module";
 import { ObservabilityModule } from "./observability/observability.module";
 
@@ -50,6 +54,10 @@ import { ObservabilityModule } from "./observability/observability.module";
     BreakoutRoomsModule,
     RecordingsModule,
     AdminModule,
+    NotesModule,
+    ContactsModule,
+    NotificationsModule,
+    SearchModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

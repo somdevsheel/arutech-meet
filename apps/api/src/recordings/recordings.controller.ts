@@ -46,3 +46,16 @@ export class RecordingsController {
     return this.recordingsService.remove(meetingId, user.id, recordingId);
   }
 }
+
+// Separate top-level path (not nested under a meetingId) for the "Recent recordings"
+// home page card, which spans every meeting the caller was involved in.
+@ApiTags("recordings")
+@Controller("recordings")
+export class MyRecordingsController {
+  constructor(private readonly recordingsService: RecordingsService) {}
+
+  @Get()
+  listMine(@CurrentUser() user: AuthenticatedUser) {
+    return this.recordingsService.listMine(user.id);
+  }
+}

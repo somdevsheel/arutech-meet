@@ -49,12 +49,12 @@ export default function AdminDashboardPage() {
       </div>
 
       {stats && (
-        <p className="mt-4 text-xs text-slate-500">
+        <p className="mt-4 text-xs text-ink-muted">
           {stats.notes.activeSessions} {stats.notes.omitted}
         </p>
       )}
 
-      <h2 className="mb-3 mt-10 text-sm font-medium uppercase tracking-wide text-slate-500">
+      <h2 className="mb-3 mt-10 text-sm font-medium uppercase tracking-wide text-ink-muted">
         System health
       </h2>
       {health && (
@@ -69,7 +69,7 @@ export default function AdminDashboardPage() {
           />
         </div>
       )}
-      <p className="mt-4 text-xs text-slate-500">
+      <p className="mt-4 text-xs text-ink-muted">
         Bandwidth, packet loss/jitter, and connection-quality metrics require the observability stack
         (Prometheus/OpenTelemetry — see docs/roadmap.md Stage 10) and are not shown here rather than faked.
       </p>
@@ -90,10 +90,10 @@ function StatCard({
 }) {
   return (
     <div className="rounded-xl border border-surface-border bg-surface-raised p-4">
-      <p className="text-xs text-slate-500">{label}</p>
+      <p className="text-xs text-ink-muted">{label}</p>
       <p
         className={`mt-1 text-2xl font-semibold ${
-          ok === false ? "text-red-400" : ok === true ? "text-green-400" : highlight ? "text-brand-300" : "text-white"
+          ok === false ? "text-danger" : ok === true ? "text-success" : highlight ? "text-brand-300" : "text-white"
         }`}
       >
         {value ?? "—"}

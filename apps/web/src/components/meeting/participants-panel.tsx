@@ -11,6 +11,14 @@ interface Props {
   onPromote: (participantId: string) => void;
 }
 
+const AVATAR_COLORS = ["#3B6FE0", "#8E44AD", "#16A085", "#D35400", "#2C7A7B", "#C0392B", "#B8860B"];
+
+function colorFor(id: string) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+
 export function ParticipantsPanel({
   participants,
   isModerator,
@@ -20,39 +28,39 @@ export function ParticipantsPanel({
   onPromote,
 }: Props) {
   return (
-    <div className="h-full overflow-y-auto p-4">
-      <p className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-500">
-        In this meeting — {participants.length}
-      </p>
-      <ul className="space-y-2">
-        {participants.map((p) => (
-          <li
-            key={p.participantId}
-            className="flex items-center justify-between rounded-lg bg-surface-border/40 px-3 py-2"
+    <div className="flex flex-col gap-0.5 overflow-y-auto p-2.5">
+      {participants.map((p) => (
+        <div
+          key={p.participantId}
+          className="flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-surface-elevated"
+        >
+          <span
+            className="grid h-7 w-7 flex-none place-items-center rounded-full text-[10px] font-semibold text-white"
+            style={{ background: colorFor(p.participantId) }}
           >
-            <div>
-              <p className="text-sm text-white">{p.displayName}</p>
-              <p className="text-xs text-slate-500">{p.role}</p>
+            {p.displayName.slice(0, 2).toUpperCase()}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-ink-2">
+            {p.displayName} <span className="text-ink-muted">· {p.role}</span>
+          </span>
+          {isModerator && (
+            <div className="flex flex-none gap-0.5">
+              <IconButton title="Mute" onClick={() => onMute(p.participantId)}>
+                <path d="M9 9V6a3 3 0 0 1 6 0v5M5 11a7 7 0 0 0 10.5 6M12 18v3M3 3l18 18" />
+              </IconButton>
+              <IconButton title="Disable camera" onClick={() => onDisableCamera(p.participantId)}>
+                <path d="M3 6h9a2 2 0 0 1 2 2v8M21 7v10l-6-4M3 3l18 18" />
+              </IconButton>
+              <IconButton title="Make co-host" onClick={() => onPromote(p.participantId)}>
+                <path d="M12 3.5 14.5 9l6 .6-4.5 4 1.3 5.9L12 16.7 6.7 19.5 8 13.6l-4.5-4L9.5 9 12 3.5Z" />
+              </IconButton>
+              <IconButton title="Remove" onClick={() => onRemove(p.participantId)}>
+                <path d="M18 6 6 18M6 6l12 12" />
+              </IconButton>
             </div>
-            {isModerator && (
-              <div className="flex gap-1">
-                <IconButton title="Mute" onClick={() => onMute(p.participantId)}>
-                  🔇
-                </IconButton>
-                <IconButton title="Disable camera" onClick={() => onDisableCamera(p.participantId)}>
-                  📷
-                </IconButton>
-                <IconButton title="Make co-host" onClick={() => onPromote(p.participantId)}>
-                  ⭐
-                </IconButton>
-                <IconButton title="Remove" onClick={() => onRemove(p.participantId)}>
-                  ✕
-                </IconButton>
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -70,9 +78,11 @@ function IconButton({
     <button
       title={title}
       onClick={onClick}
-      className="rounded px-1.5 py-1 text-xs hover:bg-surface-border"
+      className="grid h-6 w-6 place-items-center rounded text-ink-muted2 hover:bg-surface-chip hover:text-white"
     >
-      {children}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        {children}
+      </svg>
     </button>
   );
 }

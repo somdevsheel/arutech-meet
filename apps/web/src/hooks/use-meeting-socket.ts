@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Socket } from "socket.io-client";
 import { WS_EVENTS, type ChatMessagePayload, type ParticipantPresencePayload } from "@arutech/types";
-import { getSocket, disconnectSocket } from "@/lib/socket";
+import { getSocket } from "@/lib/socket";
 
 export interface ModerationEvent {
   type: "mute" | "camera_disable" | "remove" | "role_change";
@@ -81,7 +81,10 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
       socket.off(WS_EVENTS.MEETING_ENDED, onMeetingEnded);
       socket.off(WS_EVENTS.WAITING_ROOM_ADMIT, onWaitingRoomAdmit);
       socket.off(WS_EVENTS.WAITING_ROOM_JOINED, onWaitingRoomJoined);
-      disconnectSocket();
+      // Deliberately NOT disconnectSocket() here: the underlying connection is
+      // an app-level singleton (notifications, team chat) that outlives any
+      // one meeting screen — see lib/socket.ts. It's torn down on sign-out
+      // instead (useAuthStore.clear()), not on every meeting-leave.
     };
   }, [meetingId, accessToken]);
 

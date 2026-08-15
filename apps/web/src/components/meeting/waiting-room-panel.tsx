@@ -55,7 +55,7 @@ export function WaitingRoomPanel({
               </button>
               <button
                 onClick={() => decide(e.id, "deny")}
-                className="rounded bg-surface-border px-2 py-1 text-xs hover:bg-red-600"
+                className="rounded bg-surface-border px-2 py-1 text-xs hover:bg-danger-strong"
               >
                 Deny
               </button>

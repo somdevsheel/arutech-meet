@@ -31,7 +31,7 @@ export default function AdminOrganizationsPage() {
       <h1 className="mb-6 text-2xl font-semibold text-white">Organizations ({total})</h1>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border text-left text-xs uppercase text-slate-500">
+          <tr className="border-b border-surface-border text-left text-xs uppercase text-ink-muted">
             <th className="py-2">Name</th>
             <th className="py-2">Plan</th>
             <th className="py-2">Members</th>
@@ -43,15 +43,15 @@ export default function AdminOrganizationsPage() {
           {orgs.map((o) => (
             <tr key={o.id} className="border-b border-surface-border/50">
               <td className="py-2 text-white">{o.name}</td>
-              <td className="py-2 text-slate-400">{o.plan}</td>
-              <td className="py-2 text-slate-400">{o._count.memberships}</td>
-              <td className="py-2 text-slate-400">{o._count.meetings}</td>
-              <td className="py-2 text-slate-400">{new Date(o.createdAt).toLocaleDateString()}</td>
+              <td className="py-2 text-ink-muted">{o.plan}</td>
+              <td className="py-2 text-ink-muted">{o._count.memberships}</td>
+              <td className="py-2 text-ink-muted">{o._count.meetings}</td>
+              <td className="py-2 text-ink-muted">{new Date(o.createdAt).toLocaleDateString()}</td>
             </tr>
           ))}
           {orgs.length === 0 && (
             <tr>
-              <td colSpan={5} className="py-6 text-center text-slate-500">
+              <td colSpan={5} className="py-6 text-center text-ink-muted">
                 No organizations yet.
               </td>
             </tr>

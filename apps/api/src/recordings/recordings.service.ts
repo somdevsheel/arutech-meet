@@ -94,6 +94,26 @@ export class RecordingsService {
     });
   }
 
+  /** Cross-meeting recordings list for the "Recent recordings" home page card —
+   * every READY recording from a meeting the caller owned or attended, newest
+   * first. Unlike `list()` this isn't scoped to one meeting, so authorization is
+   * just "this recording's meeting involved you" rather than a capability check. */
+  async listMine(callerUserId: string) {
+    return this.prisma.client.meetingRecording.findMany({
+      where: {
+        deletedAt: null,
+        status: "READY",
+        meeting: {
+          deletedAt: null,
+          OR: [{ ownerId: callerUserId }, { participants: { some: { userId: callerUserId } } }],
+        },
+      },
+      include: { meeting: { select: { title: true, code: true } } },
+      orderBy: { startedAt: "desc" },
+      take: 6,
+    });
+  }
+
   async getDownloadUrl(meetingId: string, callerUserId: string, recordingId: string) {
     await this.permissions.getParticipant(meetingId, callerUserId);
     const recording = await this.getOrThrow(meetingId, recordingId);

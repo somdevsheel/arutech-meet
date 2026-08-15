@@ -101,7 +101,7 @@ export function BreakoutPanel({
 
       {assignedRoom && !inBreakoutRoom && (
         <div className="rounded-lg border border-brand-500 bg-brand-500/10 p-3">
-          <p className="mb-2 text-xs text-slate-200">
+          <p className="mb-2 text-xs text-ink-2">
             You&apos;ve been assigned to <strong>{assignedRoom.name}</strong>.
           </p>
           <button
@@ -115,8 +115,8 @@ export function BreakoutPanel({
 
       {canManage && (
         <div className="space-y-2 rounded-lg border border-surface-border bg-surface-raised/50 p-3">
-          <p className="text-xs font-medium uppercase text-slate-500">Create breakout rooms</p>
-          <label className="flex items-center gap-2 text-xs text-slate-400">
+          <p className="text-xs font-medium uppercase text-ink-muted">Create breakout rooms</p>
+          <label className="flex items-center gap-2 text-xs text-ink-muted">
             Number of rooms
             <input
               type="number"
@@ -135,7 +135,7 @@ export function BreakoutPanel({
             {rooms.length > 0 ? "Rooms already open" : "Create & auto-assign"}
           </button>
           {rooms.length > 0 && (
-            <button onClick={closeAll} className="w-full rounded bg-red-600 py-2 text-xs font-medium text-white">
+            <button onClick={closeAll} className="w-full rounded bg-danger-strong py-2 text-xs font-medium text-white">
               Close all rooms
             </button>
           )}
@@ -153,7 +153,7 @@ export function BreakoutPanel({
                 </button>
               )}
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-ink-muted">
               {room.assignments.map((a) => a.user.displayName).join(", ") || "No one assigned"}
             </p>
           </div>

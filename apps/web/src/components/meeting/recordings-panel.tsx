@@ -51,9 +51,14 @@ export function RecordingsPanel({
     const onChange = () => refresh();
     socket.on(WS_EVENTS.RECORDING_STARTED, onChange);
     socket.on(WS_EVENTS.RECORDING_STOPPED, onChange);
+    // Covers the webhook-driven PROCESSING -> READY/FAILED transition, which
+    // happens well after STOPPED fires and otherwise never reaches this panel
+    // (previously required closing and reopening the tab to see it).
+    socket.on(WS_EVENTS.RECORDING_UPDATED, onChange);
     return () => {
       socket.off(WS_EVENTS.RECORDING_STARTED, onChange);
       socket.off(WS_EVENTS.RECORDING_STOPPED, onChange);
+      socket.off(WS_EVENTS.RECORDING_UPDATED, onChange);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket, meetingId]);
@@ -97,12 +102,12 @@ export function RecordingsPanel({
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto p-4">
       {isModerator && (
-        <div className="rounded-lg border border-surface-border bg-surface-raised/50 p-3">
+        <div className="rounded-lg border border-surface-border bg-surface-raised p-3">
           {active ? (
             <button
               onClick={stop}
               disabled={busy}
-              className="w-full rounded bg-red-600 py-2 text-xs font-medium text-white disabled:opacity-50"
+              className="w-full rounded bg-danger-strong py-2 text-xs font-medium text-white disabled:opacity-50"
             >
               Stop recording
             </button>
@@ -115,24 +120,24 @@ export function RecordingsPanel({
               Start recording
             </button>
           )}
-          {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+          {error && <p className="mt-2 text-xs text-danger">{error}</p>}
         </div>
       )}
 
       <div className="space-y-2">
-        {recordings.length === 0 && <p className="text-xs text-slate-500">No recordings for this meeting yet.</p>}
+        {recordings.length === 0 && <p className="text-xs text-ink-muted">No recordings for this meeting yet.</p>}
         {recordings.map((r) => (
           <div key={r.id} className="rounded-lg border border-surface-border p-3">
             <div className="flex items-center justify-between">
               <span
-                className={`text-xs font-medium ${r.status === "RECORDING" ? "text-red-400" : "text-slate-300"}`}
+                className={`text-xs font-medium ${r.status === "RECORDING" ? "text-danger" : "text-ink-3"}`}
               >
                 {STATUS_LABEL[r.status]}
               </span>
-              <span className="text-[11px] text-slate-500">{new Date(r.startedAt).toLocaleString()}</span>
+              <span className="text-[11px] text-ink-muted">{new Date(r.startedAt).toLocaleString()}</span>
             </div>
             {r.durationSeconds !== null && (
-              <p className="mt-1 text-[11px] text-slate-500">{Math.round(r.durationSeconds / 60)} min</p>
+              <p className="mt-1 text-[11px] text-ink-muted">{Math.round(r.durationSeconds / 60)} min</p>
             )}
             {r.status === "READY" && (
               <div className="mt-2 flex gap-3 text-xs">
@@ -140,7 +145,7 @@ export function RecordingsPanel({
                   Play
                 </button>
                 {isModerator && (
-                  <button onClick={() => remove(r.id)} className="text-red-400">
+                  <button onClick={() => remove(r.id)} className="text-danger">
                     Delete
                   </button>
                 )}

@@ -6,13 +6,48 @@
   color-scheme: dark;
 }
 
+/* @livekit/components-styles sizes `.lk-room-container` with `height: 100%`.
+   Percentage heights only resolve against a definite ancestor height, so the
+   whole html -> body chain needs an explicit height (not just min-height) or
+   the room container silently falls back to content-based auto-sizing and
+   grows taller than the viewport — which is what made the meeting room page
+   scroll instead of staying fixed. `height: 100%` still lets normal pages
+   (dashboard, home, etc.) grow past the viewport and scroll normally, since
+   it doesn't clip overflow by itself. */
+html,
 body {
-  background-color: #0b0f19;
-  color: #e6e9f0;
+  height: 100%;
+}
+
+body {
+  background-color: #0e0e11;
+  color: #e6e6ea;
 }
 
 @layer components {
   .input {
     @apply w-full rounded-lg border border-surface-border bg-surface-raised px-4 py-2.5 text-sm text-white outline-none focus:border-brand-500;
   }
+}
+
+/* Retheme @livekit/components-styles' default theme (which ships its own dark
+   palette) to match this app's design tokens, via the same CSS custom
+   properties LiveKit's own prefabs (ParticipantTile, GridLayout, PreJoin)
+   already read — cheaper and more robust than re-implementing their track
+   rendering/layout logic just to change colors. */
+[data-lk-theme="default"] {
+  --lk-bg: #1e1e24;
+  --lk-bg2: #22222a;
+  --lk-bg3: #2a2a33;
+  --lk-fg: #ffffff;
+  --lk-border-color: #26262e;
+  --lk-accent-bg: #3b6fe0;
+  --lk-danger: #e74c3c;
+  --lk-success: #35c46a;
+  --lk-control-bg: #22222a;
+  --lk-control-hover-bg: #2a2a33;
+  --lk-control-active-bg: #3b6fe0;
+  --lk-border-radius: 0.75rem;
+  --lk-grid-gap: 0.75rem;
+  --lk-font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 }

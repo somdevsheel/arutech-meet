@@ -31,10 +31,10 @@ export default function AdminRecordingsPage() {
   return (
     <div>
       <h1 className="mb-2 text-2xl font-semibold text-white">Recordings ({total})</h1>
-      <p className="mb-6 text-sm text-slate-500">{formatBytes(totalBytes)} across this page</p>
+      <p className="mb-6 text-sm text-ink-muted">{formatBytes(totalBytes)} across this page</p>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-surface-border text-left text-xs uppercase text-slate-500">
+          <tr className="border-b border-surface-border text-left text-xs uppercase text-ink-muted">
             <th className="py-2">Meeting</th>
             <th className="py-2">Status</th>
             <th className="py-2">Size</th>
@@ -47,22 +47,22 @@ export default function AdminRecordingsPage() {
           {recordings.map((r) => (
             <tr key={r.id} className="border-b border-surface-border/50">
               <td className="py-2 text-white">
-                {r.meeting.title} <span className="text-slate-500">({r.meeting.code})</span>
+                {r.meeting.title} <span className="text-ink-muted">({r.meeting.code})</span>
               </td>
-              <td className="py-2 text-slate-400">{r.status}</td>
-              <td className="py-2 text-slate-400">{r.sizeBytes ? formatBytes(Number(r.sizeBytes)) : "—"}</td>
-              <td className="py-2 text-slate-400">
+              <td className="py-2 text-ink-muted">{r.status}</td>
+              <td className="py-2 text-ink-muted">{r.sizeBytes ? formatBytes(Number(r.sizeBytes)) : "—"}</td>
+              <td className="py-2 text-ink-muted">
                 {r.durationSeconds ? `${Math.round(r.durationSeconds / 60)} min` : "—"}
               </td>
-              <td className="py-2 text-slate-400">{new Date(r.startedAt).toLocaleString()}</td>
-              <td className="py-2 text-slate-400">
+              <td className="py-2 text-ink-muted">{new Date(r.startedAt).toLocaleString()}</td>
+              <td className="py-2 text-ink-muted">
                 {r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : "—"}
               </td>
             </tr>
           ))}
           {recordings.length === 0 && (
             <tr>
-              <td colSpan={6} className="py-6 text-center text-slate-500">
+              <td colSpan={6} className="py-6 text-center text-ink-muted">
                 No recordings yet.
               </td>
             </tr>

@@ -25,4 +25,14 @@ jest.mock('@livekit/react-native', () => ({
   }),
   isTrackReference: () => false,
   VideoTrack: () => null,
+  VideoView: () => null,
+}));
+
+// `livekit-client` (the core package @livekit/react-native wraps) is imported
+// directly by PreJoinScreen for createLocalVideoTrack — a real getUserMedia
+// call with no equivalent under Jest's Node environment (no device/camera).
+// Same "stub so component trees can render, not fake device behavior" rule
+// as the mock above.
+jest.mock('livekit-client', () => ({
+  createLocalVideoTrack: jest.fn(() => Promise.reject(new Error('no camera in test environment'))),
 }));
