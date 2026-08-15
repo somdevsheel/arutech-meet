@@ -73,6 +73,21 @@ done testing (§Teardown) — Lightsail bills hourly, this isn't meant to run 24
    instance. Without this, the instance's public IP changes on every stop/start, which breaks both your
    DNS record and LiveKit's advertised ICE candidates the next time it restarts.
 
+   **If a static IP isn't available** — Lightsail defaults to a 5-per-region static IP quota, easy to hit
+   if you've been experimenting with other instances, and it can't be raised from the console (only via an
+   AWS Support quota-increase request, which isn't instant). Two ways around it, in order of preference:
+
+   - **Free the quota instead of raising it.** Networking → Static IPs, detach/release any unattached
+     ones from earlier test instances — the common case for a "test" account like this one — then retry.
+   - **Skip the static IP and just don't stop the instance.** The public IP only changes on stop/start, not
+     on its own — leave it running for the duration of your testing and it behaves like a static IP for
+     free. The tradeoff is explicit: **stopping the instance to save cost between test sessions now breaks
+     everything** on restart (DNS A record, the cert's implicit binding to that IP being *reachable*, and
+     LiveKit's advertised ICE candidates all go stale at once), and recovering means repeating step 2 (DNS)
+     with the new IP and waiting for it to propagate before anything works again — nothing else in this
+     doc needs to change, since every config here references `$DOMAIN`, never the IP directly. Attach a
+     static IP later (Networking tab, no rebuild needed) the moment one frees up.
+
 ## 2. DNS
 
 Point an A record at the static IP:
