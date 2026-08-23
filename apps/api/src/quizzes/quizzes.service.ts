@@ -24,24 +24,42 @@ export class QuizzesService {
         status: "OPEN",
         questions: {
           create: dto.questions.map((q, order) => ({
+            type: q.type,
             question: q.question,
             order,
             points: q.points,
             timerSeconds: q.timerSeconds,
-            options: { create: q.options.map((o, oi) => ({ text: o.text, isCorrect: o.isCorrect, order: oi })) },
+            // TRUE_FALSE has no client-authored options — server-generates the
+            // two fixed ones so it rides the exact same option/answer/grading
+            // pipeline MULTIPLE_CHOICE already uses (see the schema comment on
+            // QuizQuestionType).
+            options:
+              q.type === "MULTIPLE_CHOICE"
+                ? { create: q.options.map((o, oi) => ({ text: o.text, isCorrect: o.isCorrect, order: oi })) }
+                : q.type === "TRUE_FALSE"
+                  ? {
+                      create: [
+                        { text: "True", isCorrect: q.correctAnswer === true, order: 0 },
+                        { text: "False", isCorrect: q.correctAnswer === false, order: 1 },
+                      ],
+                    }
+                  : undefined,
+            correctAnswerText: q.type === "SHORT_ANSWER" ? q.correctAnswerText : undefined,
           })),
         },
       },
       include: { questions: { include: { options: true }, orderBy: { order: "asc" } } },
     });
 
-    // Never send `isCorrect` to clients before a question is answered/closed —
-    // students would otherwise see the answer key in the network tab.
+    // Never send `isCorrect`/`correctAnswerText` to clients before a question
+    // is answered/closed — students would otherwise see the answer key in the
+    // network tab.
     await this.broadcast.publish(meetingId, WS_EVENTS.QUIZ_PUBLISHED, {
       id: quiz.id,
       title: quiz.title,
       questions: quiz.questions.map((q) => ({
         id: q.id,
+        type: q.type,
         question: q.question,
         points: q.points,
         timerSeconds: q.timerSeconds,
@@ -68,22 +86,39 @@ export class QuizzesService {
     }
     if (question.quiz.status !== "OPEN") throw new BadRequestException("This quiz is closed");
 
-    const option = question.options.find((o) => o.id === dto.selectedOptionId);
-    if (!option) throw new BadRequestException("Invalid option for this question");
+    let selectedOptionId: string | null = null;
+    let answerText: string | null = null;
+    let isCorrect: boolean;
+
+    if (question.type === "SHORT_ANSWER") {
+      if (!dto.answerText) throw new BadRequestException("This question expects a text answer");
+      answerText = dto.answerText.trim();
+      // Case-insensitive, trimmed exact match only — no fuzzy/synonym
+      // matching (see the schema comment on QuizQuestion.correctAnswerText).
+      isCorrect = answerText.toLowerCase() === (question.correctAnswerText ?? "").trim().toLowerCase();
+    } else {
+      if (!dto.selectedOptionId) throw new BadRequestException("This question expects a selected option");
+      const option = question.options.find((o) => o.id === dto.selectedOptionId);
+      if (!option) throw new BadRequestException("Invalid option for this question");
+      selectedOptionId = option.id;
+      isCorrect = option.isCorrect;
+    }
 
     const answer = await this.prisma.client.quizAnswer.upsert({
       where: { questionId_userId: { questionId, userId: callerUserId } },
       create: {
         questionId,
         userId: callerUserId,
-        selectedOptionId: option.id,
-        isCorrect: option.isCorrect,
-        pointsAwarded: option.isCorrect ? question.points : 0,
+        selectedOptionId,
+        answerText,
+        isCorrect,
+        pointsAwarded: isCorrect ? question.points : 0,
       },
       update: {
-        selectedOptionId: option.id,
-        isCorrect: option.isCorrect,
-        pointsAwarded: option.isCorrect ? question.points : 0,
+        selectedOptionId,
+        answerText,
+        isCorrect,
+        pointsAwarded: isCorrect ? question.points : 0,
       },
     });
 
@@ -122,8 +157,10 @@ export class QuizzesService {
     const results = quiz.questions.map((q) => ({
       questionId: q.id,
       question: q.question,
+      type: q.type,
       correctOptionId: q.options.find((o) => o.isCorrect)?.id ?? null,
       options: q.options.map((o) => ({ id: o.id, text: o.text, isCorrect: o.isCorrect })),
+      correctAnswerText: q.type === "SHORT_ANSWER" ? q.correctAnswerText : null,
     }));
 
     await this.broadcast.publish(meetingId, WS_EVENTS.QUIZ_CLOSED, { quizId, results, leaderboard });
@@ -134,7 +171,7 @@ export class QuizzesService {
     await this.permissions.getParticipant(meetingId, callerUserId);
     return this.prisma.client.quiz.findMany({
       where: { meetingId },
-      include: { questions: { select: { id: true, question: true, points: true, order: true } } },
+      include: { questions: { select: { id: true, type: true, question: true, points: true, order: true } } },
       orderBy: { createdAt: "desc" },
     });
   }

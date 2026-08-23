@@ -6,8 +6,9 @@ import Link from "next/link";
 import type { AuthUser } from "@/lib/auth-store";
 import { useNotifications } from "@/hooks/use-notifications";
 import { apiFetch } from "@/lib/api-client";
+import { CallOverlay } from "@/components/calls/call-overlay";
 
-export type ActiveNav = "home" | "classes" | "chat" | "contacts" | "recordings" | "notes" | "apps" | "admin";
+export type ActiveNav = "home" | "classes" | "courses" | "chat" | "contacts" | "recordings" | "notes" | "apps" | "admin";
 
 export interface AppShellProps {
   user: AuthUser;
@@ -259,6 +260,10 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
             <path d="M12 3 2 8l10 5 10-5-10-5Z" />
             <path d="M6 10.5V16c0 1.5 2.7 3 6 3s6-1.5 6-3v-5.5" />
           </SidebarLink>
+          <SidebarLink href="/courses" label="Courses" active={active === "courses"}>
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" />
+          </SidebarLink>
           <SidebarLink href="/chat" label="Team Chat" active={active === "chat"} badge={chatUnreadCount}>
             <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.2A8 8 0 1 1 21 12Z" />
           </SidebarLink>
@@ -302,6 +307,7 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
           </aside>
         )}
       </div>
+      <CallOverlay accessToken={accessToken} />
     </div>
   );
 }

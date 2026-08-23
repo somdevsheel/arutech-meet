@@ -202,14 +202,30 @@ enum QuizStatus {
   CLOSED
 }
 
+enum QuizQuestionType {
+  MULTIPLE_CHOICE
+  // Modeled as a MULTIPLE_CHOICE question with exactly two server-generated
+  // `QuizOption` rows ("True"/"False") under the hood — same option/answer/
+  // grading pipeline, `type` only changes how the client renders it (a
+  // toggle instead of an option list).
+  TRUE_FALSE
+  // No `QuizOption` rows at all — graded by comparing the student's free-text
+  // `QuizAnswer.answerText` against `QuizQuestion.correctAnswerText`
+  // (case-insensitive, trimmed exact match; no fuzzy/synonym matching).
+  SHORT_ANSWER
+}
+
 enum NotificationType {
   MEETING_INVITE
   MEETING_REMINDER
   CLASS_REMINDER
   CALL_INCOMING
   RECORDING_READY
+  TRANSCRIPT_READY
   CHAT_MESSAGE
   WAITING_ROOM
+  ASSIGNMENT
+  STUDY_MATERIAL
   SYSTEM
 }
 
@@ -283,6 +299,16 @@ model User {
   breakoutAssignments  BreakoutRoomAssignment[]
   notifications        Notification[]
   uploadedFiles        FileAsset[]
+  createdAssignments   Assignment[]
+  assignmentSubmissions AssignmentSubmission[]
+  createdCourses       Course[]                 @relation("CourseCreator")
+  createdStudyMaterials ClassroomStudyMaterial[]
+  blockedUsers         BlockedUser[]            @relation("BlockerOf")
+  blockedByUsers        BlockedUser[]            @relation("BlockedBy")
+  favoritedContacts     ContactFavorite[]        @relation("FavoritedBy")
+  favoritedByUsers      ContactFavorite[]        @relation("FavoritedContact")
+  contactGroups         ContactGroup[]
+  contactGroupMemberships ContactGroupMember[]
   personalSubscription Subscription?            @relation("PersonalSubscription")
   auditLogs            AuditLog[]
 
@@ -363,6 +389,7 @@ model Organization {
   memberships  Membership[]
   meetings     Meeting[]
   classes      Class[]
+  courses      Course[]
   files        FileAsset[]
   subscription Subscription? @relation("OrgSubscription")
   auditLogs    AuditLog[]
@@ -588,6 +615,7 @@ model MeetingTranscript {
   recording MeetingRecording?   @relation(fields: [recordingId], references: [id], onDelete: SetNull)
   segments  TranscriptSegment[]
   summary   AiSummary?
+  studyMaterials ClassroomStudyMaterial[]
 
   @@index([meetingId])
   @@map("meeting_transcripts")
@@ -639,6 +667,11 @@ model ChatRoom {
   // named from their Meeting/Class, DIRECT rooms are named client-side from
   // the other member(s).
   name        String?
+  // GROUP rooms only, same convention as User.avatarUrl/Organization.logoUrl
+  // (a plain URL, no presigned-upload pipeline of its own — none of those
+  // three has one yet; a real upload flow is a shared follow-up, not scoped
+  // to group photos specifically).
+  photoUrl    String?      @map("photo_url")
   createdById String?      @map("created_by_id")
   createdAt   DateTime     @default(now()) @map("created_at")
 
@@ -656,6 +689,11 @@ model ChatMember {
   chatRoomId        String   @map("chat_room_id")
   userId            String   @map("user_id")
   lastReadMessageId String?  @map("last_read_message_id")
+  // GROUP rooms only — a room's creator starts as its sole admin (see
+  // ChatService.createRoom); DIRECT/MEETING/CLASS rooms have no concept of
+  // admin (there's no membership to manage on them), this field just sits
+  // unused there rather than needing a separate join table.
+  isAdmin           Boolean  @default(false) @map("is_admin")
   joinedAt          DateTime @default(now()) @map("joined_at")
 
   chatRoom ChatRoom @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
@@ -752,12 +790,107 @@ model CallParticipant {
 }
 
 // ------------------------------------------------------------------------------
+// Contacts — block/favorite/group. The contact *list* itself is still derived
+// (see ContactsService's own doc comment: everyone you've actually shared a
+// meeting with, not a hand-maintained address book) — these three models are
+// only for the explicit per-user state that can't be derived: whether you've
+// blocked someone, starred them, or filed them under a group you made up.
+// ------------------------------------------------------------------------------
+
+/// Checked symmetrically wherever a blocked relationship should stop an
+/// interaction (calls, direct messages — see ContactsService.isBlocked): a
+/// block in EITHER direction blocks BOTH directions. Simpler and safer than
+/// tracking "who blocked whom" at every call site — if either person severed
+/// the relationship, neither side should be able to reach the other,
+/// regardless of who did the blocking.
+model BlockedUser {
+  id            String   @id @default(uuid())
+  blockerUserId String   @map("blocker_user_id")
+  blockedUserId String   @map("blocked_user_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  blocker User @relation("BlockerOf", fields: [blockerUserId], references: [id], onDelete: Cascade)
+  blocked User @relation("BlockedBy", fields: [blockedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerUserId, blockedUserId])
+  @@map("blocked_users")
+}
+
+model ContactFavorite {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  contactUserId String   @map("contact_user_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user    User @relation("FavoritedBy", fields: [userId], references: [id], onDelete: Cascade)
+  contact User @relation("FavoritedContact", fields: [contactUserId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, contactUserId])
+  @@map("contact_favorites")
+}
+
+model ContactGroup {
+  id          String   @id @default(uuid())
+  ownerUserId String   @map("owner_user_id")
+  name        String
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  owner   User                 @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  members ContactGroupMember[]
+
+  @@index([ownerUserId])
+  @@map("contact_groups")
+}
+
+model ContactGroupMember {
+  id            String   @id @default(uuid())
+  groupId       String   @map("group_id")
+  contactUserId String   @map("contact_user_id")
+  addedAt       DateTime @default(now()) @map("added_at")
+
+  group   ContactGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  contact User         @relation(fields: [contactUserId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, contactUserId])
+  @@map("contact_group_members")
+}
+
+// ------------------------------------------------------------------------------
 // Classroom
 // ------------------------------------------------------------------------------
+
+// A Course is the shared curriculum identity across however many times it's
+// actually taught — a `Class` below is one specific offering of it (what the
+// brief's own terminology calls a "batch": one fixed roster of students, one
+// set of teachers, its own sessions/assignments), so one Course can have many
+// Class "batches" (e.g. a morning and an evening cohort of the same subject,
+// or the same course run again next term). `Class.courseId` is nullable and
+// purely additive — a `Class` with no course is still a fully self-contained
+// unit exactly as it always was; grouping under a Course is opt-in, not a
+// requirement every class must satisfy.
+model Course {
+  id          String    @id @default(uuid())
+  orgId       String?   @map("org_id")
+  createdById String    @map("created_by_id")
+  title       String
+  description String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  organization Organization? @relation(fields: [orgId], references: [id])
+  createdBy    User          @relation("CourseCreator", fields: [createdById], references: [id])
+  batches      Class[]
+
+  @@index([orgId])
+  @@index([createdById])
+  @@map("courses")
+}
 
 model Class {
   id             String    @id @default(uuid())
   orgId          String?   @map("org_id")
+  courseId       String?   @map("course_id")
   ownerTeacherId String    @map("owner_teacher_id")
   title          String
   description    String?
@@ -767,12 +900,17 @@ model Class {
   deletedAt      DateTime? @map("deleted_at")
 
   organization Organization?  @relation(fields: [orgId], references: [id])
+  course       Course?        @relation(fields: [courseId], references: [id])
   teachers     ClassTeacher[]
   students     ClassStudent[]
   sessions     ClassSession[]
   chatRoom     ChatRoom?
+  assignments  Assignment[]
+  files        FileAsset[]
+  studyMaterials ClassroomStudyMaterial[]
 
   @@index([orgId])
+  @@index([courseId])
   @@index([ownerTeacherId])
   @@map("classes")
 }
@@ -837,6 +975,91 @@ model Attendance {
 
   @@unique([classSessionId, userId])
   @@map("attendance")
+}
+
+model Assignment {
+  id          String    @id @default(uuid())
+  classId     String    @map("class_id")
+  createdById String    @map("created_by_id")
+  title       String
+  description String?
+  fileId      String?   @map("file_id")
+  dueAt       DateTime? @map("due_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  class       Class                  @relation(fields: [classId], references: [id], onDelete: Cascade)
+  createdBy   User                   @relation(fields: [createdById], references: [id])
+  file        FileAsset?             @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  submissions AssignmentSubmission[]
+
+  @@index([classId])
+  @@map("assignments")
+}
+
+/// One row per (assignment, student) — a resubmission overwrites this same row
+/// (fileId/textContent/submittedAt updated, status reset to RESUBMITTED) rather
+/// than creating submission history. See AssignmentsService.submit.
+model AssignmentSubmission {
+  id           String             @id @default(uuid())
+  assignmentId String             @map("assignment_id")
+  studentId    String             @map("student_id")
+  textContent  String?            @map("text_content")
+  fileId       String?            @map("file_id")
+  status       SubmissionStatus   @default(SUBMITTED)
+  score        Int?
+  feedback     String?
+  submittedAt  DateTime           @default(now()) @map("submitted_at")
+  gradedAt     DateTime?          @map("graded_at")
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student    User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  file       FileAsset? @relation(fields: [fileId], references: [id], onDelete: SetNull)
+
+  @@unique([assignmentId, studentId])
+  @@map("assignment_submissions")
+}
+
+enum SubmissionStatus {
+  SUBMITTED
+  RESUBMITTED
+  GRADED
+}
+
+enum StudyMaterialStatus {
+  DRAFT
+  PUBLISHED
+}
+
+/// AI classroom assistant output — lecture notes/flashcards/practice
+/// questions/study guide generated from a class session's already-existing
+/// transcript (reuses the Stage 8 AI meeting-assistant pipeline's
+/// `SummarizationProvider`, a different prompt + JSON schema on the same
+/// interface, not a second AI pipeline). Ships DRAFT so a teacher must
+/// explicitly review and publish before students can see it — see
+/// StudyMaterialsService.
+model ClassroomStudyMaterial {
+  id              String              @id @default(uuid())
+  classId         String              @map("class_id")
+  transcriptId    String              @map("transcript_id")
+  createdByUserId String              @map("created_by_user_id")
+  status          StudyMaterialStatus @default(DRAFT)
+  title           String
+  lectureNotes    String              @map("lecture_notes")
+  studyGuide      String              @map("study_guide")
+  flashcards      Json
+  practiceQuestions Json              @map("practice_questions")
+  provider        String
+  createdAt       DateTime            @default(now()) @map("created_at")
+  publishedAt     DateTime?           @map("published_at")
+
+  class      Class             @relation(fields: [classId], references: [id], onDelete: Cascade)
+  transcript MeetingTranscript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  createdBy  User              @relation(fields: [createdByUserId], references: [id])
+
+  @@index([classId])
+  @@map("classroom_study_materials")
 }
 
 // ------------------------------------------------------------------------------
@@ -941,12 +1164,16 @@ model Quiz {
 }
 
 model QuizQuestion {
-  id           String @id @default(uuid())
-  quizId       String @map("quiz_id")
-  question     String
-  order        Int    @default(0)
-  points       Int    @default(1)
-  timerSeconds Int?   @map("timer_seconds")
+  id                 String           @id @default(uuid())
+  quizId             String           @map("quiz_id")
+  type               QuizQuestionType @default(MULTIPLE_CHOICE)
+  question           String
+  order              Int              @default(0)
+  points             Int              @default(1)
+  timerSeconds       Int?             @map("timer_seconds")
+  // SHORT_ANSWER only — the canonical correct answer, withheld from clients
+  // the same way `QuizOption.isCorrect` is until answered/closed.
+  correctAnswerText  String?          @map("correct_answer_text")
 
   quiz    Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
   options QuizOption[]
@@ -973,6 +1200,9 @@ model QuizAnswer {
   questionId       String   @map("question_id")
   userId           String   @map("user_id")
   selectedOptionId String?  @map("selected_option_id")
+  // SHORT_ANSWER only — the student's free-text response, parallel to
+  // `selectedOptionId` for MULTIPLE_CHOICE/TRUE_FALSE.
+  answerText       String?  @map("answer_text")
   isCorrect        Boolean  @default(false) @map("is_correct")
   pointsAwarded    Int      @default(0) @map("points_awarded")
   answeredAt       DateTime @default(now()) @map("answered_at")
@@ -1048,6 +1278,7 @@ model FileAsset {
   uploaderUserId  String          @map("uploader_user_id")
   scope           FileScope
   meetingId       String?         @map("meeting_id")
+  classId         String?         @map("class_id")
   orgId           String?         @map("org_id")
   storageKey      String          @unique @map("storage_key")
   originalName    String          @map("original_name")
@@ -1060,12 +1291,16 @@ model FileAsset {
   createdAt       DateTime        @default(now()) @map("created_at")
   deletedAt       DateTime?       @map("deleted_at")
 
-  uploader        User             @relation(fields: [uploaderUserId], references: [id])
-  meeting         Meeting?         @relation(fields: [meetingId], references: [id], onDelete: Cascade)
-  organization    Organization?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  chatAttachments ChatAttachment[]
+  uploader              User                   @relation(fields: [uploaderUserId], references: [id])
+  meeting               Meeting?               @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  class                 Class?                 @relation(fields: [classId], references: [id], onDelete: Cascade)
+  organization          Organization?          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  chatAttachments       ChatAttachment[]
+  assignmentAttachments Assignment[]
+  submissionAttachments AssignmentSubmission[]
 
   @@index([meetingId])
+  @@index([classId])
   @@index([uploaderUserId])
   @@map("files")
 }

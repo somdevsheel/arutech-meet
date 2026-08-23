@@ -16,3 +16,17 @@ export const sendRoomChatMessageSchema = z.object({
   replyToId: z.string().uuid().optional(),
 });
 export type SendRoomChatMessageDto = z.infer<typeof sendRoomChatMessageSchema>;
+
+/** GROUP rooms only — rename and/or set a photo. Same "just a URL" convention
+ * as User.avatarUrl/Organization.logoUrl (see the schema comment on
+ * ChatRoom.photoUrl). */
+export const updateChatRoomSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  photoUrl: z.string().url().optional(),
+});
+export type UpdateChatRoomDto = z.infer<typeof updateChatRoomSchema>;
+
+export const addChatRoomMemberSchema = z.object({
+  userId: z.string().uuid(),
+});
+export type AddChatRoomMemberDto = z.infer<typeof addChatRoomMemberSchema>;

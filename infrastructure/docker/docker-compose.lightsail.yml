@@ -95,7 +95,10 @@ services:
       - "7881:7881/tcp" # TCP fallback for networks that block/throttle UDP
       - "50000-50100:50000-50100/udp"
     volumes:
-      - ./livekit.lightsail.yaml:/etc/livekit.yaml:ro
+      # Rendered (gitignored) config, not the tracked *.lightsail.yaml
+      # template — see docs/deployment-lightsail.md §7. The template only
+      # ever has REPLACE_WITH_* placeholders; the real secrets belong here.
+      - ./livekit.lightsail.rendered.yaml:/etc/livekit.yaml:ro
     depends_on:
       - redis
 
@@ -105,7 +108,9 @@ services:
     environment:
       EGRESS_CONFIG_FILE: /etc/egress.yaml
     volumes:
-      - ./egress.lightsail.yaml:/etc/egress.yaml:ro
+      # Rendered (gitignored) config — see the same note on the livekit
+      # service above.
+      - ./egress.lightsail.rendered.yaml:/etc/egress.yaml:ro
     cap_add:
       - SYS_ADMIN
     depends_on:
@@ -160,7 +165,9 @@ services:
     image: nginx:alpine
     restart: unless-stopped
     volumes:
-      - ./nginx.lightsail.conf:/etc/nginx/nginx.conf:ro
+      # Rendered (gitignored) config — the tracked nginx.lightsail.conf keeps
+      # a literal DOMAIN placeholder; see docs/deployment-lightsail.md §7.
+      - ./nginx.lightsail.rendered.conf:/etc/nginx/nginx.conf:ro
       - certbot-conf:/etc/letsencrypt:ro
       - certbot-www:/var/www/certbot:ro
     ports:

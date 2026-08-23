@@ -21,6 +21,10 @@ rtc:
 
 redis:
   address: redis:6379
+  # The compose file starts Redis with --requirepass (unlike local dev's
+  # unauthenticated Redis) — without this, livekit-server fails to start at
+  # all with "unable to connect to redis: NOAUTH Authentication required."
+  password: REPLACE_WITH_REDIS_PASSWORD
 
 keys:
   # Replaced at deploy time — see docs/deployment-lightsail.md §Secrets.

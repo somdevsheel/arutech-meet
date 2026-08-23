@@ -118,6 +118,48 @@ path, matching the "no raw media through the app server" rule for live calls.
   confirmed correct against a real recording (an ~8s capture reported as 6 real seconds of actual
   recorded content, not off by a factor of 1e6/1e9 the way a unit mistake would show up).
 
+## AI meeting assistant
+
+Post-meeting pipeline: `MeetingRecording` (READY) → ffmpeg audio extraction → speech-to-text →
+LLM summarization → `MeetingTranscript` / `TranscriptSegment` / `AiSummary`. Implemented in
+`apps/api/src/ai` (`TranscriptsService`, `TranscriptsController` at `meetings/:id/transcripts`).
+
+- **Provider-agnostic by construction, not just by intent.** `TranscriptsService` depends only on the
+  `TranscriptionProvider` / `SummarizationProvider` interfaces (`apps/api/src/ai/providers/`), injected via
+  DI tokens that `AiProviderModule` resolves from env vars (`TRANSCRIPTION_PROVIDER`, `AI_PROVIDER` — see
+  `packages/config/src/env.ts`), independently of each other. The only concrete implementation today is
+  OpenAI (`whisper-1` for speech-to-text, `gpt-4o-mini` with Structured Outputs for summarization); adding
+  a self-hosted model or another vendor is implementing those two interfaces and adding a case to that
+  factory — `TranscriptsService` doesn't change. With no `OPENAI_API_KEY` configured, `NullTranscription/
+  SummarizationProvider` are selected and requests fail with a clear `503`, never a fake transcript.
+- **The API process downloads and processes the recording itself** (`StorageService.downloadToFile` →
+  ffmpeg `-f segment` splits it into fixed 15-minute mono 16kHz/64kbps audio chunks, well under the
+  Whisper API's 25MB-per-request limit regardless of meeting length) — this doesn't violate the "no raw
+  media through the app server" rule for *live* calls (§Topology above), since this runs entirely after
+  the meeting has ended, against a file already sitting in S3/MinIO, the same way a recording itself is
+  batch-processed rather than proxied live.
+- **Known v1 architectural simplification, documented rather than hidden**: the pipeline runs in-process,
+  fire-and-forget, on whichever API instance received the `POST .../transcripts` request — correct and
+  non-blocking for one instance, but not yet safe across multiple horizontally-scaled API replicas (a
+  crash mid-pipeline leaves the transcript stuck `PROCESSING`, and there's no cross-instance concurrency
+  limit). See the doc comment on `TranscriptsService` for the documented follow-up: a dedicated worker
+  (mirroring the egress worker's separate-process shape) claiming `PENDING` rows, or a real queue
+  (BullMQ on the existing Redis) — the provider interfaces are already agnostic to where they're called
+  from.
+- **Status transitions** (`PENDING` → `PROCESSING` → `READY`/`FAILED`) broadcast over
+  `WS_EVENTS.TRANSCRIPT_UPDATED`, the same pattern as `RECORDING_UPDATED`, plus a `TRANSCRIPT_READY`
+  notification through `NotificationsService` on completion.
+- **No speaker diarization from `whisper-1`** — OpenAI's classic transcription API doesn't separate
+  speakers, so `TranscriptSegment.speakerLabel` is `null` for the OpenAI provider today.
+  `gpt-4o-transcribe-diarize` (`response_format: "diarized_json"`) supports real per-speaker labels and is
+  a documented upgrade path once broadly available, with no interface change needed.
+- **Not live-verified against a real OpenAI account** (no API key available while building this) — unlike
+  Stage 7's recording pipeline, which was run against a live egress worker. What *was* verified for real:
+  the exact ffmpeg extraction/chunking command was run against a synthesized real test video and its
+  output confirmed via `ffprobe` to be valid decodable mono 16kHz audio, correctly split into multiple
+  chunks; the full pipeline (permissions, state machine, error handling) is covered by
+  `apps/api/src/ai/transcripts.service.spec.ts` with the provider boundary mocked.
+
 ## End-to-end encryption
 
 Not implemented. Documented honestly rather than mischaracterized:
@@ -127,8 +169,9 @@ Not implemented. Documented honestly rather than mischaracterized:
   decrypted media** (required to route/forward it, and would be required to record or transcribe it).
 - A true E2EE mode (e.g. LiveKit's optional frame-level E2EE using `insertable streams`) would need:
   keys exchanged out-of-band of the SFU, all participants on E2EE-capable clients, and — critically —
-  **recording and server-side transcription/AI features would not be able to operate on E2EE'd meetings**,
-  since both require the media (or its audio) to be visible to a server-side process. A product using
+  **recording and server-side transcription/AI features (§AI meeting assistant above) would not be able
+  to operate on E2EE'd meetings**, since both require the media (or its audio) to be visible to a
+  server-side process. A product using
   E2EE would need to disable recording/transcription for those meetings or run those features
   client-side only.
 - This is scoped as future work; the architecture does not block adding it (LiveKit supports it), but it

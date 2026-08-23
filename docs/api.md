@@ -53,9 +53,23 @@ hold the corresponding capability from `packages/types/src/permissions.ts` — s
 
 ## Chat (`/meetings/:meetingId/chat`)
 
-`GET /messages?cursor=` — paginated history. Sending a message is WebSocket-only
-(`WS_EVENTS.CHAT_MESSAGE`) — see `docs/realtime.md`; there is deliberately no REST "send message"
-endpoint since delivery must be realtime.
+`GET /messages?cursor=` — paginated history (includes reactions, grouped by emoji, and an `attachment`
+object when present). Sending a message, reacting, replying, and private-DMing are all WebSocket-only
+(`WS_EVENTS.CHAT_MESSAGE`, `CHAT_REACTION`) — see `docs/realtime.md`; there is deliberately no REST "send
+message" endpoint since delivery must be realtime. `DELETE /messages/:messageId` (own message free;
+someone else's requires `chat.delete_any_message`, audit-logged) is REST since it's a one-shot action, not
+a stream — the resulting removal still broadcasts live via `WS_EVENTS.CHAT_MESSAGE_DELETED`.
+
+## Files (`/meetings/:meetingId/files`)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/presign` | participant/`chat.send` | body: `{ fileName, mimeType, sizeBytes }` (20MB cap, MIME allowlist — see `FilesService`); returns `{ fileId, uploadUrl }`. Client PUTs the file directly to `uploadUrl` (never through this API — see `docs/security.md`), then sends a chat message referencing `fileId`. |
+| GET | `/:fileId/download` | participant | short-lived (10 min) presigned S3 URL; 403 if `virusScanStatus` is `INFECTED` (nothing sets this today — no scanner is wired, see `FilesService`'s doc comment) |
+
+Built on the `FileAsset` schema (previously unused). Currently only reachable from meeting chat
+attachments — see `docs/feature-gap-analysis.md` §27 for the documented follow-up to reuse this for
+Classes/Team Chat.
 
 ## Recordings (`/meetings/:meetingId/recordings`)
 
@@ -70,13 +84,55 @@ endpoint since delivery must be realtime.
 See `docs/webrtc.md` §Recording for the full Egress architecture (separate worker service, webhook-driven
 status transitions, the two-S3-endpoint split for presigned URLs).
 
+## AI meeting assistant (`/meetings/:meetingId/transcripts`)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/` | participant | list transcripts for this meeting, with their `AiSummary` included |
+| POST | `/` | owner/`transcript.generate` | body: `{ recordingId? }` (defaults to the meeting's most recent `READY` recording); returns a `PENDING` row immediately, pipeline runs asynchronously — see `docs/webrtc.md` §AI meeting assistant |
+| GET | `/search?q=` | participant | ILIKE search over this meeting's `TranscriptSegment.text`; empty array for queries under 2 chars |
+| GET | `/:transcriptId` | participant | transcript with ordered segments + summary |
+| DELETE | `/:transcriptId` | owner/`transcript.delete` | audit-logged |
+
+Status transitions (`PENDING → PROCESSING → READY/FAILED`) arrive over `WS_EVENTS.TRANSCRIPT_UPDATED`
+(same pattern as `RECORDING_UPDATED` above), plus a `TRANSCRIPT_READY` notification on completion. 503 if
+no `TranscriptionProvider`/`SummarizationProvider` is configured (no `OPENAI_API_KEY`) — see
+`docs/webrtc.md` §AI meeting assistant for the pluggable-provider architecture.
+
+## AI classroom assistant (`/classes/:classId/study-materials`)
+
+Lecture notes/study guide/flashcards/practice questions generated from a class session's already-`READY`
+transcript — reuses the AI meeting assistant's `SummarizationProvider` (`generateStudyMaterial`, a
+different prompt + JSON schema on the same interface). See `docs/roadmap.md` Stage 21.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/eligible-transcripts` | teacher | every `READY` transcript from one of this class's sessions, with the session's title/date, to pick from before generating |
+| POST | `/` | teacher | body: `{ transcriptId }`; the transcript must be `READY` and belong to one of this class's sessions. Synchronous (a single chat-completion call, not TranscriptsService's multi-step audio pipeline) — returns the created row directly, no `PENDING` state. 503 if unconfigured, same as `/transcripts` above |
+| GET | `/` | class member | teacher sees every status; a student only ever sees `PUBLISHED` rows |
+| GET | `/:materialId` | class member | full content (lecture notes/study guide/flashcards/practice questions); 404 (not 403) for a student requesting an unpublished draft — a student has no legitimate reason to know it exists |
+| POST | `/:materialId/publish` | teacher | sets `PUBLISHED`, notifies every `ACTIVE` student (`type: STUDY_MATERIAL`); a no-op if already published |
+| DELETE | `/:materialId` | teacher | hard delete — no submissions or other rows depend on it, unlike `Assignment` |
+
+## Courses (`/courses`)
+
+A Course groups however many `Class` "batches" are actually taught under it — see `docs/roadmap.md`
+Stage 19. Purely additive: a `Class` with no `courseId` behaves exactly as it always did.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/courses` | authenticated | creates a course; caller becomes its sole creator/owner (mirrors `Class.ownerTeacherId`, no `CourseTeacher` join table) |
+| GET | `/courses` | authenticated | courses I created, plus any course with a batch I teach or am enrolled in |
+| GET | `/courses/:id` | creator, or a teacher/student of one of its batches | includes its non-deleted batches |
+| PATCH / DELETE | `/courses/:id` | creator only | delete is a soft delete — existing batches keep their `courseId` and remain fully functional, they just stop showing under an active course grouping |
+
 ## Classes (`/classes`)
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/classes` | creates a class; caller becomes its first teacher |
+| POST | `/classes` | creates a class; caller becomes its first teacher. Body accepts an optional `courseId` to create it directly as a batch of that course — the caller must be that course's creator, checked via `CoursesService.assertOwnedCourse` (403 otherwise) |
 | GET | `/classes` | classes I teach or am enrolled in |
-| GET / PATCH | `/classes/:id` | |
+| GET / PATCH | `/classes/:id` | response includes `course: { id, title } \| null`; `PATCH` can (re)assign `courseId`, same ownership check as create |
 | POST | `/classes/:id/teachers` | add a co-teacher (teacher-only) |
 | POST | `/classes/:id/students` | enroll a student by userId (teacher-only) |
 | DELETE | `/classes/:id/students/:studentUserId` | soft-removes enrollment |
@@ -97,7 +153,7 @@ These are meeting-scoped, not class-scoped — any meeting host can use them, no
 |---|---|
 | Whiteboard | `GET /whiteboard`, `POST /whiteboard/pages`, `POST /whiteboard/pages/save` — live stroke sync is WebSocket-only (`WS_EVENTS.WHITEBOARD_OP`), these are checkpoint/page-management only |
 | Polls | `GET /polls`, `POST /polls`, `POST /polls/:pollId/respond`, `POST /polls/:pollId/close` |
-| Quizzes | `GET /quizzes`, `POST /quizzes`, `POST /quizzes/:quizId/questions/:questionId/answer`, `POST /quizzes/:quizId/close` — correctness is withheld from the answer-key until a student answers or the quiz closes |
+| Quizzes | `GET /quizzes`, `POST /quizzes`, `POST /quizzes/:quizId/questions/:questionId/answer`, `POST /quizzes/:quizId/close` — correctness is withheld from the answer-key until a student answers or the quiz closes. Each question has a `type`: `MULTIPLE_CHOICE`, `TRUE_FALSE` (server-generates the two options), or `SHORT_ANSWER` (graded by case-insensitive, trimmed exact match against `correctAnswerText`, revealed only on close — see `docs/roadmap.md` Stage 20). Answer body is `{ selectedOptionId }` for the first two, `{ answerText }` for the third |
 | Breakout rooms | `GET /breakout-rooms`, `POST /breakout-rooms` (create + auto-assign), `POST /breakout-rooms/assign`, `POST /breakout-rooms/:id/token` (LiveKit token for that room), `POST /breakout-rooms/broadcast`, `POST /breakout-rooms/close-all` |
 
 All of the above require the corresponding capability from `packages/types/src/permissions.ts`
@@ -122,9 +178,77 @@ token from a non-admin user gets a 403, not a 404. See `docs/security.md` and `d
 | GET | `/admin/organizations` \| `/admin/meetings?status=` \| `/admin/classes` \| `/admin/recordings` | read-only listings |
 | GET | `/admin/audit-logs` | reads `audit_logs`, written by `AuditLogService` — see `docs/security.md` for which actions are logged |
 
-## Not yet exposed as REST (schema + service interfaces exist; see docs/roadmap.md)
+## Notifications (`/notifications`)
 
-Transcripts/AI summary (Stage 8, deliberately deferred) and notification listing/preferences. Building
-these out follows the same pattern established here: Zod DTOs in `@arutech/validation`, a
-`PermissionService` capability check, Prisma access via `PrismaService`, realtime fan-out via
-`RealtimeBroadcastService` where relevant.
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/` | most recent 30 for the caller |
+| GET | `/unread-count` | |
+| POST | `/:id/read` \| `/read-all` | |
+
+Every write anywhere in the app goes through `NotificationsService.create` (never a raw
+`prisma.notification.create`), which also pushes a live `WS_EVENTS.NOTIFICATION_CREATED` to the caller's
+personal `user:{id}` room — see `docs/roadmap.md` Stage 11.
+
+## Contacts (`/contacts`)
+
+The contact list itself (`GET /`) is derived from real meeting history, not a stored address book — see
+`ContactsService`'s own doc comment. Block/favorite/group are the exception: genuine per-user state on top
+of that derived list. See `docs/roadmap.md` Stage 22.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/` | authenticated | everyone the caller has shared a meeting with; excludes anyone with a block relationship in either direction; each row includes `isFavorite`/`groupIds`; favorites sort first |
+| GET | `/blocked` | authenticated | people the caller has blocked |
+| POST | `/blocked` | authenticated | body: `{ userId }`; idempotent |
+| DELETE | `/blocked/:userId` | authenticated | |
+| POST / DELETE | `/:userId/favorite` | authenticated | |
+| GET | `/groups` | authenticated | the caller's own contact groups, each with its members |
+| POST | `/groups` | authenticated | body: `{ name }` |
+| DELETE | `/groups/:groupId` | authenticated, group owner | deleting a group never touches the underlying contacts |
+| POST | `/groups/:groupId/members` | authenticated, group owner | body: `{ userId }`; 409 if already a member |
+| DELETE | `/groups/:groupId/members/:userId` | authenticated, group owner | |
+
+A block is checked symmetrically (either direction blocks both) wherever an interaction should be
+rejected: `POST /calls` (any blocked callee → 403) and `POST /chat-rooms` for a `DIRECT` room (403) — see
+`ContactsService.isBlocked`.
+
+## Calls (`/calls`)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/` | authenticated | body: `{ calleeUserIds: string[], type: "AUDIO" \| "VIDEO" }` (1:1 UI only today; the array is already group-call-ready). 409 if the sole callee is already on another call. Returns `{ callId, token, url, livekitRoomName }` — the caller's own LiveKit token, minted immediately. |
+| GET | `/history` | authenticated | last 50 calls involving the caller, with the other participant(s), status, duration |
+| POST | `/:callId/accept` | callee, call still `RINGING` | returns `{ token, url, livekitRoomName }` for the callee |
+| POST | `/:callId/reject` | callee | |
+| POST | `/:callId/cancel` | caller only, call still `RINGING` | |
+| POST | `/:callId/end` | either party, call `ONGOING` | closes out every still-`JOINED` participant if the call has ≤2 total (see `docs/roadmap.md` Stage 15 for the bug this fixed) |
+
+State changes broadcast live over `WS_EVENTS.CALL_INCOMING`/`CALL_ACCEPTED`/`CALL_REJECTED`/`CALL_ENDED`,
+each to the other participant(s)' personal `user:{id}` room — never a meeting room, since a call has no
+`Meeting`. See `docs/webrtc.md` for why this reuses the meeting media stack rather than a second engine.
+
+## Assignments (`/classes/:classId/assignments`)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/` | teacher | creates an assignment (title, optional description/dueAt/fileId); notifies every `ACTIVE` student |
+| GET | `/` | class member | list, newest first, with attached material's file metadata |
+| GET | `/:assignmentId` | class member | |
+| PATCH / DELETE | `/:assignmentId` | teacher | delete is a soft delete (`deletedAt`) |
+| POST | `/presign` | class member | presigned upload for either assignment material or a submission — same endpoint, same MIME allowlist as meeting-chat files (`apps/api/src/files/file-upload.util.ts`) |
+| GET | `/:assignmentId/files/:fileId/download` | class member | permission-checked: the assignment's own material, the caller's own submission, or (teacher) any student's submission |
+| POST | `/:assignmentId/submissions` | active student | body: `{ textContent?, fileId? }` (at least one required). Resubmission overwrites the same row (`status: RESUBMITTED`, clears any prior `score`/`feedback`/`gradedAt`) rather than keeping submission history — notifies every class teacher |
+| GET | `/:assignmentId/submissions` | teacher | every student's submission |
+| GET | `/:assignmentId/submissions/me` | class member | caller's own submission, or `null` if not yet submitted |
+| POST | `/:assignmentId/submissions/:studentId/grade` | teacher | body: `{ score, feedback? }`; 404 if that student hasn't submitted; notifies the student |
+
+See `docs/roadmap.md` Stage 16, including a frontend bug this stage's live verification caught (a
+`null` submission response being indistinguishable on the wire from "hasn't loaded yet").
+
+## Not yet exposed as REST (schema exists; see docs/roadmap.md)
+
+Per-user notification *preferences* (channel opt-in/out per notification type — listing above already
+exists). Building this out follows the same pattern established throughout this API: Zod DTOs in
+`@arutech/validation`, a `PermissionService` capability check where relevant, Prisma access via
+`PrismaService`, realtime fan-out via `RealtimeBroadcastService`.

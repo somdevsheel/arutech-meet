@@ -10,6 +10,9 @@ ws_url: ws://livekit:7880
 
 redis:
   address: redis:6379
+  # Must match the Redis password livekit.lightsail.yaml is configured with —
+  # see the same comment there.
+  password: REPLACE_WITH_REDIS_PASSWORD
 
 # Headless Chrome + FFmpeg per concurrent recording is CPU/memory heavy — keep
 # this low on a small instance. Raise only if you've sized the instance for it

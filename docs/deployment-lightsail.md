@@ -59,9 +59,126 @@ done testing (§Teardown) — Lightsail bills hourly, this isn't meant to run 24
 ## Prerequisites
 
 - An AWS account with billing enabled
-- A domain (or subdomain, e.g. `meet-test.yourdomain.com`) you can add a DNS A record to
+- A domain (or subdomain, e.g. `meet-test.yourdomain.com`) you can add a DNS A record to — **or no domain
+  at all**, using the free sslip.io hostname described in §2 DNS
 - An SSH key pair (Lightsail can generate one for you on instance creation, or bring your own)
 - This repo, and the ability to `git clone` it onto the instance (or `scp` it up)
+
+## Alternative: self-hosting from your own PC instead of a Lightsail instance
+
+Everything from §2 (DNS) onward — secrets, storage, LiveKit/nginx config, TLS via certbot, `docker compose
+up`, and real-device testing — is identical whether it's running on a Lightsail VM or your own PC. Docker
+doesn't know or care which one it's on. Only §1 (instance creation) and §3 (firewall) change: there's no
+Lightsail console, and "open a port" means your **router**, not a cloud firewall. Skip §1 and §3 entirely
+and do this instead, then rejoin the doc at §2 DNS.
+
+**0. Confirm you're not behind CGNAT first — this is the step that silently kills the whole plan if
+skipped.** Many ISPs (especially cable and most mobile/fixed-wireless) hand out an IP they call "static"
+that's still behind Carrier-Grade NAT — your router never actually holds a real internet-facing address, so
+no amount of port forwarding reaches it. Check your router's WAN/Internet status page for its public IP,
+then compare against what an outside service reports:
+
+```bash
+curl -s https://api.ipify.org
+```
+
+If these two don't match, you're behind CGNAT and port forwarding cannot work — you'd need a tunnel
+service (Cloudflare Tunnel, Tailscale Funnel) instead, which is a different enough setup that it's out of
+scope for this doc. If they match, you have a real routable IP and the rest of this section applies as
+written.
+
+**1. Forward these ports on your router** (router admin UI → Port Forwarding / Virtual Server — exact name
+varies by brand) to your PC's LAN IP. Same list as the Lightsail firewall table in §3, just configured a
+router instead of a cloud console:
+
+| Port(s) | Protocol | Forward to |
+|---|---|---|
+| 80, 443 | TCP | your PC's LAN IP |
+| 7880, 7881 | TCP | your PC's LAN IP |
+| 50000-50100 | UDP | your PC's LAN IP |
+
+Leave everything else closed — don't forward SSH/RDP or anything else while you're at it. Give your PC a
+DHCP reservation or a static LAN IP first (its own router setting) so this mapping doesn't silently break
+the next time your PC reboots and gets handed a different LAN address.
+
+Also open these same ports in your PC's own OS firewall (`ufw allow 80,443,7880,7881,50000:50100/udp` on
+Linux; Windows Defender Firewall / macOS System Settings → Firewall have GUI equivalents) — the router
+forwards traffic to your PC, but the OS firewall still has to let it in once it arrives.
+
+**2. Skip Lightsail's "static IP" step entirely** — an ISP-assigned static IP already doesn't change, which
+is the whole reason it works here. Use `curl -s https://api.ipify.org` (from step 0) as the address for the
+DNS A record in §2, instead of a Lightsail static IP.
+
+**3. In §4 (Server setup), skip instance creation and SSH — you're already on the machine.** Install
+Docker directly (same `apt-get`/`docker-ce` commands if you're on Linux; use Docker Desktop on
+Windows/Mac — its published ports still forward from the host OS exactly like a Linux Docker install does,
+so nothing else in this doc changes for that case) and `git clone` the repo into a normal directory on your
+PC instead of `~/arutech-meet` on a VM.
+
+**Two caveats specific to this path, not present when using an actual Lightsail instance:**
+
+- **Your PC has to stay on, awake, and connected for the site to be reachable at all** — no sleep/hibernate,
+  and Wi-Fi power-saving disabled if it's not wired. A Lightsail instance you can walk away from; this one
+  goes dark the moment the laptop lid closes.
+- **This exposes your home network to the internet for as long as it's running**, not a disposable cloud
+  box you delete when done (§Teardown doesn't really apply — instead, just stop the containers
+  (`dc down`) and remove the router port-forwarding rules when you're finished testing). Worth being
+  deliberate about how long you leave this up, and keeping the OS firewall rules from step 1 scoped to
+  exactly those ports and nothing wider.
+- **This path depends on your ISP allowing inbound connections to your line at all.** Residential ISPs
+  commonly block unsolicited inbound WAN traffic as policy, independent of whether the IP is "static" —
+  a static IP means the address doesn't change, not that hosting from it is permitted. If port-forwarded
+  rules are configured correctly but a connection from outside your network still gets refused on every
+  port you try, this is the likely cause, and it isn't fixable from your router — either ask your ISP to
+  lift it for your line, or use a tunnel service (Cloudflare Tunnel, Tailscale Funnel) that only needs
+  outbound connectivity, which almost no ISP blocks.
+
+## Alternative: AWS EC2 instead of Lightsail
+
+EC2 is a reasonable substitute if you'd rather use an existing AWS account/VPC setup, need an instance
+type or region Lightsail doesn't offer, or hit the ISP inbound-blocking problem above and want to move
+hosting off residential internet entirely — an EC2 instance's public IP has inbound traffic controlled by
+a Security Group you configure directly, with no ISP in between deciding what's allowed to reach it.
+Lightsail is built on top of EC2, so almost nothing else in this doc changes:
+
+- **Instance creation**: EC2 console → Launch Instance → Ubuntu 22.04 LTS AMI → an instance type in the
+  same RAM/vCPU range as the sizing table above (e.g. `t3.small` ≈ Lightsail's 4 GB tier, `t3.medium` ≈
+  the 8 GB tier) → create or reuse a key pair for SSH.
+- **Static IP**: allocate an **Elastic IP** (VPC → Elastic IPs → Allocate) and associate it with the
+  instance — this is EC2's equivalent of Lightsail's "Create static IP" step in §1, same reasoning (a
+  stopped/restarted instance otherwise gets a new IP each time).
+- **Firewall**: instead of Lightsail's Networking tab, this is the instance's **Security Group** (EC2
+  console → Security Groups → Inbound rules) — add the exact same port list from §3 (22, 80, 443, 7880,
+  7881 TCP; 50000-50100 UDP), restricting 22 to your own IP if possible, same as recommended there.
+- Everything from §4 (Server setup) onward — Docker install, secrets, storage, LiveKit/nginx config, TLS,
+  build/start, verify, real-device testing — is unchanged; none of it is Lightsail-specific.
+
+**One real cost difference worth knowing**: Lightsail bundles a fixed monthly price with a data-transfer
+allowance included. EC2 bills compute, EBS storage, and outbound data transfer separately — compute cost
+for an equivalent instance size is similar, but if you're self-hosting LiveKit's SFU (video is
+data-transfer-heavy), EC2's per-GB egress charges can add up faster than Lightsail's bundled allowance.
+This matters much less if you use **LiveKit Cloud** instead of self-hosting `livekit`/`egress` (see below)
+— video traffic then never crosses your instance's network interface at all.
+
+### Using LiveKit Cloud instead of self-hosting the SFU
+
+Independent of Lightsail vs. EC2 vs. your own PC, you can skip self-hosting `livekit`/`egress` entirely
+and point this app at a [LiveKit Cloud](https://cloud.livekit.io) project instead — a managed SFU with
+its own public `wss://` endpoint and TURN/relay already handled. This removes the single hardest part of
+any of these paths: the UDP 50000-50100 media port range never needs to be opened, forwarded, or reachable
+on your instance/router at all, since browsers/devices connect straight to LiveKit Cloud instead of to
+your server for the actual audio/video transport.
+
+To use it: create a project at cloud.livekit.io, generate an API key/secret from its dashboard, and set
+`LIVEKIT_URL` (the project's `wss://...livekit.cloud` address), `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`
+in `.env.lightsail` to those values instead of self-generated ones — then drop the `livekit` and `egress`
+services from whichever compose command you run (they're not needed; the API talks to LiveKit Cloud's
+REST API directly instead of a local container). This doesn't remove the need for the web/API layer itself
+to be reachable by a real device — that part still needs one of the paths above (Lightsail, EC2, or a
+tunnel) — but it does mean that part alone only ever needs ports 80/443, never the UDP range.
+
+**Treat any API secret generated this way as sensitive** — anyone with it can control your LiveKit Cloud
+project. Regenerate it in the dashboard if it's ever been pasted somewhere outside your own secrets file.
 
 ## 1. Create the instance
 
@@ -90,14 +207,59 @@ done testing (§Teardown) — Lightsail bills hourly, this isn't meant to run 24
 
 ## 2. DNS
 
-Point an A record at the static IP:
+### No domain? Use sslip.io — this is what the rest of this doc assumes if you're following along without one
+
+A bare IP address can't get a normal trusted HTTPS certificate — Let's Encrypt only issues certs for
+hostnames, not IPs — and browsers refuse camera/mic access over plain HTTP on anything but `localhost`. But
+[sslip.io](https://sslip.io) is a free public DNS service that resolves `<your-ip-with-dots-as-dashes>.sslip.io`
+straight back to that IP, automatically, for any IP — no signup, no dashboard, nothing to configure. Since
+it's a real hostname, Let's Encrypt treats it exactly like any domain and issues a real, fully-trusted
+cert for it, so every other step in this doc (TLS, LiveKit, nginx config) works completely unchanged —
+`DOMAIN` in `.env.lightsail` is just this hostname instead of something under a domain you own:
+
+```bash
+echo "$(curl -s https://api.ipify.org | tr '.' '-').sslip.io"
+```
+
+Confirm it resolves back to your IP before moving on — this part *is* a real command:
+
+```bash
+dig +short $(curl -s https://api.ipify.org | tr '.' '-').sslip.io
+```
+
+That's the entire DNS step — there's no record to create, nothing to wait to propagate, skip straight to
+§3/§4 (or, if self-hosting from your own PC, straight to that section's step 1). Use this resulting
+hostname as `DOMAIN` everywhere the rest of the doc refers to it.
+
+### If you do own a domain instead
+
+This step happens in your domain registrar's or DNS provider's **web dashboard** (Namecheap, GoDaddy,
+Cloudflare, Route53, whoever you registered/manage `yourdomain.com` with) — not a command to type into a
+terminal. Find its DNS/Zone management page and add an A record:
+
+| Field | Value |
+|---|---|
+| Type | A |
+| Host / Name | `meet-test` (just the subdomain — the provider appends `.yourdomain.com` itself) |
+| Value / Points to | your static IP |
+| TTL | default is fine, or set it low (e.g. 300s) while testing so changes propagate faster |
+
+The zone-file shorthand for the record you're creating, if your provider shows one, looks like this:
 
 ```
 meet-test.yourdomain.com.   A   <static IP>
 ```
 
-Wait for it to resolve (`dig +short meet-test.yourdomain.com`) before continuing — certbot in step 6 needs
-this to already work.
+Once saved, wait for it to resolve — this part *is* a terminal command, run from anywhere with internet
+access, not the instance itself:
+
+```bash
+dig +short meet-test.yourdomain.com
+```
+
+Keep re-running it until it prints your static IP (DNS propagation is usually seconds to a few minutes,
+occasionally longer). Don't move on to TLS in step 8 until it does — certbot's domain-ownership check
+needs this to already be resolving correctly.
 
 ## 3. Firewall (Networking tab → IPv4 Firewall)
 
@@ -128,7 +290,7 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plu
 sudo usermod -aG docker $USER
 # log out and back in for the group change to apply, then:
 
-git clone <your fork's URL> arutech-meet
+git clone https://github.com/somdevsheel/arutech-meet.git arutech-meet
 cd arutech-meet
 ```
 
@@ -196,7 +358,7 @@ cat >> .env.lightsail <<EOF
 S3_ENDPOINT=...
 S3_PUBLIC_ENDPOINT=
 S3_REGION=us-east-1
-S3_BUCKET=...
+S3_BUCKET=arutech-meet-dev
 S3_ACCESS_KEY=...
 S3_SECRET_KEY=...
 S3_FORCE_PATH_STYLE=...
@@ -263,32 +425,55 @@ real footgun (Compose errors on a `depends_on` referencing a service excluded by
 
 ## 7. LiveKit and Egress config
 
-Copy the templates and fill in the same key/secret you generated above:
+**Render the templates into new `.rendered.` files — never edit `livekit.lightsail.yaml` /
+`egress.lightsail.yaml` / `nginx.lightsail.conf` in place.** Those three are checked into git as reusable
+templates (`REPLACE_WITH_*`/`DOMAIN` placeholders only, safe for a public repo); the compose file mounts
+the `*.rendered.*` copies instead (`docker-compose.lightsail.yml`), and `.gitignore` excludes exactly that
+`*.lightsail.rendered.*` pattern so the real secrets these commands fill in can never end up in a commit
+by accident:
 
 ```bash
+cp infrastructure/docker/livekit.lightsail.yaml infrastructure/docker/livekit.lightsail.rendered.yaml
+cp infrastructure/docker/egress.lightsail.yaml infrastructure/docker/egress.lightsail.rendered.yaml
+
 sed -i \
-  -e "s/REPLACE_WITH_LIVEKIT_API_KEY/$(grep LIVEKIT_API_KEY .env.lightsail | cut -d= -f2)/g" \
-  -e "s/REPLACE_WITH_LIVEKIT_API_SECRET_MIN_32_CHARS/$(grep LIVEKIT_API_SECRET .env.lightsail | cut -d= -f2)/g" \
-  infrastructure/docker/livekit.lightsail.yaml infrastructure/docker/egress.lightsail.yaml
+  -e "s/REPLACE_WITH_LIVEKIT_API_KEY/$(grep '^LIVEKIT_API_KEY=' .env.lightsail | cut -d= -f2)/g" \
+  -e "s/REPLACE_WITH_LIVEKIT_API_SECRET_MIN_32_CHARS/$(grep '^LIVEKIT_API_SECRET=' .env.lightsail | cut -d= -f2)/g" \
+  -e "s/REPLACE_WITH_REDIS_PASSWORD/$(grep '^REDIS_PASSWORD=' .env.lightsail | cut -d= -f2)/g" \
+  infrastructure/docker/livekit.lightsail.rendered.yaml infrastructure/docker/egress.lightsail.rendered.yaml
 ```
 
-Double check `infrastructure/docker/livekit.lightsail.yaml` afterward — it must have `use_external_ip:
-true` (already set in the template; don't copy the local dev `livekit.yaml`, which has it `false`). This
-is the single most common cause of "works on localhost, black screen on a real device": without it,
-LiveKit hands out ICE candidates using its container-internal IP, which nothing on the internet can route
-to.
+Both files need this `REDIS_PASSWORD` substitution because the compose file starts Redis with
+`--requirepass` (unlike local dev's unauthenticated Redis) — skip it and both `livekit` and `egress`
+crash-loop on startup with `unable to connect to redis: NOAUTH Authentication required.`, which only
+surfaces once you actually run the containers, not from `docker compose config`.
+
+Double check `infrastructure/docker/livekit.lightsail.rendered.yaml` afterward — it must have
+`use_external_ip: true` (already set in the template; don't copy the local dev `livekit.yaml`, which has
+it `false`). This is the single most common cause of "works on localhost, black screen on a real device":
+without it, LiveKit hands out ICE candidates using its container-internal IP, which nothing on the
+internet can route to.
 
 `nginx.lightsail.conf`'s `ssl_certificate`/`ssl_certificate_key` lines also have a literal `DOMAIN`
 placeholder — nginx doesn't expand environment variables in its config, and this file is bind-mounted
-read-only rather than passed through envsubst, so it needs the same one-time `sed` treatment:
+read-only rather than passed through envsubst, so it needs the same treatment, into its own rendered copy:
 
 ```bash
-sed -i "s/DOMAIN/$(grep '^DOMAIN=' .env.lightsail | cut -d= -f2)/g" infrastructure/docker/nginx.lightsail.conf
+cp infrastructure/docker/nginx.lightsail.conf infrastructure/docker/nginx.lightsail.rendered.conf
+sed -i "s/DOMAIN/$(grep '^DOMAIN=' .env.lightsail | cut -d= -f2)/g" infrastructure/docker/nginx.lightsail.rendered.conf
 ```
 
 Skipping this leaves nginx looking for a cert at `/etc/letsencrypt/live/DOMAIN/fullchain.pem` — a path
 that will never exist, since certbot in step 8 issues into a directory named after your *actual* domain —
 and nginx fails to start at all (`nginx -t` will point at this exact line if that happens).
+
+**If you ever ran an earlier version of this doc that used `sed -i` on the templates directly**: check
+`git status` before committing anything in this repo. If `livekit.lightsail.yaml`, `egress.lightsail.yaml`,
+or `nginx.lightsail.conf` show as modified with real secrets/domain baked in, run
+`git checkout -- infrastructure/docker/livekit.lightsail.yaml infrastructure/docker/egress.lightsail.yaml infrastructure/docker/nginx.lightsail.conf`
+to restore the placeholder versions, then re-run the commands above targeting the `.rendered.` copies —
+and treat any secret that was ever staged or committed as compromised (regenerate it) even if you caught
+it before pushing.
 
 ## 8. TLS (Let's Encrypt via certbot, webroot mode)
 

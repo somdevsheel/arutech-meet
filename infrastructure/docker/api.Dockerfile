@@ -55,6 +55,11 @@ RUN pnpm --filter "@arutech/api..." build
 # real constraint; correctness came first here.
 FROM base AS runtime
 ENV NODE_ENV=production
+# ffmpeg is shelled out to by the AI meeting assistant pipeline (apps/api/src/ai
+# TranscriptsService) to extract/chunk audio from a recording before sending it
+# to a transcription provider — see that file's doc comment. Not needed by any
+# other part of the API; only added here, not to web/mobile images.
+RUN apk add --no-cache ffmpeg
 RUN addgroup -S arutech && adduser -S arutech -G arutech
 
 COPY --from=build /workspace /workspace

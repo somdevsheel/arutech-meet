@@ -12,7 +12,15 @@ import {
 import { createAdapter } from "@socket.io/redis-adapter";
 import type Redis from "ioredis";
 import type { Server, Socket } from "socket.io";
-import { WS_EVENTS, type ParticipantPresencePayload } from "@arutech/types";
+import {
+  WS_EVENTS,
+  REACTION_EMOJIS,
+  CHAT_REACTION_EMOJIS,
+  type ParticipantPresencePayload,
+  type ReactionEmoji,
+  type ReactionPayload,
+  type ChatReactionEmoji,
+} from "@arutech/types";
 import { sendChatMessageSchema, sendRoomChatMessageSchema, whiteboardOpSchema } from "@arutech/validation";
 import type { Env } from "@arutech/config";
 import { TokenService } from "../common/lib/tokens";
@@ -26,6 +34,13 @@ import { NotificationsService } from "../notifications/notifications.service";
 interface SocketData {
   userId: string;
   email: string;
+  /** This socket's own last-broadcast presence, stashed here purely so a
+   * participant who joins the meeting LATER can be handed a roster snapshot
+   * of everyone already present (see onJoinMeeting) — without this, only
+   * participants who join AFTER you would ever appear in your own
+   * Participants panel, since PARTICIPANT_JOINED is otherwise only ever
+   * broadcast at the moment each participant joins, never replayed. */
+  presence?: ParticipantPresencePayload;
 }
 
 function meetingRoom(meetingId: string): string {
@@ -163,6 +178,17 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       return;
     }
 
+    // Snapshot everyone already in the room BEFORE this socket joins it (and
+    // before broadcasting this participant's own presence) — sent only to
+    // this joining client, not the room, since everyone else already knows
+    // about each other. See the SocketData.presence doc comment for why this
+    // is necessary at all.
+    const existingSockets = await this.server.in(meetingRoom(body.meetingId)).fetchSockets();
+    for (const existing of existingSockets) {
+      const existingPresence = (existing.data as SocketData).presence;
+      if (existingPresence) client.emit(WS_EVENTS.PARTICIPANT_JOINED, existingPresence);
+    }
+
     await client.join(meetingRoom(body.meetingId));
 
     const presence: ParticipantPresencePayload = {
@@ -175,6 +201,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       isScreenSharing: false,
       handRaised: false,
     };
+    (client.data as SocketData).presence = presence;
     this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.PARTICIPANT_JOINED, presence);
   }
 
@@ -196,21 +223,12 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   ) {
     const { userId } = client.data as SocketData;
     const dto = sendChatMessageSchema.parse(body);
-    const message = await this.chat.persistMessage(body.meetingId, userId, dto);
+    // Already in wire format (ChatMessagePayload) — ChatService.shapeMessage is
+    // the single place that groups reactions/builds the attachment field, used
+    // identically by REST history and every WS path.
+    const payload = await this.chat.persistMessage(body.meetingId, userId, dto);
 
     const target = dto.isPrivate && dto.toUserId ? [dto.toUserId, userId] : null;
-    const payload = {
-      id: message.id,
-      chatRoomId: message.chatRoomId,
-      senderId: message.senderId,
-      senderName: message.sender?.displayName ?? "Unknown",
-      body: message.body,
-      replyToId: message.replyToId,
-      isPrivate: message.isPrivate,
-      toUserId: message.toUserId,
-      createdAt: message.createdAt.toISOString(),
-    };
-
     if (target) {
       // Private DM: emit only to sockets belonging to the two participants. We look
       // up sockets in the meeting room and filter by attached userId rather than
@@ -224,6 +242,23 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     } else {
       this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.CHAT_MESSAGE, payload);
     }
+  }
+
+  /** Toggles the caller's own reaction on a chat message and broadcasts the
+   * message's full updated reaction list to the room — see
+   * ChatService.toggleReaction. Reactions aren't private-message-aware (they
+   * broadcast to the whole meeting room regardless of whether the message
+   * itself was private) since only the two participants of a private message
+   * would ever have it rendered to react to in the first place. */
+  @SubscribeMessage(WS_EVENTS.CHAT_REACTION)
+  async onChatReaction(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { meetingId: string; messageId: string; emoji: string },
+  ) {
+    if (!CHAT_REACTION_EMOJIS.includes(body.emoji as ChatReactionEmoji)) return;
+    const { userId } = client.data as SocketData;
+    const payload = await this.chat.toggleReaction(body.meetingId, userId, body.messageId, body.emoji);
+    this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.CHAT_REACTION, payload);
   }
 
   // ── Team chat (standing GROUP/DIRECT rooms) ─────────────────────────────
@@ -292,16 +327,64 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   @SubscribeMessage(WS_EVENTS.HAND_RAISE)
   onHandRaise(@ConnectedSocket() client: Socket, @MessageBody() body: { meetingId: string }) {
-    this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.HAND_RAISE, {
-      userId: (client.data as SocketData).userId,
-    });
+    // Keeps this socket's stashed presence snapshot accurate for anyone who
+    // joins later (see onJoinMeeting) — otherwise a hand raised before a
+    // third participant joins would silently reset to "not raised" for them.
+    const data = client.data as SocketData;
+    if (data.presence) data.presence.handRaised = true;
+    this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.HAND_RAISE, { userId: data.userId });
   }
 
+  /** `targetUserId` lets a host/co-host lower someone ELSE's hand (spec: host
+   * action "Lower hand") — gated behind the same `participant.mute` capability
+   * used for other host-only participant controls, since there's no dedicated
+   * capability for this and it's the same class of action (host manages
+   * another participant's meeting state). Without `targetUserId`, this is the
+   * normal self-service path any participant already uses to lower their own hand. */
   @SubscribeMessage(WS_EVENTS.HAND_LOWER)
-  onHandLower(@ConnectedSocket() client: Socket, @MessageBody() body: { meetingId: string }) {
-    this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.HAND_LOWER, {
-      userId: (client.data as SocketData).userId,
-    });
+  async onHandLower(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { meetingId: string; targetUserId?: string },
+  ) {
+    const { userId } = client.data as SocketData;
+    let targetUserId = userId;
+    if (body.targetUserId && body.targetUserId !== userId) {
+      await this.permissions.requireCapability(body.meetingId, userId, "participant.mute");
+      targetUserId = body.targetUserId;
+    }
+
+    // Keep whichever socket owns this presence accurate for future joiners
+    // (see onJoinMeeting) — the target may be a different socket than the
+    // caller's own when a host force-lowers someone else's hand.
+    if (targetUserId === userId) {
+      const data = client.data as SocketData;
+      if (data.presence) data.presence.handRaised = false;
+    } else {
+      // Best-effort: `fetchSockets()` returns remote-socket snapshots when the
+      // target is connected to a different gateway instance (Redis-adapter
+      // cluster), and mutating `.data` on those doesn't propagate back to the
+      // real socket on its owning instance. Single-instance (today's actual
+      // deployment) this is exact; multi-instance it only risks a stale
+      // snapshot for a THIRD participant who joins between now and the
+      // target's next hand-raise/lower action — never a wrong broadcast to
+      // anyone already connected, which uses the room emit below regardless.
+      const roomSockets = await this.server.in(meetingRoom(body.meetingId)).fetchSockets();
+      const targetSocket = roomSockets.find((s) => (s.data as SocketData).userId === targetUserId);
+      if (targetSocket?.data.presence) targetSocket.data.presence.handRaised = false;
+    }
+
+    this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.HAND_LOWER, { userId: targetUserId });
+  }
+
+  /** Emoji reactions: ephemeral, like hand raise — broadcast to the meeting room
+   * and never persisted (the client renders and auto-expires them). Validated
+   * against the fixed REACTION_EMOJIS set so this channel can't be used to
+   * broadcast arbitrary strings to every other participant's browser. */
+  @SubscribeMessage(WS_EVENTS.REACTION)
+  onReaction(@ConnectedSocket() client: Socket, @MessageBody() body: { meetingId: string; emoji: string }) {
+    if (!REACTION_EMOJIS.includes(body.emoji as ReactionEmoji)) return;
+    const payload: ReactionPayload = { userId: (client.data as SocketData).userId, emoji: body.emoji as ReactionEmoji };
+    this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.REACTION, payload);
   }
 
   /** Live stroke-by-stroke whiteboard sync. High-frequency and ephemeral by

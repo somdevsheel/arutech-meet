@@ -46,10 +46,17 @@ export const promoteCoHostSchema = z.object({
 });
 export type PromoteCoHostDto = z.infer<typeof promoteCoHostSchema>;
 
-export const sendChatMessageSchema = z.object({
-  body: z.string().min(1).max(4000),
-  replyToId: z.string().uuid().optional(),
-  isPrivate: z.boolean().default(false),
-  toUserId: z.string().uuid().optional(),
-});
+export const sendChatMessageSchema = z
+  .object({
+    // Optional (not the min(1) it used to be) so a file/image can be sent on
+    // its own, with no caption — same as every mainstream chat app.
+    body: z.string().max(4000).optional(),
+    replyToId: z.string().uuid().optional(),
+    isPrivate: z.boolean().default(false),
+    toUserId: z.string().uuid().optional(),
+    fileId: z.string().uuid().optional(),
+  })
+  .refine((data) => (data.body && data.body.length > 0) || data.fileId, {
+    message: "A message needs either text or an attached file",
+  });
 export type SendChatMessageDto = z.infer<typeof sendChatMessageSchema>;

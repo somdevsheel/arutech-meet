@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { createChatRoomSchema, type CreateChatRoomDto } from "@arutech/validation";
 import { ChatService } from "./chat.service";
@@ -18,6 +18,15 @@ export class ChatController {
     @Query("cursor") cursor?: string,
   ) {
     return this.chatService.history(meetingId, user.id, cursor);
+  }
+
+  @Delete("messages/:messageId")
+  deleteMessage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("meetingId") meetingId: string,
+    @Param("messageId") messageId: string,
+  ) {
+    return this.chatService.deleteMessage(meetingId, user.id, messageId);
   }
 }
 

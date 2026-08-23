@@ -2,8 +2,10 @@
 
 import { useLocalParticipant } from "@livekit/components-react";
 import { useState } from "react";
+import { REACTION_EMOJIS, type ReactionEmoji } from "@arutech/types";
+import { VirtualBackgroundPanel } from "./virtual-background-panel";
 
-export type PanelKind = "participants" | "chat" | "tools" | "recordings";
+export type PanelKind = "participants" | "chat" | "tools" | "recordings" | "info";
 
 interface Props {
   activePanel: PanelKind | null;
@@ -13,6 +15,9 @@ interface Props {
   canShareScreen: boolean;
   participantCount: number;
   unreadChatCount: number;
+  handRaised: boolean;
+  onToggleHand: () => void;
+  onReact: (emoji: ReactionEmoji) => void;
 }
 
 /** Custom toolbar (not LiveKit's prebuilt ControlBar) so the room has its own visual
@@ -26,10 +31,15 @@ export function MeetingToolbar({
   canShareScreen,
   participantCount,
   unreadChatCount,
+  handRaised,
+  onToggleHand,
+  onReact,
 }: Props) {
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } =
     useLocalParticipant();
   const [busy, setBusy] = useState(false);
+  const [reactionsOpen, setReactionsOpen] = useState(false);
+  const [backgroundOpen, setBackgroundOpen] = useState(false);
 
   async function toggle(kind: "mic" | "cam" | "screen") {
     setBusy(true);
@@ -70,9 +80,47 @@ export function MeetingToolbar({
           <rect x="3" y="6" width="12" height="12" rx="2" />
           <path d="m15 11 6-4v10l-6-4" />
         </Control>
+        <div className="relative">
+          <Control label="Background" active={backgroundOpen} onClick={() => setBackgroundOpen((v) => !v)}>
+            <path d="M4 16V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10M4 16l4.5-5 3 3L16 9l4 4M4 16h16v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2Z" />
+          </Control>
+          {backgroundOpen && (
+            <div className="absolute bottom-full left-0 mb-2">
+              <VirtualBackgroundPanel onClose={() => setBackgroundOpen(false)} />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center gap-1.5">
+        <Control label={handRaised ? "Lower hand" : "Raise hand"} active={handRaised} onClick={onToggleHand}>
+          <path d="M8 13V6a1.5 1.5 0 0 1 3 0v5M11 11V4a1.5 1.5 0 0 1 3 0v7M14 11.5V6a1.5 1.5 0 0 1 3 0v8c0 3.3-2.7 6-6 6h-1a6 6 0 0 1-5-2.7L3 13.5a1.4 1.4 0 0 1 2.2-1.7L8 15" />
+        </Control>
+        <div className="relative">
+          <Control label="React" active={reactionsOpen} onClick={() => setReactionsOpen((v) => !v)}>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M8.5 10.5h.01M15.5 10.5h.01M8 14.5c.9 1.2 2.3 2 4 2s3.1-.8 4-2" />
+          </Control>
+          {reactionsOpen && (
+            <div
+              className="absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 gap-1 rounded-xl border border-surface-border bg-surface-raised p-1.5 shadow-lg"
+              onMouseLeave={() => setReactionsOpen(false)}
+            >
+              {REACTION_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => {
+                    onReact(emoji);
+                    setReactionsOpen(false);
+                  }}
+                  className="grid h-9 w-9 place-items-center rounded-lg text-xl transition hover:bg-surface-field"
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <Control
           label="Participants"
           badge={participantCount}

@@ -31,10 +31,18 @@ export const WS_EVENTS = {
   HAND_RAISE: "hand:raise",
   HAND_LOWER: "hand:lower",
 
+  // Emoji reactions — ephemeral, like hand raise: broadcast-only, never
+  // persisted, auto-expire client-side. See RealtimeGateway.onReaction.
+  REACTION: "reaction:send",
+
   // Chat
   CHAT_MESSAGE: "chat:message",
   CHAT_TYPING: "chat:typing",
+  // Toggle-and-broadcast: fired with the message's full current reaction list
+  // any time one participant adds/removes a reaction, so every open chat
+  // panel stays in sync without re-fetching history.
   CHAT_REACTION: "chat:reaction",
+  CHAT_MESSAGE_DELETED: "chat:message_deleted",
 
   // Whiteboard
   WHITEBOARD_OP: "whiteboard:op",
@@ -66,6 +74,12 @@ export const WS_EVENTS = {
   // recording finished processing short of re-opening the panel.
   RECORDING_UPDATED: "recording:updated",
 
+  // AI meeting assistant — fired on every status change of a MeetingTranscript
+  // (PENDING -> PROCESSING -> READY/FAILED), same shape of problem/fix as
+  // RECORDING_UPDATED above: transcription runs well after a recording finishes,
+  // asynchronously, with no other way for an open panel to learn it completed.
+  TRANSCRIPT_UPDATED: "transcript:updated",
+
   // Notifications (personal channel — every socket auto-joins `user:{id}` on
   // connect, see RealtimeGateway.handleConnection)
   NOTIFICATION_CREATED: "notification:created",
@@ -76,23 +90,55 @@ export const WS_EVENTS = {
   ROOM_LEAVE: "room:leave",
   ROOM_MESSAGE: "room:message",
 
+  // Personal calls (1:1/group, outside any meeting — see apps/api/src/calls).
+  // Broadcast-only, always to a `user:{id}` personal room, never a meeting
+  // room — CallsService performs the actual state mutation over REST first,
+  // these just inform every open client live.
+  CALL_INCOMING: "call:incoming",
+  CALL_ACCEPTED: "call:accepted",
+  CALL_REJECTED: "call:rejected",
+  CALL_ENDED: "call:ended",
+
   // Errors
   ERROR: "error",
 } as const;
 
 export type WsEventName = (typeof WS_EVENTS)[keyof typeof WS_EVENTS];
 
+export interface ChatMessageReactionGroup {
+  emoji: string;
+  userIds: string[];
+}
+
+export interface ChatMessageAttachment {
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: string; // BigInt serializes as string over JSON, same as MeetingRecording.sizeBytes
+}
+
 export interface ChatMessagePayload {
   id: string;
   chatRoomId: string;
   senderId: string | null;
   senderName: string;
-  body: string;
+  /** null once deleted (see CHAT_MESSAGE_DELETED / ChatService.deleteMessage) —
+   * the client renders a "Message deleted" placeholder instead of the body. */
+  body: string | null;
   replyToId: string | null;
   isPrivate: boolean;
   toUserId: string | null;
   createdAt: string;
+  deletedAt: string | null;
+  reactions: ChatMessageReactionGroup[];
+  attachment: ChatMessageAttachment | null;
 }
+
+/** A representative emoji set for chat message reactions — distinct from
+ * REACTION_EMOJIS above (those are ephemeral, floating-over-video meeting
+ * reactions; these attach permanently to a specific chat message). */
+export const CHAT_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"] as const;
+export type ChatReactionEmoji = (typeof CHAT_REACTION_EMOJIS)[number];
 
 export interface ParticipantPresencePayload {
   participantId: string;
@@ -103,6 +149,48 @@ export interface ParticipantPresencePayload {
   cameraEnabled: boolean;
   isScreenSharing: boolean;
   handRaised: boolean;
+}
+
+export const REACTION_EMOJIS = ["👏", "👍", "❤️", "😂", "🎉", "😕", "🙌"] as const;
+export type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
+
+export interface ReactionPayload {
+  userId: string;
+  emoji: ReactionEmoji;
+}
+
+export type CallType = "AUDIO" | "VIDEO";
+
+export interface CallUserSummary {
+  id: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+export interface CallIncomingPayload {
+  callId: string;
+  type: CallType;
+  livekitRoomName: string;
+  initiator: CallUserSummary;
+}
+
+export interface CallAcceptedPayload {
+  callId: string;
+  byUserId: string;
+}
+
+export interface CallRejectedPayload {
+  callId: string;
+  byUserId: string;
+  /** True when this decline was automatic because the callee already had
+   * another call in progress, not a deliberate reject — the UI shows "Busy"
+   * instead of "Declined" for this case. */
+  busy?: boolean;
+}
+
+export interface CallEndedPayload {
+  callId: string;
+  reason: "ended" | "declined" | "canceled" | "missed";
 }
 
 export interface WhiteboardOpPayload {

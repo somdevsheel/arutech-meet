@@ -171,3 +171,5 @@ the frontend), and an explicit statement of what the current transport encryptio
 ## License
 
 Proprietary — © Arutech Consultancy Services LLP.
+Email: demo@arutech.dev
+Password: DemoPass123!

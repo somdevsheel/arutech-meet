@@ -11,6 +11,8 @@ import { ParticipantsPanel } from "./participants-panel";
 import { WaitingRoomPanel } from "./waiting-room-panel";
 import { ClassroomPanel } from "./classroom/classroom-panel";
 import { RecordingsPanel } from "./recordings-panel";
+import { MeetingInfoPanel } from "./meeting-info-panel";
+import { ReactionsOverlay } from "./reactions-overlay";
 import { useMeetingSocket } from "@/hooks/use-meeting-socket";
 import { apiFetch } from "@/lib/api-client";
 
@@ -30,6 +32,7 @@ export interface MeetingRoomProps {
 const MODERATOR_ROLES = new Set(["OWNER", "HOST", "CO_HOST", "TEACHER"]);
 
 const PANEL_TABS: { key: PanelKind; label: string }[] = [
+  { key: "info", label: "Info" },
   { key: "participants", label: "Participants" },
   { key: "chat", label: "Chat" },
   { key: "tools", label: "Tools" },
@@ -56,6 +59,7 @@ export function MeetingRoom({
 }: MeetingRoomProps) {
   const [panel, setPanel] = useState<PanelKind | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingBanner, setRecordingBanner] = useState(false);
   const [conn, setConn] = useState<ActiveConnection>({ token, url: livekitUrl, label: null });
   const [elapsed, setElapsed] = useState(0);
   const [seenChatCount, setSeenChatCount] = useState(0);
@@ -67,9 +71,24 @@ export function MeetingRoom({
     lastModeration,
     meetingEnded,
     waitingRoomCount,
+    reactions,
     sendMessage,
+    toggleChatReaction,
+    deleteChatMessage,
+    raiseHand,
+    lowerHandFor,
+    sendReaction,
+    dismissReaction,
     socket,
   } = useMeetingSocket(meetingId, accessToken);
+
+  // Derived from the server-broadcast presence list, not separate local state,
+  // so it stays correct whether the toggle came from this tab or a host
+  // force-lowering it via lowerHandFor.
+  const myHandRaised = participants.find((p) => p.userId === userId)?.handRaised ?? false;
+  function toggleHand() {
+    raiseHand(!myHandRaised);
+  }
 
   useEffect(() => {
     const id = setInterval(() => setElapsed((s) => s + 1), 1000);
@@ -85,16 +104,30 @@ export function MeetingRoom({
   // Reflects whether a recording is currently in progress in the toolbar badge —
   // seeded from the actual recording list (in case one was already running before
   // this client joined) and then kept live via the same broadcast events
-  // RecordingsPanel listens to.
+  // RecordingsPanel listens to. Joining an already-recording meeting counts as
+  // the consent-relevant moment just as much as watching it start live, so the
+  // banner below fires here too, not only from the WS event.
   useEffect(() => {
     apiFetch<{ status: string }[]>(`/meetings/${meetingId}/recordings`)
-      .then((recordings) => setIsRecording(recordings.some((r) => r.status === "RECORDING")))
+      .then((recordings) => {
+        const recording = recordings.some((r) => r.status === "RECORDING");
+        setIsRecording(recording);
+        if (recording) setRecordingBanner(true);
+      })
       .catch(() => {});
   }, [meetingId]);
 
+  // The persistent header pill alone isn't real notice — a participant who
+  // wasn't looking at the header the instant it appeared would never actually
+  // see recording start. This banner is the explicit, momentary "this meeting
+  // is being recorded" every participant gets (auto-dismissing, not blocking),
+  // independent of the always-on pill.
   useEffect(() => {
     if (!socket) return;
-    const onStarted = () => setIsRecording(true);
+    const onStarted = () => {
+      setIsRecording(true);
+      setRecordingBanner(true);
+    };
     const onStopped = () => setIsRecording(false);
     socket.on(WS_EVENTS.RECORDING_STARTED, onStarted);
     socket.on(WS_EVENTS.RECORDING_STOPPED, onStopped);
@@ -103,6 +136,12 @@ export function MeetingRoom({
       socket.off(WS_EVENTS.RECORDING_STOPPED, onStopped);
     };
   }, [socket]);
+
+  useEffect(() => {
+    if (!recordingBanner) return;
+    const id = setTimeout(() => setRecordingBanner(false), 8000);
+    return () => clearTimeout(id);
+  }, [recordingBanner]);
 
   if (meetingEnded) {
     return <EndedScreen onLeave={onLeave} />;
@@ -163,10 +202,14 @@ export function MeetingRoom({
             </Pill>
           )}
         </div>
-        <div className="min-w-0 text-center">
+        <button
+          onClick={() => setPanel((cur) => (cur === "info" ? null : "info"))}
+          title="Meeting info"
+          className="min-w-0 rounded-lg px-2 py-1 text-center transition hover:bg-surface-field"
+        >
           <h1 className="truncate text-sm font-semibold text-white">{title}</h1>
           <p className="text-[11px] text-ink-muted">Code: {meetingCode}</p>
-        </div>
+        </button>
         <div className="flex items-center justify-end gap-3" style={{ minWidth: 120 }}>
           <span className="font-mono text-[13px] tabular-nums text-ink-muted">{timerLabel}</span>
         </div>
@@ -175,8 +218,25 @@ export function MeetingRoom({
       {isModerator && !conn.label && <WaitingRoomPanel meetingId={meetingId} refreshSignal={waitingRoomCount} />}
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="min-h-0 min-w-0 flex-1 p-3">
+        <div data-video-grid-root className="relative min-h-0 min-w-0 flex-1 p-3">
           <VideoGrid />
+          <ReactionsOverlay reactions={reactions} onDismiss={dismissReaction} />
+          {recordingBanner && (
+            <div
+              role="alert"
+              className="absolute left-1/2 top-4 z-10 flex -translate-x-1/2 items-center gap-2.5 rounded-lg bg-danger-strong px-4 py-2.5 text-xs font-medium text-white shadow-lg"
+            >
+              <span className="h-2 w-2 flex-none rounded-full bg-white" />
+              This meeting is being recorded.
+              <button
+                onClick={() => setRecordingBanner(false)}
+                aria-label="Dismiss recording notice"
+                className="ml-1 flex-none text-white/80 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+          )}
         </div>
 
         {panel && (
@@ -205,6 +265,9 @@ export function MeetingRoom({
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
+              {panel === "info" && (
+                <MeetingInfoPanel meetingCode={meetingCode} isRecording={isRecording} />
+              )}
               {panel === "participants" && (
                 <ParticipantsPanel
                   participants={participants}
@@ -213,10 +276,20 @@ export function MeetingRoom({
                   onDisableCamera={(id) => moderate("disable-camera", id)}
                   onRemove={(id) => moderate("remove", id)}
                   onPromote={(id) => moderate("promote-co-host", id)}
+                  onLowerHand={(targetUserId) => lowerHandFor(targetUserId)}
                 />
               )}
               {panel === "chat" && (
-                <ChatPanel messages={messages} onSend={sendMessage} currentUserId={userId} />
+                <ChatPanel
+                  meetingId={meetingId}
+                  messages={messages}
+                  participants={participants}
+                  onSend={sendMessage}
+                  onToggleReaction={toggleChatReaction}
+                  onDeleteMessage={deleteChatMessage}
+                  currentUserId={userId}
+                  isModerator={isModerator}
+                />
               )}
               {panel === "tools" && (
                 <ClassroomPanel
@@ -244,6 +317,9 @@ export function MeetingRoom({
         canShareScreen={true}
         participantCount={participants.length}
         unreadChatCount={unreadChatCount}
+        handRaised={myHandRaised}
+        onToggleHand={toggleHand}
+        onReact={sendReaction}
       />
     </LiveKitRoom>
   );

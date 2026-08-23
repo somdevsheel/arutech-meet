@@ -60,5 +60,12 @@ apps/mobile/.expo/
 infrastructure/docker/volumes/
 minio-data/
 
+# Rendered Lightsail deploy configs — generated from the tracked
+# *.lightsail.yaml/.conf templates by docs/deployment-lightsail.md §7 with
+# real secrets/domain filled in. Never the templates themselves (those keep
+# REPLACE_WITH_* placeholders and are safe to commit).
+infrastructure/docker/*.lightsail.rendered.yaml
+infrastructure/docker/*.lightsail.rendered.conf
+
 # Recordings (local dev)
 services/recording/tmp/

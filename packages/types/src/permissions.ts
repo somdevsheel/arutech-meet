@@ -42,6 +42,8 @@ export const CAPABILITIES = [
   "breakout.manage",
   "attendance.view",
   "attendance.export",
+  "transcript.generate",
+  "transcript.delete",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -71,6 +73,8 @@ const OWNER_HOST_CAPS: Capability[] = [
   "breakout.manage",
   "attendance.view",
   "attendance.export",
+  "transcript.generate",
+  "transcript.delete",
 ];
 
 const TEACHER_CAPS: Capability[] = OWNER_HOST_CAPS;
@@ -92,6 +96,7 @@ const CO_HOST_CAPS: Capability[] = [
   "poll.create",
   "quiz.create",
   "attendance.view",
+  "transcript.generate",
 ];
 
 const PARTICIPANT_STUDENT_CAPS: Capability[] = [

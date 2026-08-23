@@ -80,6 +80,12 @@ function TeamChatPage() {
             isPrivate: false,
             toUserId: null,
             createdAt: m.createdAt,
+            // Team Chat doesn't have reactions/attachments/delete yet (only
+            // meeting chat does — see docs/feature-gap-analysis.md §24-26 for
+            // the documented follow-up to bring this here too).
+            deletedAt: null,
+            reactions: [],
+            attachment: null,
           })),
       );
     });

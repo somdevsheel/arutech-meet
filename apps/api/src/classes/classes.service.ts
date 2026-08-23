@@ -8,10 +8,14 @@ import type {
 } from "@arutech/validation";
 import { PrismaService } from "../prisma/prisma.service";
 import { generateLiveKitRoomName, generateMeetingCode } from "../common/lib/meeting-code";
+import { CoursesService } from "../courses/courses.service";
 
 @Injectable()
 export class ClassesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly courses: CoursesService,
+  ) {}
 
   async create(userId: string, dto: CreateClassDto) {
     if (dto.orgId) {
@@ -20,6 +24,7 @@ export class ClassesService {
       });
       if (!membership) throw new ForbiddenException("You are not a member of that organization");
     }
+    if (dto.courseId) await this.courses.assertOwnedCourse(dto.courseId, userId);
 
     return this.prisma.client.class.create({
       data: {
@@ -27,6 +32,7 @@ export class ClassesService {
         description: dto.description,
         subject: dto.subject,
         orgId: dto.orgId,
+        courseId: dto.courseId,
         ownerTeacherId: userId,
         teachers: { create: { userId } },
         chatRoom: { create: { type: "CLASS" } },
@@ -41,6 +47,7 @@ export class ClassesService {
       include: {
         teachers: { include: { user: { select: { id: true, displayName: true, avatarUrl: true } } } },
         students: { include: { user: { select: { id: true, displayName: true, avatarUrl: true } } } },
+        course: { select: { id: true, title: true } },
       },
     });
     if (!klass || klass.deletedAt) throw new NotFoundException("Class not found");
@@ -59,6 +66,7 @@ export class ClassesService {
 
   async update(classId: string, userId: string, dto: UpdateClassDto) {
     await this.requireTeacher(classId, userId);
+    if (dto.courseId) await this.courses.assertOwnedCourse(dto.courseId, userId);
     return this.prisma.client.class.update({
       where: { id: classId },
       data: dto,
@@ -154,6 +162,16 @@ export class ClassesService {
       where: { classId_userId: { classId, userId } },
     });
     if (!teacher) throw new ForbiddenException("Only a teacher of this class can do that");
+  }
+
+  /** Non-throwing check, for callers that need to branch on role rather than
+   * reject non-teachers outright (e.g. deciding what to include in a response
+   * rather than deciding whether to allow the request at all). */
+  async isTeacher(classId: string, userId: string): Promise<boolean> {
+    const teacher = await this.prisma.client.classTeacher.findUnique({
+      where: { classId_userId: { classId, userId } },
+    });
+    return Boolean(teacher);
   }
 
   async requireMember(classId: string, userId: string): Promise<void> {

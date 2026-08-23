@@ -45,6 +45,19 @@ export class MetricsService implements OnModuleInit {
     registers: [this.registry],
   });
 
+  readonly transcriptionFailuresTotal = new Counter({
+    name: "arutech_transcription_failures_total",
+    help: "AI meeting assistant transcripts that ended in FAILED status",
+    registers: [this.registry],
+  });
+
+  readonly transcriptionDurationSeconds = new Histogram({
+    name: "arutech_transcription_duration_seconds",
+    help: "Wall-clock time from transcript PENDING to READY/FAILED (download + ffmpeg + STT + summarization)",
+    buckets: [5, 15, 30, 60, 120, 300, 600, 1200],
+    registers: [this.registry],
+  });
+
   onModuleInit() {
     collectDefaultMetrics({ register: this.registry, prefix: "arutech_process_" });
   }

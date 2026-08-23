@@ -1,0 +1,308 @@
+# Feature Gap Analysis — Advanced Features Request
+
+Audited against the 50-section "Advanced Features" brief, section by section. Status is evidence-based —
+each row cites the file(s) checked, not a guess from the section list alone. ✅ done and verified working
+(built earlier, or built/fixed this session and confirmed live — see docs/roadmap.md and the entries below
+marked "this session"), 🔶 partially built (real backend/schema with a UI or wiring gap, or vice versa), ❌
+not built at all. See `docs/advanced-features-roadmap.md` for what happens next with the 🔶/❌ rows.
+
+## 1. Advanced meeting features
+
+| Item | Status | Evidence |
+|---|---|---|
+| Instant / scheduled meetings | ✅ | `MeetingsService.create`, `apps/web/src/components/dashboard/schedule-meeting-modal.tsx` |
+| Recurring meetings | ✅ | `Meeting.recurrenceFrequency`/`recurrenceUntil` + parent/child `Meeting` relation (schema), `MeetingsService.create` |
+| Meeting templates | ❌ | No `MeetingTemplate` model or "save as template" flow anywhere |
+| Password, waiting room, host controls, co-host, lock, remove/mute participant, request-to-unmute, disable camera, allow/deny screen-share/chat/recording, join-before-host | ✅ | `MeetingSettings` model + `PermissionService`/`packages/types/src/permissions.ts` capability matrix, `WaitingRoomPanel`, `ParticipantsPanel` |
+| Automatic meeting end, meeting timer | ✅ | `MeetingsEventsService` (`room_finished` webhook ends the meeting), in-room elapsed timer (`meeting-room.tsx`) |
+| Meeting info panel | ✅ **(this session)** | `meeting-info-panel.tsx` — click the meeting title/code (Zoom-style) to open it: invite-link copy, meeting-code copy, security summary (password/waiting-room on-off, honest E2EE caveat), current recording status. See `docs/roadmap.md` Stage 17 |
+
+## 2. Advanced video features
+
+| Item | Status | Evidence |
+|---|---|---|
+| Active speaker detection | ✅ | LiveKit's own `participant.isSpeaking`, used directly (`video-grid.tsx` Speaker view) |
+| Gallery / Speaker / Spotlight view | ✅ **(this session)** | Rewrote `video-grid.tsx` off LiveKit's stock `GridLayout` — real Gallery/Speaker toggle; a screen share or pinned tile spotlights regardless of mode |
+| Pin participant / multiple pinned | ✅ **(this session)** | `pinned: Set<string>` in `video-grid.tsx`, verified live with 2 real participants (screenshot evidence in `.run-driver/screenshots/two-person/`) |
+| Hide non-video participants | ✅ **(this session)** | `hideNonVideo` toggle, filters placeholder tracks |
+| Fullscreen | ✅ **(this session)** | Whole-grid and per-tile, native Fullscreen API |
+| Picture-in-picture | ✅ **(this session)** | Per-tile, feature-detected (`document.pictureInPictureEnabled`) |
+| Camera/mic/speaker device selection | ✅ | Pre-join lobby device pickers (existing, unchanged) |
+| Video quality/resolution/frame-rate selection | ❌ | No UI; LiveKit's simulcast handles adaptive quality automatically but there's no manual override |
+| Network quality indicator, connection status, reconnection | ✅ | `ConnectionQualityIndicator` (now on every tile — this session), LiveKit's own reconnect handling |
+| Simulcast, adaptive bitrate, bandwidth optimization, low-bandwidth mode | 🔶 | Simulcast is LiveKit's default behavior (not explicitly configured/verified in this codebase); no explicit low-bandwidth mode toggle or audio-priority-under-poor-network logic |
+
+## 3. Screen sharing
+
+✅ Real WebRTC screen-share track through the SFU (`meeting-toolbar.tsx`'s `setScreenShareEnabled`), host
+permission gating (`screen_share.self` capability), now correctly spotlighted in every view mode (this
+session). Entire-screen/tab/window selection is the browser's own native picker (not app-controlled — this
+is correct, not a gap: no browser exposes that choice to page JS). Screen-share audio: passed
+`{audio: true}` already. Mobile screen sharing: Android real, iOS not (see §40).
+
+## 4. Virtual background
+
+✅ **Built and verified live.** Real segmentation via LiveKit's own first-party `@livekit/track-processors`
+package (MediaPipe selfie segmentation over WebGL/WASM), plugged into the actual published local camera
+track via `LocalVideoTrack.setProcessor()` — `use-virtual-background.ts` +
+`virtual-background-panel.tsx`, a popover off the meeting toolbar's new "Background" button. Blur, four
+generated gradient presets (no licensed stock photography available, so honestly abstract rather than
+pretending to be office/nature photos), and a custom local-image upload (`URL.createObjectURL`, never sent
+to a server — client-side only, so not synced across devices, which the panel says outright). Verified live
+with a real headless-browser session: screenshots before/after visibly differ (blur softened the synthetic
+test pattern's edges; the Ocean preset fully replaced the frame), confirming actual pixel processing is
+happening, not a UI-only toggle. Not yet wired into the pre-join lobby (which still uses LiveKit's stock
+`<PreJoin>` prefab) — only available after joining, via the toolbar.
+
+## 5. Meeting chat
+
+| Item | Status | Evidence |
+|---|---|---|
+| Public chat, persistence | ✅ | `ChatService.persistMessage`/`history`, `chat-panel.tsx` |
+| Private participant chat | ✅ **(this session)** | Recipient picker in the chat panel ("To: Everyone ▾"); backend support (`isPrivate`/`toUserId`) already existed |
+| Reply | ✅ **(this session)** | Quoted-message preview, updates live if the quoted message is later deleted — verified live (`.run-driver/screenshots/chat-features/`) |
+| Reactions | ✅ **(this session)** | `POST`-free, WS-toggled (`WS_EVENTS.CHAT_REACTION`), grouped pills with counts, real endpoint added to `ChatService.toggleReaction` |
+| File/image attachments | ✅ **(this session)** | Real presigned-upload pipeline on the previously-unused `FileAsset` schema (new `FilesService`/`FilesController`) — verified live with a real image upload, cross-participant delivery, and inline render |
+| Link detection, timestamps, mentions | ✅ **(this session)** | Client-side, safe (tokenized rendering, never `dangerouslySetInnerHTML`) |
+| Message deletion, host moderation | ✅ **(this session)** | Soft-delete (own message free; others requires `chat.delete_any_message`, audit-logged), live broadcast |
+| Unread count, @everyone (notify-all) | ❌ | Panel-level unread isn't needed inside an already-open meeting chat (the toolbar's chat badge already covers "unread while on another tab"); `@everyone` currently just highlights as a mention like any other, doesn't trigger a distinct notification |
+
+**Fully rebuilt this session** — see `docs/roadmap.md` §Advanced features Priority 1 continued for the
+full write-up, including two real MinIO/network-environment bugs found and fixed while live-verifying
+this (not app bugs — see that doc for what they were). Not yet extended to Team Chat (personal/group
+messaging outside a meeting), which still has the pre-existing gaps described in §24–26 below.
+
+## 6. Participant management
+
+✅ **(this session)** Panel now renders mic/camera/screen-share/hand-raised state (previously silently
+always green/absent — the data existed in `ParticipantPresencePayload` but nothing rendered it), sorts
+raised hands to the top, adds a host "Lower hand" action. Mute/disable-camera/remove/promote already
+existed. Not built: demote co-host, "make host" (ownership transfer), send-private-message action (chat UI
+gap above blocks this), and connection-quality per row (shown on video tiles instead, not the panel).
+
+## 7. Raise hand and reactions
+
+✅ **(this session), fully wired end-to-end**. Raise hand existed as dead code before this session — a
+`raiseHand()` callback with no button calling it and no listener updating any state (verified by grep: zero
+references to `HAND_RAISE`/`HAND_LOWER` in `meeting-room.tsx`/`meeting-toolbar.tsx` before this session).
+Now: toolbar button, server-confirmed state (not local-only), sorts to top of participants panel, host can
+force-lower. Reactions (👏👍❤️😂🎉😕🙌 — a representative set covering the brief's clap/like/love/laugh/
+celebrate/confused/applause) are a new ephemeral `WS_EVENTS.REACTION` broadcast (mirrors the hand-raise
+pattern — never persisted) rendered as floating emoji over the video area, auto-expiring. Verified live with
+two real browser sessions — see `.run-driver/screenshots/two-person/08-a-hand-raised-reaction-sent.png`.
+
+## 8. Breakout rooms
+
+✅ Already complete (Stage 6) — create/rename via manual+auto assignment, move participants, broadcast,
+join any room, close all. Not built: rename an existing room, per-room countdown timer (host can create/
+close manually but there's no auto-close-after-N-minutes).
+
+## 9. Recording
+
+✅ Already complete (Stage 7, LiveKit Egress) — start/stop, status pipeline, playback, download, delete,
+90-day expiration. Pause/resume: not supported (not a capability LiveKit's room-composite Egress exposes).
+Local recording: ✅ **(this session)** — `local-recording-control.tsx`, a genuinely separate client-side
+`MediaRecorder` path (canvas-composited video grid + mixed real audio, downloads a real `.webm` directly,
+no host/Egress dependency, no server round-trip at all). Consent notification: ✅ **(this session)** — a
+dismissible "This meeting is being recorded" banner, independent of the persistent header pill, for every
+participant (including a joiner arriving after recording already started). See `docs/roadmap.md` Stage 18.
+
+## 10. Recording library
+
+🔶 `apps/web/src/app/recordings` lists recordings with search/playback/delete. Not built: the
+My/Shared/Classes/Meetings sectioning, sort/rename, explicit "share with" UI (recordings are already
+implicitly visible to everyone who attended the meeting — there's no additional sharing model beyond that).
+
+## 11–13. Online classroom, attendance
+
+✅ Already complete (Stage 6) — classes, students/teachers, real attendance derived from LiveKit presence
+events, CSV export, screen share/whiteboard/polls/quizzes/breakout rooms all reachable from a class
+session (which is just a `Meeting` with `type: CLASS`). Courses/batches: ✅ **(this session)** — a new,
+purely additive `Course` model that a `Class` ("batch") can optionally belong to (`Class.courseId`,
+nullable). See `docs/roadmap.md` Stage 19.
+
+## 14–15. Whiteboard, polls
+
+✅ Already complete (Stage 6) — real WS-synced canvas (pen/highlighter/eraser/text/shapes/sticky
+notes/undo-redo/multi-page), live polls (single/multi-choice, timer, show/hide results). Anonymous
+responses: not explicitly modeled (poll responses are tied to a user, not anonymized).
+
+## 16. Quiz system
+
+✅ Already complete (Stage 6) — MCQ, timer, points, automatic grading, per-student results, leaderboard.
+True/false and short-answer question types: ✅ **(this session)** — see `docs/roadmap.md` Stage 20.
+
+## 17. Assignments
+
+✅ Built (Stage 16) — `Assignment`/`AssignmentSubmission` schema, due dates, real file attachments
+(material and per-submission), text answers, resubmission (overwrites the same row, clears any prior
+grade), teacher grading with score + feedback, notifications on post/submit/grade. See
+`docs/roadmap.md` Stage 16.
+
+## 18. Student/teacher dashboards
+
+🔶 `apps/web/src/app/dashboard`, `apps/web/src/app/classes` exist and show upcoming classes, and the class
+detail page now has a real Assignments section (§17 above). Still not the full section-by-section layout
+described (no dedicated Tests/Study-Materials dashboard sections).
+
+## 19–20. AI meeting assistant, AI classroom assistant
+
+✅ AI meeting assistant complete (Stage 8, built two sessions ago — real OpenAI Whisper + GPT-4o-mini
+pipeline, pluggable provider interfaces, transcript search, wired into the recordings panel). ✅ AI
+classroom assistant **(this session)** — lecture notes, flashcards, practice questions, and a study guide
+generated from a class session's transcript, reusing the same `SummarizationProvider` interface with a
+different prompt/schema. Ships DRAFT with a mandatory teacher review-before-publish step (students never
+see a draft — 404, not just a hidden UI element). See `docs/roadmap.md` Stage 21.
+
+## 21–22. Live transcription, captions
+
+❌ Not built. The existing AI assistant is **post-meeting only** (batch: recording → ffmpeg → Whisper). Live
+in-meeting captions need a fundamentally different pipeline — streaming STT against live LiveKit audio
+tracks (e.g. a LiveKit Agent subscribing to room audio, or client-side `SpeechRecognition` per participant)
+— see roadmap doc for why this is architecturally distinct from, not an extension of, Stage 8.
+
+## 23. Voice and video calls
+
+✅ **Built and verified live.** Real ring/accept/reject/busy/cancel/missed/call-history on the
+`Call`/`CallParticipant` schema (previously unused), a new `apps/api/src/calls` module, replacing
+`ContactsService.call`'s old instant-meeting-plus-notification stand-in. Reuses the exact same
+`<LiveKitRoom>` + `VideoGrid` the meeting room uses — no second media engine. Verified live with two real
+registered users through the full state machine: outgoing ring → incoming modal → accept → real two-way
+video → hang up → call again → cancel before answer → call again → decline → call history showing all
+three with correct icons/direction/status. Zero console errors. 1:1 only for now (group calling is
+schema-ready — `calleeUserIds` is already an array — but has no UI yet). This work also found and fixed
+two real, previously-undiscovered bugs — see `docs/roadmap.md` for both; one of them (a client-side socket
+singleton bug) likely affects the robustness of every other `user:{id}`-room feature too, including live
+notification delivery.
+
+## 24–26. Contacts, groups, personal chat
+
+✅ Contacts (derived from real meeting history, Stage 11) plus block-user, contact groups, and favorites
+**(this session)** — see `docs/roadmap.md` Stage 22. Block is enforced symmetrically at both call and DM
+creation, not just hidden in the contacts UI. "Groups" beyond Team Chat (a group photo, group-level
+admins, group call/meeting, permissions distinct from Team Chat's flat membership) — still not built;
+Team Chat's `GROUP` `ChatRoom` type covers group *messaging* only, and the new `ContactGroup` model this
+stage added is a personal organizing label for contacts, not the same thing (see Stage 22's write-up for
+why these are two different concepts despite the shared word "group"). Personal chat itself (§26) has the
+same gaps as §5's chat-panel gap (no edit/forward/mentions/voice-messages/typing-indicator) since Team
+Chat reuses the same `ChatPanel`-adjacent code paths.
+
+## 27. File sharing
+
+🔶 **Meeting chat attachments now real (this session)** — a genuine `FilesService`/`FilesController`
+(`apps/api/src/files`) built on the previously-unused `FileAsset` schema: presigned direct-to-storage
+upload, server-enforced MIME allowlist, signed download URLs, `virusScanStatus` gating (honest about no
+scanner being wired — see that service's doc comment). Scoped to meeting chat only so far — not yet
+reachable from Classes or Team Chat, and no upload-progress UI (the presigned PUT is awaited in one shot
+rather than exposing incremental progress) or expiration policy beyond what recordings already have.
+
+## 28–29. Scheduling, reminders
+
+🔶 Meetings/classes can be scheduled with a start time (`MeetingsService.create`, class sessions) and
+notified on creation, but there's no calendar UI (day/week/month views), no Google/Outlook integration
+architecture, and no "class starts in 10 minutes" pre-event reminder job — only post-event notifications
+(recording ready, transcript ready, chat message) exist today.
+
+## 30. Notification center
+
+🔶 Real, live (`NotificationsService`, topbar bell, unread badge, mark-read/mark-all-read — Stage 11). Not
+built: the category breakdown (Meetings/Calls/Classes/Messages/Assignments/Tests/System as distinct
+filterable groups — today it's one flat list) or a notification-preferences screen (documented gap already
+in `docs/api.md`).
+
+## 31–33. Organizations, teams, custom branding
+
+🔶 `Organization`/`OrganizationMember` schema and role model exist (Stage 2) but there's no
+invite-by-email flow, no admin UI for managing an org's members/roles beyond what the system-admin
+dashboard shows read-only, and no per-org meeting/storage limits enforced. ❌ Teams (sub-groups within an
+org — Engineering/Sales/etc.) — no `Team` model at all. ❌ Custom branding (logo/color/login branding) — no
+`OrganizationBranding` model or theming hook.
+
+## 34. Global search
+
+🔶 `GET /search` (Stage 11) covers the caller's own meetings/notes/contacts. Not built: classes, chat
+messages, files, recordings, transcripts (Stage 8 added transcript search, but scoped per-meeting via
+`GET /meetings/:id/transcripts/search`, not surfaced in the global search endpoint), courses, assignments.
+
+## 35–36. Meeting security, moderation
+
+✅ Password, waiting room, lock, host approval, screen-share/chat/recording permission gating — all real,
+server-enforced (`docs/security.md`). ❌ Domain restrictions (allow-list of email domains that can join),
+report-participant, block-participant (distinct from remove — a remove doesn't prevent rejoining), and
+disable-reactions/disable-file-sharing as meeting-level settings are not built.
+
+## 37. User presence
+
+❌ Not built as a general concept. What exists is meeting-scoped only: `ParticipantPresencePayload`
+(mic/camera/hand-raised inside a meeting) and the Socket.IO connection itself. There's no
+online/away/busy/DND status shown in Contacts, Chat, or Calls outside of an active meeting.
+
+## 38. Device management
+
+✅ Already complete — `GET /users/me/sessions`, Settings page "Active sessions" list (userAgent, last
+active), logout-this-device and `AuthService.logoutAll` ("logout of all devices").
+
+## 39. Profile
+
+✅ Already complete — display name, username, avatar, timezone, language fields exist and are editable in
+Settings (per `docs/database.md`'s `User`/`profiles` fields). Bio: not confirmed as a distinct field —
+worth a quick follow-up check, not re-verified in this pass.
+
+## 40. Mobile experience
+
+Unchanged this session (no mobile files touched) — carrying forward `apps/mobile/README.md`'s own honest
+accounting: real native app (not a WebView), core loop + live pre-join camera preview + waiting-room admit
++ Android screen share all real. Gaps: no iOS screen share (needs a native Broadcast Upload Extension,
+Xcode-only), push notifications are architecture-only (no FCM/APNs wiring), no Bluetooth-audio-specific
+handling documented, no background/lock-screen call handling, not build-verified on iOS (no macOS/Xcode
+available in this environment).
+
+## 41. Accessibility
+
+🔶 Standard semantic HTML/ARIA from Tailwind + native `<button>`/`<dialog>`-style patterns throughout;
+no dedicated accessibility audit, no captions (blocked on §22), no adjustable-text-size or
+high-contrast-mode setting.
+
+## 42–43. Performance, reliability
+
+✅ WebSocket reconnection, WebRTC reconnection (LiveKit's own), graceful meeting-state recovery on
+rejoin — all real, pre-existing. This session's video-grid rewrite was verified to not regress bundle size
+(`/meeting/[code]` route: 178kB → 175kB First Load JS, per `pnpm build` output) despite replacing the
+stock `GridLayout` with custom rendering.
+
+## 44. Analytics
+
+🔶 Admin dashboard stats (Stage 9) cover meeting/class/recording counts and system health — not
+"feature usage" or per-feature engagement analytics distinct from those aggregate counts.
+
+## 45–46. Admin dashboard, audit logs
+
+✅ Already complete (Stage 9) — Users, Organizations, Meetings, Classes, Recordings, Audit Logs, dashboard
+stats, system health, all backed by real queries. Not built: a dedicated Calls admin view (calls aren't a
+first-class feature yet — see §23), a dedicated Reports export UI, and a moderation/abuse queue beyond
+user suspend (documented gap already in `docs/roadmap.md` Stage 9).
+
+## 47. Feature flags
+
+❌ Not built. No feature-flag table, service, or env-var-driven toggle system anywhere in the codebase.
+Everything shipped today is either fully on or fully absent — there's no way to, say, ship
+`LIVE_CAPTIONS` disabled by default and flip it per-organization. See roadmap doc for a minimal,
+real design (no new SaaS dependency needed).
+
+## 48. Database
+
+Every genuinely new entity this brief lists that doesn't already exist maps to a specific missing feature
+above (assignments, teams, feature flags, calendar events as a distinct model, block-list, presence). No
+schema changes were made this session — the two real bugs fixed (video-tile control overlap, participant
+roster snapshot) were both pure application-logic fixes, no migration needed.
+
+## 49. No monetization
+
+Confirmed: nothing pricing/billing/subscription/payment-related was touched or added this session. One
+correction to make here honestly rather than glossing over it: a `Subscription`/`SubscriptionPlan`/
+`SubscriptionStatus` schema placeholder (with a `provider` field defaulting to `"stripe"`) already existed
+in `packages/database/prisma/schema.prisma` *before* this session — a data-model shape reserved for
+future billing, matching the original build brief's "Billing / Subscription Architecture" module. It has
+**zero functional code behind it**: no Stripe (or any payment provider) API calls, no billing
+controller/service, no checkout flow, nothing reachable from the app. Per this brief's explicit instruction
+not to add monetization, it was left exactly as found — not extended, not wired up, not removed.

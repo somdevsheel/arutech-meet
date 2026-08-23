@@ -6,6 +6,8 @@ import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
+import { AssignmentsSection } from "@/components/classes/assignments-section";
+import { StudyMaterialsSection } from "@/components/classes/study-materials-section";
 
 interface ClassDetail {
   id: string;
@@ -15,6 +17,7 @@ interface ClassDetail {
   ownerTeacherId: string;
   teachers: { userId: string; user: { displayName: string; avatarUrl: string | null } }[];
   students: { userId: string; user: { displayName: string; avatarUrl: string | null } }[];
+  course: { id: string; title: string } | null;
 }
 
 interface ClassSession {
@@ -89,6 +92,11 @@ export default function ClassDetailPage() {
           </Link>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">{klass.title}</h1>
           {klass.subject && <p className="text-sm text-ink-muted">{klass.subject}</p>}
+          {klass.course && (
+            <Link href={`/courses/${klass.course.id}`} className="mt-1 inline-block text-xs text-brand-300 hover:underline">
+              Part of {klass.course.title}
+            </Link>
+          )}
         </div>
 
         {isTeacher && (
@@ -131,6 +139,10 @@ export default function ClassDetailPage() {
             {klass.students.length === 0 && <li className="text-sm text-ink-muted">No students enrolled yet.</li>}
           </ul>
         </section>
+
+        <AssignmentsSection classId={params.id} isTeacher={isTeacher} />
+
+        <StudyMaterialsSection classId={params.id} isTeacher={isTeacher} />
 
         <section>
           <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-ink-muted">Sessions</h2>

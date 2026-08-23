@@ -7,6 +7,7 @@ export const createClassSchema = z.object({
   description: z.string().max(2000).optional(),
   subject: z.string().max(100).optional(),
   orgId: z.string().uuid().optional(),
+  courseId: z.string().uuid().optional(),
 });
 export type CreateClassDto = z.infer<typeof createClassSchema>;
 
@@ -73,16 +74,37 @@ export type RespondPollDto = z.infer<typeof respondPollSchema>;
 
 // --- Quizzes ---------------------------------------------------------------
 
-export const quizQuestionSchema = z.object({
+const quizQuestionBase = {
   question: z.string().min(1).max(500),
   points: z.number().int().min(1).max(100).default(1),
   timerSeconds: z.number().int().min(5).max(3600).optional(),
-  options: z
-    .array(z.object({ text: z.string().min(1).max(200), isCorrect: z.boolean().default(false) }))
-    .min(2)
-    .max(8)
-    .refine((opts) => opts.some((o) => o.isCorrect), "At least one option must be marked correct"),
-});
+};
+
+// Three question shapes, discriminated on `type`. TRUE_FALSE and SHORT_ANSWER
+// are new alongside the pre-existing MULTIPLE_CHOICE — see the schema
+// comment on `QuizQuestionType` for how each is actually stored/graded.
+export const quizQuestionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("MULTIPLE_CHOICE"),
+    ...quizQuestionBase,
+    options: z
+      .array(z.object({ text: z.string().min(1).max(200), isCorrect: z.boolean().default(false) }))
+      .min(2)
+      .max(8)
+      .refine((opts) => opts.some((o) => o.isCorrect), "At least one option must be marked correct"),
+  }),
+  z.object({
+    type: z.literal("TRUE_FALSE"),
+    ...quizQuestionBase,
+    correctAnswer: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("SHORT_ANSWER"),
+    ...quizQuestionBase,
+    correctAnswerText: z.string().min(1).max(500),
+  }),
+]);
+export type QuizQuestionDto = z.infer<typeof quizQuestionSchema>;
 
 export const createQuizSchema = z.object({
   title: z.string().min(1).max(200),
@@ -90,9 +112,17 @@ export const createQuizSchema = z.object({
 });
 export type CreateQuizDto = z.infer<typeof createQuizSchema>;
 
-export const answerQuizQuestionSchema = z.object({
-  selectedOptionId: z.string().uuid(),
-});
+// One of the two, depending on the question's type — the client already
+// knows which since it just fetched/received the question.
+export const answerQuizQuestionSchema = z
+  .object({
+    selectedOptionId: z.string().uuid().optional(),
+    answerText: z.string().max(1000).optional(),
+  })
+  .refine(
+    (d) => Boolean(d.selectedOptionId) !== Boolean(d.answerText),
+    "Provide exactly one of selectedOptionId or answerText",
+  );
 export type AnswerQuizQuestionDto = z.infer<typeof answerQuizQuestionSchema>;
 
 // --- Breakout rooms --------------------------------------------------------

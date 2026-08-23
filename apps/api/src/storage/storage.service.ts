@@ -1,7 +1,10 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { S3Client, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Env } from "@arutech/config";
+import { createWriteStream } from "fs";
+import { pipeline } from "stream/promises";
+import type { Readable } from "stream";
 
 /**
  * The ONLY place the API talks to object storage directly. Clients never receive
@@ -57,7 +60,36 @@ export class StorageService {
     return getSignedUrl(this.publicClient, command, { expiresIn: expiresInSeconds });
   }
 
+  /** Presigned PUT for direct browser-to-storage uploads (chat/file attachments
+   * — see apps/api/src/files) — the client never gets S3 credentials, just a
+   * one-time write URL for exactly this key. Signed against `publicClient`
+   * (browser-reachable endpoint), same reasoning as `getSignedDownloadUrl`.
+   * Note: a presigned PUT alone can't enforce `Content-Length` server-side (S3
+   * presigned-POST with policy conditions can, at the cost of a form-upload API
+   * instead of a plain PUT) — the declared `sizeBytes` is checked before this
+   * URL is minted (see FilesService.presignUpload), not enforced against what
+   * actually gets uploaded. Acceptable for this app's trust model (authenticated
+   * meeting participants only) but worth knowing if this key is ever reused for
+   * untrusted/anonymous uploads. */
+  async getSignedUploadUrl(key: string, contentType: string, expiresInSeconds = 300): Promise<string> {
+    const command = new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType });
+    return getSignedUrl(this.publicClient, command, { expiresIn: expiresInSeconds });
+  }
+
   async deleteObject(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
+  /** Server-side fetch of an object's bytes to a local file — used by the AI
+   * transcription pipeline (apps/api/src/ai) to feed a recording into ffmpeg.
+   * Deliberately the only other place besides `deleteObject` that reads/writes
+   * object storage directly on the server; every client-facing path still only
+   * ever gets a signed URL, never these credentials. Uses `client` (internal
+   * network), not `publicClient`, matching `deleteObject` above. */
+  async downloadToFile(key: string, destPath: string): Promise<void> {
+    const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    const body = result.Body as Readable | undefined;
+    if (!body) throw new Error(`Object ${key} has no readable body`);
+    await pipeline(body, createWriteStream(destPath));
   }
 }

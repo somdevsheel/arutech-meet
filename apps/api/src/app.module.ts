@@ -20,6 +20,11 @@ import { PollsModule } from "./polls/polls.module";
 import { QuizzesModule } from "./quizzes/quizzes.module";
 import { BreakoutRoomsModule } from "./breakout-rooms/breakout-rooms.module";
 import { RecordingsModule } from "./recordings/recordings.module";
+import { FilesModule } from "./files/files.module";
+import { CallsModule } from "./calls/calls.module";
+import { AssignmentsModule } from "./assignments/assignments.module";
+import { CoursesModule } from "./courses/courses.module";
+import { AiModule } from "./ai/ai.module";
 import { AdminModule } from "./admin/admin.module";
 import { NotesModule } from "./notes/notes.module";
 import { ContactsModule } from "./contacts/contacts.module";
@@ -53,6 +58,11 @@ import { ObservabilityModule } from "./observability/observability.module";
     QuizzesModule,
     BreakoutRoomsModule,
     RecordingsModule,
+    FilesModule,
+    CallsModule,
+    AssignmentsModule,
+    CoursesModule,
+    AiModule,
     AdminModule,
     NotesModule,
     ContactsModule,
