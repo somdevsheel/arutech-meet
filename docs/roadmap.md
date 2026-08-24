@@ -807,3 +807,236 @@ the real UI exactly as usual.
 active meeting (today's block only affects calls/DMs going forward, not an in-progress meeting
 participant — that's Priority 5's "moderation" item's own explicit scope), bulk-add a group to a call/DM.
 
+## Team Chat groups (Stage 23)
+
+Third item of Priority 3 — the roadmap item itself floated a design choice rather than assuming one: a new
+`Group` model, or `ChatRoom` gaining a `photoUrl` and `ChatMember` gaining an admin role. Went with the
+latter, exactly as the lighter-weight option the item recommended: `ChatRoom.photoUrl` (a plain URL, same
+convention `User.avatarUrl`/`Organization.logoUrl` already use — none of the three has a presigned-upload
+pipeline yet, a shared follow-up rather than something scoped to group photos specifically) and
+`ChatMember.isAdmin`, meaningful only for `GROUP` rooms. The room's creator becomes its sole admin;
+everyone else has to be promoted. `demoteAdmin` refuses to leave a group with zero admins (no one left who
+could promote a replacement). Five new admin-gated `ChatService` methods (`updateRoom`/`addMember`/
+`removeMember`/`promoteAdmin`/`demoteAdmin`), each broadcasting a new `WS_EVENTS.ROOM_UPDATED` (a
+refetch signal, matching `TRANSCRIPT_UPDATED`'s shape, not the full new state) to the room's channel — the
+same "only reaches clients with that room's tab currently open" limitation `ROOM_MESSAGE`'s live sidebar
+preview already has, not a new gap this stage introduced.
+
+Worth being explicit about a naming collision: this is a *different* thing from Stage 22's `ContactGroup`
+despite both being called "groups." `ContactGroup` is a personal label a user files their own contacts
+under (no shared membership). A Team Chat `GROUP` room is an actual shared multi-person conversation.
+Conflating them would have been the wrong design — kept as two unrelated models on purpose.
+
+The "group meeting/call shortcut" the roadmap item asked for is a "Start a meeting" button that creates a
+real instant `Meeting` (already fully N-person capable — that's the whole media engine) and posts the join
+link into the group chat, rather than building a genuinely new multi-party ring/accept UI on top of Calls.
+That's a deliberate scoping call, not a shortcut past the harder problem: `CallsService.initiate` already
+accepts multiple `calleeUserIds` and rings/joins all of them correctly end-to-end (verified by reading
+`accept`/`end`'s own handling of >2 participants), but the *client* (`call-store.ts`'s `startCall`) is
+still hardcoded to a single peer — building a real group-calling UI is Stage 15's own explicitly-named
+"not yet built" item, a separate and larger piece of work than this stage's scope. Using Meetings for a
+group's "call everyone" need is architecturally the more correct answer anyway: Calls is the lightweight
+1:1-oriented primitive, Meetings is the N-person one.
+
+12 new `ChatService` unit tests (creator-becomes-admin, admin-gating on all five management methods, the
+last-admin-can't-be-demoted guard); full API suite now 129 tests across 17 suites.
+
+**Verified live** with three real registered users who'd shared a real meeting (`.run-driver/drive-groups.js`,
+screenshots in `.run-driver/screenshots/groups/`): A creates a group with B and C through the real New Chat
+UI, renames it and sets a photo, promotes B to admin (badge appears live). B — now genuinely an admin,
+confirmed by seeing their own management controls — removes C. C's own session, reloaded, no longer sees
+the group at all. The trickiest check: A's own open Manage panel, having done nothing itself, correctly
+dropped to "Members (2)" after B's removal — proving the `ROOM_UPDATED` broadcast → client refetch pipeline
+actually works live, not just that the mutation succeeded on the backend. Then A used "Start a meeting"
+from the group, landed on a real meeting page, and B's own session (never touched by A directly) saw the
+real join-link message appear in the chat. Zero console errors across all three sessions.
+
+**A real environment-recovery detour, not a code issue, worth recording in detail**: mid-stage, the
+underlying sandbox restarted — every docker container in this session's isolated verification stack
+(Postgres, Redis, LiveKit, MinIO, Egress) came back `Exited`, and this session's own dev-server processes
+and `/tmp` scratchpad were gone (ephemeral storage doesn't survive a VM restart the way the containers'
+own data volumes and the repo's real files on disk do). Confirmed via `docker ps -a` before touching
+anything, rather than assuming. Recovery, in order: `docker start` on the four still-needed containers
+(skipped Egress — already a known, accepted gap, see Stage 17); confirmed via `psql` that every migration
+this entire session had run, and the `demo@arutech.dev` account, both survived intact on the restarted
+Postgres container: only the *processes* were gone, never the *data*. Relaunching the API dev server
+surfaced a second, separate discovery: this codebase's `ConfigModule` reads `process.env` directly with no
+dotenv loading anywhere (confirmed by reading `config.module.ts`), so a `.env` file alone does nothing —
+every env var (including the verify-stack's non-default `DATABASE_URL`/`REDIS_URL`/`LIVEKIT_*`/`S3_*`)
+had to be passed as literal inline `VAR=value` prefixes on the actual launch command, which is almost
+certainly how it was originally set up long before this stage. A stray `pkill -f "nest start --watch"`
+during recovery also silently matched nothing (the real process name is `nest.js start --watch`, not `nest
+start --watch`) and left zombie watchers racing on the same log file across several relaunch attempts
+before this was caught by inspecting `ps` output directly instead of trusting the kill command's exit
+code. Both dev servers, the demo account, and the full test suite were all confirmed healthy before
+resuming — see the tail of this stage's own verification for that evidence.
+
+**Not yet built**: a way to rename/re-photo a `DIRECT` room (meaningless — matches existing convention),
+transferring "sole ownership" beyond admin (there's no distinction between the original creator and a
+later-promoted admin once promoted — intentionally flat), a live indicator for who's currently viewing a
+group (that's Priority 5's presence system).
+
+## Personal chat parity gaps (Stage 24)
+
+Fourth item of Priority 3: edit message, forward message, voice messages, typing indicator, and online
+status — brought to meeting chat *and* Team Chat together, since Team Chat's `ChatService` methods are the
+same ones meeting chat calls (`shapeMessage`, `MESSAGE_INCLUDE`, `persistRoomMessage` now built on the
+same shaping path as meeting chat's `persistMessage`), not a parallel implementation to keep in sync.
+
+**Edit**: `ChatMessage.editedAt`, own-message-only, both meeting (`PATCH /meetings/:id/chat/messages/:id`)
+and Team Chat (`PATCH /chat-rooms/:id/messages/:messageId`) — broadcasts `WS_EVENTS.CHAT_MESSAGE_EDITED` /
+`ROOM_MESSAGE_EDITED`.
+
+**Forward**: `ChatMessage.forwardedFromSenderName` — a denormalized *name snapshot* of the original
+sender, not a live foreign key back to the source message. That's a deliberate choice, not an oversight: a
+live pointer would leak the source message (or require re-checking the forwarding recipient's access to
+wherever it came from, every time they view it) into a room they may have no membership in at all. The
+source can be either a meeting-chat or a Team Chat message — `forwardMessage` resolves which permission
+check applies from the source's own `ChatRoom.type` rather than requiring the caller to say which kind it
+is (same pattern Stage 23 used for `ContactGroup` vs. Team Chat `GROUP` disambiguation). v1 is deliberately
+**text-only**: forwarding an attachment/voice-only message is refused outright rather than re-scoping a
+`ChatAttachment`'s permission boundary to a second room in this pass.
+
+**Voice messages**: not a new model — a `ChatAttachment` recorded client-side via `MediaRecorder`
+(`use-voice-recorder.ts`) and uploaded through the exact same presigned-upload pipeline Stage 13 built for
+file/image attachments, distinguished purely by `mimeType.startsWith("audio/")` at render time. Rendering
+is shared between meeting chat and Team Chat via one new `ChatAttachmentView` component, parameterized by
+`downloadPath` (which download endpoint to call) rather than duplicating the image/audio/file-button
+rendering logic per surface.
+
+**Typing indicator**: `WS_EVENTS.CHAT_TYPING` existed in the schema, unwired, before this stage — one
+gateway handler now branches on a `meetingId` vs `chatRoomId` payload field to target the right room,
+backing both meeting chat and Team Chat from the same code path. 2.5s debounce before broadcasting
+"stopped typing."
+
+**Online status ("last seen" v1)**: `User.lastSeenAt`, bumped on every WebSocket connect. The client (not
+the server) decides "Online" (a 2-minute recency window) vs. "Last seen X ago" from the raw timestamp —
+see `docs/feature-gap-analysis.md` §37 for why this is explicitly a simpler v1, not Priority 5's fuller
+presence system (no live per-socket tracking, no away/busy/DND).
+
+**Two real app bugs found and fixed live-verifying this** (both confirmed as genuine bugs, not
+environment/test artifacts, by reproducing them against the real running app before touching any code):
+
+1. **Voice messages were rejected outright.** `FilesService`/`ChatService`'s upload-presign path checked
+   `ALLOWED_MIME_TYPES.has(dto.mimeType)` — an exact string match. Chrome's `MediaRecorder` reports
+   `audio/webm;codecs=opus` as its blob's `mimeType`, not bare `audio/webm`, so every real voice recording
+   hit `400 File type audio/webm;codecs=opus is not allowed` before ever reaching storage. First diagnosed
+   as a broken Playwright fake-audio-capture flag (a red herring — removing
+   `--use-file-for-fake-audio-capture=/dev/null` from the driver's Chrome launch args was a real fix for a
+   real, separate issue with that flag, but didn't resolve this), then found by reading the actual error
+   text rendered in the composer once the driver waited for and screenshotted the real UI state instead of
+   only checking the DOM for an `<audio>` element's existence. Fixed with a new `isAllowedMimeType()` in
+   `file-upload.util.ts` that strips any `;parameter=...` suffix before checking the allowlist — used by
+   all three of this codebase's upload paths (`FilesService`, `ChatService`, `AssignmentsService`), not
+   just the new voice-message one. The full MIME type (codecs suffix included) is still stored and sent as
+   the actual upload's `Content-Type`, since that's genuinely useful playback information — only the
+   allowlist check normalizes it away.
+2. **The meeting-chat "Forward" picker mislabeled its own only real target.** `ForwardPicker.roomLabel`
+   picked `room.members[0]?.user.displayName` for any `DIRECT` room — frequently the *caller themselves*,
+   not the other person, since member order isn't guaranteed to exclude the viewer. Cosmetic on its own,
+   but it masked a real test gap: a forward attempt landed nowhere (confirmed via a direct query — zero
+   rows in `chat_messages` with `forwarded_from_sender_name` set — after a picker click that outwardly
+   looked successful), which traced back to the live-verification driver's necessarily-generic click
+   selector picking the wrong button once the intended one wasn't labeled the way the driver expected.
+   Fixed to find the member whose `userId !== currentUserId`, matching the pattern the real Team Chat page
+   (`apps/web/src/app/chat/page.tsx`) already used correctly elsewhere in the same codebase.
+
+35 new `ChatService` unit tests this stage (edit ×2 contexts, delete-room, forward, presign, persist-with-
+attachment); full API suite now 144 tests across 17 suites, typecheck/lint clean on both `apps/api` and
+`apps/web`.
+
+**Verified live** with two real registered users sharing a real meeting (`.run-driver/drive-chat-parity.js`,
+screenshots in `.run-driver/screenshots/chat-parity/`): A types in meeting chat, B sees the live typing
+indicator; A sends and then edits a message, B sees the edit and the "(edited)" tag appear live; A records
+and sends a real voice message (genuine `MediaRecorder` capture against Chrome's synthetic fake-audio
+device, not a stub), B receives a playable `<audio>` element whose `src` is a real signed MinIO URL; A
+forwards that edited message into a real Team Chat DM with B, B sees it there with a "Forwarded from
+Parity A" marker; in Team Chat directly, A gets a live typing indicator, sends and B receives another real
+voice message, then A deletes their own message and B sees "Message deleted" live; finally A's Contacts
+page shows B genuinely marked "Online". Zero console errors on both sessions across the entire run.
+
+**A real, pre-existing environment gap re-encountered, not a new one**: re-joining the same meeting
+partway through this stage's scenario (to reach the Forward action from inside the meeting UI a second
+time) resets that `MeetingParticipant` row's `status` away from `JOINED` back to `WAITING`/`ADMITTED` —
+the real `JOINED` transition only happens via a LiveKit webhook, which this session's isolated
+verification LiveKit instance never delivers (the same gap documented in Stages 17/22/23). Since Contacts
+requires a `JOINED`/`LEFT` participant row, the online-status check would otherwise fail on this
+environment gap rather than a real bug; the driver re-runs the same `mark-participants-joined.ts` patch
+used at the start of the run immediately after this rejoin.
+
+## Calendar (Stage 25)
+
+Fifth and final item of Priority 3, closing it out: day/week/month views over real scheduled meetings and
+class sessions, plus an honest architecture-and-stub for Google/Outlook sync — exactly as the roadmap item
+itself scoped both halves.
+
+**A real modeling wrinkle surfaced before any UI work**: meetings and class sessions turn out to be
+scheduled two genuinely different ways. A plain `Meeting` carries its own `scheduledStart`/`scheduledEnd`.
+A class session is *also* just a `Meeting` (type `CLASS`, same join flow, same everything) linked 1:1 via
+`ClassSession` — but `ClassesService.createSession` never sets that meeting's own `scheduledStart` at all;
+the only place the date lives is `ClassSession.sessionDate`. A calendar built by querying `Meeting.
+scheduledStart` alone would silently show every scheduled meeting and *no* class sessions. `CalendarService.
+listEvents` queries both sources in parallel and merges them into one sorted list, rather than trying to
+force class sessions into the meeting table's own scheduling field.
+
+**A second, more consequential discovery**: `docs/feature-gap-analysis.md` had claimed recurring meetings
+were ✅ done, citing `Meeting.recurrenceFrequency`/`recurrenceUntil` and the parent/child relation. Reading
+`MeetingsService.create` end to end shows that's only half true — it stores the rule on one `Meeting` row
+and never does anything with `parentMeetingId` or generates per-occurrence rows, and no frontend UI can
+even create a RECURRING meeting today (`schedule-meeting-modal.tsx` only ever sends `type: "SCHEDULED"`).
+Corrected that claim to 🔶 rather than quietly building the calendar around the wrong assumption (see
+`docs/feature-gap-analysis.md` §1). For the calendar itself, this meant: a RECURRING meeting is a *rule*,
+not a set of stored dates, so making it show up on multiple calendar days has to happen at read time —
+`CalendarService.expandRecurrence` projects `scheduledStart` + `recurrenceFrequency` + `recurrenceUntil`
+forward into the individual occurrence dates that fall in whatever `[from, to]` window the view requests,
+fast-forwarding arithmetically past occurrences before `from` (rather than iterating one step at a time
+from `scheduledStart`, which could be years in the past for a long-lived weekly meeting) and capped at 200
+occurrences per series as a hard safety net. Every occurrence still opens the exact same one persistent
+meeting room — clicking any of them is opening the same link, not a new room per date, which is
+consistent with how a RECURRING meeting already behaves today.
+
+**Calendar UI**: `/calendar`, three real views (not three CSS states of one list) — a 6-week month grid,
+a 7-column week view, and a single-day agenda list — sharing one `GET /calendar/events?from=&to=` fetch
+per range change. Meeting and class events are visually distinct (color + a class-name badge). Clicking
+any event navigates straight into the real meeting join flow (`/meeting/:code`) — not a detail modal that
+then makes you click again. Prev/Today/Next navigation re-fetches the range rather than filtering a
+client-side cache of everything, so a far-future or far-past month is only ever as expensive as that one
+request.
+
+**Google/Outlook sync**: exactly the "architecture-and-stub first" scope the roadmap item asked for — a
+`CalendarProvider` interface (`connect(userId, provider)`), mirroring `SummarizationProvider`'s shape from
+Stage 8 down to the pattern of a `Null*` implementation that fails loudly. `NullCalendarProvider.connect`
+throws a real `ServiceUnavailableException`, surfaced to the "Connect Google/Outlook Calendar" buttons as
+a genuine, visible 503 — not a disabled button, not a fake "Connected!" toast. No OAuth flow, token
+storage, or push/pull sync exists yet; that's real, separate, larger work a future stage would add by
+implementing the interface, the same way `OpenAiSummarizationProvider` sits next to
+`NullSummarizationProvider` today.
+
+8 new `CalendarService` unit tests (range validation, plain-meeting shaping, WEEKLY projection across a
+month, `recurrenceUntil` cutoff, long-running-series fast-forward, class-session shaping via `sessionDate`,
+merged sort order); full API suite now 152 tests across 18 suites, typecheck/lint clean on both `apps/api`
+and `apps/web`.
+
+**Verified live** with one real registered user (`.run-driver/drive-calendar.js`, screenshots in
+`.run-driver/screenshots/calendar/`): created a real scheduled meeting, a real WEEKLY recurring meeting,
+and a real class + session for today, all through the actual REST API (not a DB shortcut). Month view
+showed all three on today's cell, and — genuine proof the recurrence projection works, visible in the
+screenshot itself — the same recurring meeting correctly appearing again on the following Monday's cell.
+Navigating to next month made today's one-off meeting correctly disappear (confirming range-based
+refetching, not a stale client-side cache). Day view listed all three with correct time/kind/class-name/
+"recurring" labeling. Week view showed all three in today's column. Clicking the scheduled meeting's pill
+landed on the real PreJoin lobby for that exact meeting code. "Connect Google Calendar" surfaced the real
+503 message inline. Zero unexpected console errors (the only entries logged were an expected
+`getUserMedia` device-not-found, since this driver — unlike the two-person media drivers — never needed
+camera/mic fixtures, and the deliberately-triggered 503 itself).
+
+**Not yet built**: the pre-event reminder job ("class starts in 10 minutes") — still only post-event
+notifications exist; an hourly time-grid for week/day views (this pass's week/day views list events
+stacked by day rather than positioned against clock hours — a real, useful view, just not the denser
+hour-grid some calendar apps use); and, as scoped from the start, any actual OAuth/push-pull sync behind
+`CalendarProvider`.
+
+**Priority 3 is now fully closed out** — including item 1 (Calls), whose write-up in
+`docs/advanced-features-roadmap.md` had gone stale after Stage 15 shipped it and was corrected this stage
+alongside the recurring-meetings correction above.
+

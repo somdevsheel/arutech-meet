@@ -11,7 +11,7 @@ not built at all. See `docs/advanced-features-roadmap.md` for what happens next 
 | Item | Status | Evidence |
 |---|---|---|
 | Instant / scheduled meetings | ✅ | `MeetingsService.create`, `apps/web/src/components/dashboard/schedule-meeting-modal.tsx` |
-| Recurring meetings | ✅ | `Meeting.recurrenceFrequency`/`recurrenceUntil` + parent/child `Meeting` relation (schema), `MeetingsService.create` |
+| Recurring meetings | 🔶 | Corrected this session — was claimed ✅ but that overstated it. `MeetingsService.create` stores `recurrenceFrequency`/`recurrenceUntil` on the *one* `Meeting` row it creates; nothing anywhere ever populates `parentMeetingId` or materializes per-occurrence rows, and no UI exposes creating a RECURRING meeting at all (`schedule-meeting-modal.tsx` only ever sends `type: "SCHEDULED"`). What's real: one persistent room reused every occurrence (functionally "the same link every week"), and Stage 25's Calendar page projects that one rule into individual occurrence *dates* for display (`CalendarService.expandRecurrence`) — but that's a read-time view projection, not stored recurrence instances. Creating a RECURRING meeting is only reachable via the API directly today |
 | Meeting templates | ❌ | No `MeetingTemplate` model or "save as template" flow anywhere |
 | Password, waiting room, host controls, co-host, lock, remove/mute participant, request-to-unmute, disable camera, allow/deny screen-share/chat/recording, join-before-host | ✅ | `MeetingSettings` model + `PermissionService`/`packages/types/src/permissions.ts` capability matrix, `WaitingRoomPanel`, `ParticipantsPanel` |
 | Automatic meeting end, meeting timer | ✅ | `MeetingsEventsService` (`room_finished` webhook ends the meeting), in-room elapsed timer (`meeting-room.tsx`) |
@@ -65,12 +65,16 @@ happening, not a UI-only toggle. Not yet wired into the pre-join lobby (which st
 | File/image attachments | ✅ **(this session)** | Real presigned-upload pipeline on the previously-unused `FileAsset` schema (new `FilesService`/`FilesController`) — verified live with a real image upload, cross-participant delivery, and inline render |
 | Link detection, timestamps, mentions | ✅ **(this session)** | Client-side, safe (tokenized rendering, never `dangerouslySetInnerHTML`) |
 | Message deletion, host moderation | ✅ **(this session)** | Soft-delete (own message free; others requires `chat.delete_any_message`, audit-logged), live broadcast |
+| Edit message | ✅ (Stage 24) | Own message only, `editedAt` shown; live broadcast (`WS_EVENTS.CHAT_MESSAGE_EDITED`) |
+| Forward message | ✅ (Stage 24) | Meeting-chat or Team Chat source → any Team Chat room the caller is a member of; text-only in this pass (refused for attachment/voice-only messages) |
+| Voice messages | ✅ (Stage 24) | `MediaRecorder`-recorded, uploaded as a `ChatAttachment` whose `mimeType` starts with `audio/` — no separate model |
+| Typing indicator | ✅ (Stage 24) | `WS_EVENTS.CHAT_TYPING` (existed unwired before this stage) |
 | Unread count, @everyone (notify-all) | ❌ | Panel-level unread isn't needed inside an already-open meeting chat (the toolbar's chat badge already covers "unread while on another tab"); `@everyone` currently just highlights as a mention like any other, doesn't trigger a distinct notification |
 
 **Fully rebuilt this session** — see `docs/roadmap.md` §Advanced features Priority 1 continued for the
 full write-up, including two real MinIO/network-environment bugs found and fixed while live-verifying
-this (not app bugs — see that doc for what they were). Not yet extended to Team Chat (personal/group
-messaging outside a meeting), which still has the pre-existing gaps described in §24–26 below.
+this (not app bugs — see that doc for what they were). Edit/forward/voice/typing (Stage 24) now apply to
+Team Chat too, since it reuses the same `ChatService`/`ChatPanel`-adjacent code — see §24–26.
 
 ## 6. Participant management
 
@@ -179,29 +183,51 @@ notification delivery.
 
 ✅ Contacts (derived from real meeting history, Stage 11) plus block-user, contact groups, and favorites
 **(this session)** — see `docs/roadmap.md` Stage 22. Block is enforced symmetrically at both call and DM
-creation, not just hidden in the contacts UI. "Groups" beyond Team Chat (a group photo, group-level
-admins, group call/meeting, permissions distinct from Team Chat's flat membership) — still not built;
-Team Chat's `GROUP` `ChatRoom` type covers group *messaging* only, and the new `ContactGroup` model this
-stage added is a personal organizing label for contacts, not the same thing (see Stage 22's write-up for
-why these are two different concepts despite the shared word "group"). Personal chat itself (§26) has the
-same gaps as §5's chat-panel gap (no edit/forward/mentions/voice-messages/typing-indicator) since Team
-Chat reuses the same `ChatPanel`-adjacent code paths.
+creation, not just hidden in the contacts UI. Team Chat groups: ✅ **(this session)** — group photo
+(a URL, same convention as `User.avatarUrl`), group-level admins distinct from plain `ChatMember`
+(promote/demote, admin-gated add/remove-member), and a "Start a meeting" group shortcut. See
+`docs/roadmap.md` Stage 23 for why this is deliberately kept distinct from `ContactGroup` (Stage 22's
+personal organizing label for contacts) despite the shared word "group," and for why the shortcut starts
+a real N-person Meeting rather than building the separate, larger, still-not-built group-calling UI
+(Stage 15's own "not yet built" list). Personal chat parity (§26): ✅ **(Stage 24)** — edit message,
+forward message, voice messages, typing indicator, and online status ("last seen" v1, `User.lastSeenAt`)
+now match §5's meeting-chat feature set, since Team Chat reuses the same `ChatService` and shares
+`ChatPanel`'s components. Two real app bugs were found and fixed while live-verifying this (not
+environment artifacts): (1) the server's MIME allowlist did an exact-string `Set.has()` check against the
+browser-reported `mimeType`, which rejected every real voice message — Chrome's `MediaRecorder` reports
+`audio/webm;codecs=opus`, not bare `audio/webm`; fixed with `isAllowedMimeType()` in
+`file-upload.util.ts`, which strips the `;codecs=...` suffix before checking (the suffix is still stored
+verbatim as the file's real MIME type). (2) The meeting-chat "Forward" picker labeled a `DIRECT` room by
+`room.members[0]`, which is frequently the caller *themselves*, not the other person — cosmetically wrong
+and, combined with a narrow test selector, initially masked the actual forward silently going nowhere;
+fixed to find the member whose `userId !== currentUserId`, matching the pattern the real Team Chat page
+already used correctly. Online status is deliberately a simpler v1 (see §37) — not the fuller presence
+system Priority 5 describes.
 
 ## 27. File sharing
 
-🔶 **Meeting chat attachments now real (this session)** — a genuine `FilesService`/`FilesController`
-(`apps/api/src/files`) built on the previously-unused `FileAsset` schema: presigned direct-to-storage
-upload, server-enforced MIME allowlist, signed download URLs, `virusScanStatus` gating (honest about no
-scanner being wired — see that service's doc comment). Scoped to meeting chat only so far — not yet
-reachable from Classes or Team Chat, and no upload-progress UI (the presigned PUT is awaited in one shot
-rather than exposing incremental progress) or expiration policy beyond what recordings already have.
+🔶 **Meeting chat attachments now real (this session), Team Chat attachments added Stage 24** — a genuine
+`FilesService`/`FilesController` (`apps/api/src/files`) plus `ChatService`'s Team Chat-scoped
+`presignRoomAttachment`/`getRoomAttachmentDownloadUrl` mirror, both built on the previously-unused
+`FileAsset` schema (`FileScope.CHAT`, unused before Stage 24, is now wired up): presigned
+direct-to-storage upload, server-enforced MIME allowlist, signed download URLs, `virusScanStatus` gating
+(honest about no scanner being wired — see that service's doc comment). Still not reachable from Classes,
+and no upload-progress UI (the presigned PUT is awaited in one shot rather than exposing incremental
+progress) or expiration policy beyond what recordings already have.
 
 ## 28–29. Scheduling, reminders
 
-🔶 Meetings/classes can be scheduled with a start time (`MeetingsService.create`, class sessions) and
-notified on creation, but there's no calendar UI (day/week/month views), no Google/Outlook integration
-architecture, and no "class starts in 10 minutes" pre-event reminder job — only post-event notifications
-(recording ready, transcript ready, chat message) exist today.
+🔶 **Calendar UI added (Stage 25)** — `GET /calendar/events` (`CalendarService`) merges scheduled meetings
+and class sessions (two genuinely different sources: a meeting's own `scheduledStart` vs. a
+`ClassSession.sessionDate`, since `ClassesService.createSession` never sets the underlying meeting's own
+`scheduledStart`) into one list, rendered as real month/week/day views (`/calendar`) — click any event to
+join the real meeting. A RECURRING meeting's single stored rule is projected into individual occurrence
+dates for display (`CalendarService.expandRecurrence`), capped and fast-forwarded so a long-lived or
+unbounded series can't blow up one request. Google/Outlook integration is architecture-and-stub only, as
+scoped: a `CalendarProvider` interface (mirroring `SummarizationProvider`) with a `NullCalendarProvider`
+that returns a real 503, not a fake "connected" state — no OAuth flow or token storage exists yet, that's
+still genuinely new work. Still missing: any "class starts in 10 minutes" pre-event reminder job (only
+post-event notifications — recording ready, transcript ready, chat message — exist today).
 
 ## 30. Notification center
 
@@ -233,9 +259,16 @@ disable-reactions/disable-file-sharing as meeting-level settings are not built.
 
 ## 37. User presence
 
-❌ Not built as a general concept. What exists is meeting-scoped only: `ParticipantPresencePayload`
-(mic/camera/hand-raised inside a meeting) and the Socket.IO connection itself. There's no
-online/away/busy/DND status shown in Contacts, Chat, or Calls outside of an active meeting.
+🔶 **"Online status" v1 added (Stage 24)** — `User.lastSeenAt`, bumped on every WebSocket connect
+(`RealtimeGateway.handleConnection`), shown as "Online" (a 2-minute recency window) or "Last seen X ago"
+in Contacts and Team Chat (`apps/web/src/lib/format-last-seen.ts`). Deliberately *not* live presence: it's
+a recency timestamp, not a real-time online/away/busy/DND status derived from actual open sockets — two
+different users who are both truly online right now both just show "Online" from the same timestamp
+field, with no distinction, and there's no away/busy/DND concept at all. A full presence system (tracked
+socket membership per meeting/room, not just "seen recently", plus away/busy/DND) is still Priority 5's
+own, larger, not-yet-built item. What exists beyond this is still meeting-scoped only:
+`ParticipantPresencePayload` (mic/camera/hand-raised inside a meeting) and the Socket.IO connection
+itself.
 
 ## 38. Device management
 

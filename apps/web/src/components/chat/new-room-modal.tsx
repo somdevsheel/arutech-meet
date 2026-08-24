@@ -14,10 +14,12 @@ interface RoomSummary {
   id: string;
   type: "GROUP" | "DIRECT" | "MEETING" | "CLASS";
   name: string | null;
+  photoUrl: string | null;
   members: {
     userId: string;
     lastReadMessageId: string | null;
-    user: { id: string; displayName: string; username: string; avatarUrl: string | null };
+    isAdmin: boolean;
+    user: { id: string; displayName: string; username: string; avatarUrl: string | null; lastSeenAt: string };
   }[];
 }
 

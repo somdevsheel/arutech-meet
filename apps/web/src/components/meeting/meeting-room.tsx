@@ -75,6 +75,7 @@ export function MeetingRoom({
     sendMessage,
     toggleChatReaction,
     deleteChatMessage,
+    editChatMessage,
     raiseHand,
     lowerHandFor,
     sendReaction,
@@ -284,9 +285,11 @@ export function MeetingRoom({
                   meetingId={meetingId}
                   messages={messages}
                   participants={participants}
+                  socket={socket}
                   onSend={sendMessage}
                   onToggleReaction={toggleChatReaction}
                   onDeleteMessage={deleteChatMessage}
+                  onEditMessage={editChatMessage}
                   currentUserId={userId}
                   isModerator={isModerator}
                 />

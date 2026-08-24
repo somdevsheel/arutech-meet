@@ -6,6 +6,7 @@ import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { useCallStore } from "@/lib/call-store";
 import { AppShell } from "@/components/layout/app-shell";
+import { formatLastSeen, isOnline } from "@/lib/format-last-seen";
 
 interface Contact {
   id: string;
@@ -17,6 +18,7 @@ interface Contact {
   lastMetAt: string;
   isFavorite: boolean;
   groupIds: string[];
+  lastSeenAt: string;
 }
 
 interface BlockedContact {
@@ -314,13 +316,18 @@ export default function ContactsPage() {
               >
                 {c.isFavorite ? "★" : "☆"}
               </button>
-              <span className="grid h-9 w-9 flex-none place-items-center rounded-full bg-brand-500 text-xs font-semibold text-white">
-                {initialsOf(c.displayName)}
+              <span className="relative flex-none">
+                <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-500 text-xs font-semibold text-white">
+                  {initialsOf(c.displayName)}
+                </span>
+                {isOnline(c.lastSeenAt) && (
+                  <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-success" />
+                )}
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-white">{c.displayName}</p>
                 <p className="truncate text-xs text-ink-muted">
-                  @{c.username} · {c.meetingsTogether} meeting{c.meetingsTogether === 1 ? "" : "s"} together
+                  @{c.username} · {c.meetingsTogether} meeting{c.meetingsTogether === 1 ? "" : "s"} together · {formatLastSeen(c.lastSeenAt)}
                 </p>
                 {c.groupIds.length > 0 && (
                   <p className="mt-0.5 truncate text-[11px] text-ink-muted2">

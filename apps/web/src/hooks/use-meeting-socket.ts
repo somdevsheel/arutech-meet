@@ -78,6 +78,8 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
       setMessages((prev) =>
         prev.map((m) => (m.id === p.messageId ? { ...m, body: null, deletedAt: new Date().toISOString() } : m)),
       );
+    const onChatMessageEdited = (updated: ChatMessagePayload) =>
+      setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
     const onMute = (p: { participantId: string }) =>
       setLastModeration({ type: "mute", participantId: p.participantId });
     const onCameraDisable = (p: { participantId: string }) =>
@@ -112,6 +114,7 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
     socket.on(WS_EVENTS.CHAT_MESSAGE, onChatMessage);
     socket.on(WS_EVENTS.CHAT_REACTION, onChatReaction);
     socket.on(WS_EVENTS.CHAT_MESSAGE_DELETED, onChatMessageDeleted);
+    socket.on(WS_EVENTS.CHAT_MESSAGE_EDITED, onChatMessageEdited);
     socket.on(WS_EVENTS.MODERATION_MUTE, onMute);
     socket.on(WS_EVENTS.MODERATION_CAMERA_DISABLE, onCameraDisable);
     socket.on(WS_EVENTS.MODERATION_REMOVE, onRemove);
@@ -133,6 +136,7 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
       socket.off(WS_EVENTS.CHAT_MESSAGE, onChatMessage);
       socket.off(WS_EVENTS.CHAT_REACTION, onChatReaction);
       socket.off(WS_EVENTS.CHAT_MESSAGE_DELETED, onChatMessageDeleted);
+      socket.off(WS_EVENTS.CHAT_MESSAGE_EDITED, onChatMessageEdited);
       socket.off(WS_EVENTS.MODERATION_MUTE, onMute);
       socket.off(WS_EVENTS.MODERATION_CAMERA_DISABLE, onCameraDisable);
       socket.off(WS_EVENTS.MODERATION_REMOVE, onRemove);
@@ -183,6 +187,19 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
     [meetingId],
   );
 
+  const editChatMessage = useCallback(
+    async (messageId: string, body: string) => {
+      if (!meetingId) return;
+      await apiFetch(`/meetings/${meetingId}/chat/messages/${messageId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ body }),
+      });
+      // Same reasoning as deleteChatMessage — CHAT_MESSAGE_EDITED broadcasts
+      // back to this socket too.
+    },
+    [meetingId],
+  );
+
   const raiseHand = useCallback(
     (raised: boolean) => {
       if (!meetingId) return;
@@ -226,6 +243,7 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
     sendMessage,
     toggleChatReaction,
     deleteChatMessage,
+    editChatMessage,
     raiseHand,
     lowerHandFor,
     sendReaction,

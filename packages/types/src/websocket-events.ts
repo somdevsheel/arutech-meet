@@ -43,6 +43,7 @@ export const WS_EVENTS = {
   // panel stays in sync without re-fetching history.
   CHAT_REACTION: "chat:reaction",
   CHAT_MESSAGE_DELETED: "chat:message_deleted",
+  CHAT_MESSAGE_EDITED: "chat:message_edited",
 
   // Whiteboard
   WHITEBOARD_OP: "whiteboard:op",
@@ -89,6 +90,12 @@ export const WS_EVENTS = {
   ROOM_JOIN: "room:join",
   ROOM_LEAVE: "room:leave",
   ROOM_MESSAGE: "room:message",
+  ROOM_MESSAGE_EDITED: "room:message_edited",
+  ROOM_MESSAGE_DELETED: "room:message_deleted",
+  // Group details (name/photo), membership, or admin changes — a signal to
+  // refetch the room, not the full new state (mirrors TRANSCRIPT_UPDATED's
+  // shape: cheap, and the client already has a GET to call).
+  ROOM_UPDATED: "room:updated",
 
   // Personal calls (1:1/group, outside any meeting — see apps/api/src/calls).
   // Broadcast-only, always to a `user:{id}` personal room, never a meeting
@@ -129,7 +136,12 @@ export interface ChatMessagePayload {
   isPrivate: boolean;
   toUserId: string | null;
   createdAt: string;
+  editedAt: string | null;
   deletedAt: string | null;
+  /** Set only on a message created via forwarding — see the schema comment
+   * on ChatMessage.forwardedFromSenderName for why this is a denormalized
+   * name snapshot, not a live reference back to the source message. */
+  forwardedFromSenderName: string | null;
   reactions: ChatMessageReactionGroup[];
   attachment: ChatMessageAttachment | null;
 }

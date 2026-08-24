@@ -53,12 +53,52 @@ hold the corresponding capability from `packages/types/src/permissions.ts` — s
 
 ## Chat (`/meetings/:meetingId/chat`)
 
-`GET /messages?cursor=` — paginated history (includes reactions, grouped by emoji, and an `attachment`
-object when present). Sending a message, reacting, replying, and private-DMing are all WebSocket-only
+`GET /messages?cursor=` — paginated history (includes reactions, grouped by emoji, an `attachment` object
+when present, `editedAt`, and `forwardedFromSenderName`). Sending a message, reacting, replying, private-
+DMing, and typing (`WS_EVENTS.CHAT_TYPING`, branches on a `meetingId` vs `chatRoomId` payload field to
+target the right room — same handler backs both this and Team Chat below) are all WebSocket-only
 (`WS_EVENTS.CHAT_MESSAGE`, `CHAT_REACTION`) — see `docs/realtime.md`; there is deliberately no REST "send
 message" endpoint since delivery must be realtime. `DELETE /messages/:messageId` (own message free;
-someone else's requires `chat.delete_any_message`, audit-logged) is REST since it's a one-shot action, not
-a stream — the resulting removal still broadcasts live via `WS_EVENTS.CHAT_MESSAGE_DELETED`.
+someone else's requires `chat.delete_any_message`, audit-logged) and `PATCH /messages/:messageId`
+(own message only — body: `{ body }`) are REST since they're one-shot actions, not a stream — both still
+broadcast live (`WS_EVENTS.CHAT_MESSAGE_DELETED` / `CHAT_MESSAGE_EDITED`).
+
+Voice messages are not a separate model — they're a `ChatAttachment` whose `mimeType` happens to start
+with `audio/`, recorded client-side via `MediaRecorder` and uploaded through the same presigned-upload
+flow as any other file attachment (see Files below). Forwarding a message (text-only in this first pass —
+refused for an attachment/voice-only message, see `ChatService.forwardMessage`'s doc comment) is
+`POST /chat-rooms/:id/messages/forward` on the *target* Team Chat room, not a meeting-chat endpoint — a
+forwarded message always lands in a `GROUP`/`DIRECT` room, the source can be either a meeting-chat or
+Team Chat message.
+
+## Team Chat (`/chat-rooms`)
+
+Standing `GROUP`/`DIRECT` rooms outside any meeting — same `ChatRoom`/`ChatMember`/`ChatMessage` tables the
+meeting chat above uses. Sending a message is WebSocket-only (`WS_EVENTS.ROOM_JOIN`/`ROOM_MESSAGE`), same
+reasoning as meeting chat. See `docs/roadmap.md` Stage 23 for the group-management additions.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/` | authenticated | my rooms, each with its members and latest message |
+| POST | `/` | authenticated | body: `{ type: "GROUP" \| "DIRECT", name?, memberUserIds }`. `DIRECT` reuses an existing room for the same pair rather than duplicating, and is refused (403) if the pair has a block relationship. `GROUP` creator becomes its sole admin |
+| GET | `/:id/messages?cursor=` | member | |
+| POST | `/:id/read` | member | |
+| POST | `/:id/leave` | member | `GROUP` only — no leave concept for `DIRECT` |
+| PATCH | `/:id` | `GROUP` admin | body: `{ name?, photoUrl? }` — `photoUrl` is a plain URL, same convention as `User.avatarUrl`/`Organization.logoUrl` (no presigned-upload pipeline for any of the three yet) |
+| POST | `/:id/members` | `GROUP` admin | body: `{ userId }`; 409 if already a member |
+| DELETE | `/:id/members/:userId` | `GROUP` admin | removing *yourself* is `/leave` instead — this 400s on `userId === caller` |
+| POST | `/:id/admins/:userId` | `GROUP` admin | promote |
+| DELETE | `/:id/admins/:userId` | `GROUP` admin | demote; 400 if it would leave the group with zero admins |
+| PATCH | `/:id/messages/:messageId` | own message | body: `{ body }`; broadcasts `WS_EVENTS.ROOM_MESSAGE_EDITED` |
+| DELETE | `/:id/messages/:messageId` | own message | soft-delete; broadcasts `WS_EVENTS.ROOM_MESSAGE_DELETED` — no "delete any message" moderation role here, unlike meeting chat (no host concept in a standing room, just member/admin) |
+| POST | `/:id/messages/forward` | member of `:id` | body: `{ messageId }` — `messageId` is the *source* message (meeting chat or another Team Chat room); requires membership/participancy in the source too, resolved from the source's own `ChatRoom.type` |
+| POST | `/:id/files/presign` | member | same shape/limits as meeting chat's `POST /files/presign` above, scoped to `chatRoomId` instead of `meetingId` — the `FileScope.CHAT` value this uses existed unused in the schema before this stage |
+| GET | `/:id/files/:fileId/download` | member | |
+
+Any of the five group-management endpoints broadcasts `WS_EVENTS.ROOM_UPDATED` to `chatroom:{id}` — a
+signal to refetch the room, not the new state itself, matching `TRANSCRIPT_UPDATED`'s shape. Only reaches
+clients that currently have that room open (joined its channel via `ROOM_JOIN`), the same limitation
+`ROOM_MESSAGE`'s live sidebar-preview update already has.
 
 ## Files (`/meetings/:meetingId/files`)
 
@@ -67,9 +107,25 @@ a stream — the resulting removal still broadcasts live via `WS_EVENTS.CHAT_MES
 | POST | `/presign` | participant/`chat.send` | body: `{ fileName, mimeType, sizeBytes }` (20MB cap, MIME allowlist — see `FilesService`); returns `{ fileId, uploadUrl }`. Client PUTs the file directly to `uploadUrl` (never through this API — see `docs/security.md`), then sends a chat message referencing `fileId`. |
 | GET | `/:fileId/download` | participant | short-lived (10 min) presigned S3 URL; 403 if `virusScanStatus` is `INFECTED` (nothing sets this today — no scanner is wired, see `FilesService`'s doc comment) |
 
-Built on the `FileAsset` schema (previously unused). Currently only reachable from meeting chat
-attachments — see `docs/feature-gap-analysis.md` §27 for the documented follow-up to reuse this for
-Classes/Team Chat.
+Built on the `FileAsset` schema (previously unused). Team Chat has its own equivalent pair,
+`POST /chat-rooms/:id/files/presign` / `GET /chat-rooms/:id/files/:fileId/download` (see Team Chat above,
+added Stage 24) — still not reachable from Classes; see `docs/feature-gap-analysis.md` §27.
+
+## Calendar (`/calendar`)
+
+`GET /events?from=&to=` (both required ISO date strings, max 366-day span) returns a merged,
+start-ascending `CalendarEvent[]` — real scheduled meetings (`Meeting.scheduledStart`, owned or already
+joined, same visibility rule `GET /meetings` uses) and real class sessions (`ClassSession.sessionDate`,
+for classes the caller teaches or is enrolled in — these are scheduled independently of their own
+`Meeting.scheduledStart`, which `ClassesService.createSession` never sets). A RECURRING meeting is stored
+as one rule (`scheduledStart`/`recurrenceFrequency`/`recurrenceUntil`), not per-occurrence rows —
+`CalendarService.expandRecurrence` projects it into individual occurrence entries within `[from, to]` at
+read time (capped at 200 occurrences per series); each carries `isRecurringOccurrence: true` and the
+*same* `meetingId`/`meetingCode` — every occurrence opens the one real, persistent meeting room.
+
+`POST /connect/:provider` (`provider` is `google` or `outlook`) is the `CalendarProvider` seam for
+Google/Outlook sync — architecture-and-stub only today (see `docs/roadmap.md` Stage 25): the only
+implementation, `NullCalendarProvider`, always returns a real `503`, not a fake "connected" response.
 
 ## Recordings (`/meetings/:meetingId/recordings`)
 
@@ -196,9 +252,16 @@ The contact list itself (`GET /`) is derived from real meeting history, not a st
 `ContactsService`'s own doc comment. Block/favorite/group are the exception: genuine per-user state on top
 of that derived list. See `docs/roadmap.md` Stage 22.
 
+`lastSeenAt` (also on `GET /users/:id` and every `ChatMember.user` embed) is "online status" v1 — a plain
+timestamp bumped on every WebSocket connect (`RealtimeGateway.handleConnection`), not live presence. The
+client derives "Online" vs. "Last seen Xm ago" from recency (a 2-minute window, see
+`apps/web/src/lib/format-last-seen.ts`) rather than the server baking that judgment call into the payload.
+See `docs/roadmap.md` Stage 24 for why this is deliberately a simpler v1, distinct from Priority 5's fuller
+presence system (which would track live socket membership per meeting/room, not just "seen recently").
+
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| GET | `/` | authenticated | everyone the caller has shared a meeting with; excludes anyone with a block relationship in either direction; each row includes `isFavorite`/`groupIds`; favorites sort first |
+| GET | `/` | authenticated | everyone the caller has shared a meeting with; excludes anyone with a block relationship in either direction; each row includes `isFavorite`/`groupIds`/`lastSeenAt`; favorites sort first |
 | GET | `/blocked` | authenticated | people the caller has blocked |
 | POST | `/blocked` | authenticated | body: `{ userId }`; idempotent |
 | DELETE | `/blocked/:userId` | authenticated | |

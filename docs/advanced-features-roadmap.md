@@ -62,30 +62,39 @@ What's left here is course-structure modeling, not classroom mechanics:
 
 ## Priority 3 — Calls, contacts, groups, personal chat, file sharing, calendar
 
-1. **Calls** (`Call`/`CallParticipant` schema exists, unused — `ContactsService.call` deliberately creates
-   an instant meeting instead, documented as a scoping decision in Stage 11): build the real
-   ring/accept/reject/busy/missed-call flow on top of it. This is the biggest genuinely-new real-time
-   surface in this priority tier — needs a `WS_EVENTS.CALL_INCOMING`/`CALL_ACCEPTED`/`CALL_REJECTED`
-   family (same gateway pattern as everything else here) plus incoming/outgoing call UI (a modal, not a
-   full page) that, on accept, joins the same LiveKit room the meeting engine already uses — no second
-   media engine, per the brief's own instruction.
+1. ~~Calls~~ — done, Stage 15 (this item's write-up predates that stage and was never updated to reflect
+   it — corrected now). Real 1:1 ring/accept/reject/busy/cancel/missed + call history on the
+   `Call`/`CallParticipant` schema, `WS_EVENTS.CALL_INCOMING`/`CALL_ACCEPTED`/`CALL_REJECTED`/`CALL_ENDED`,
+   `CallOverlay` reusing the same `<LiveKitRoom>`/`VideoGrid` the meeting room uses — no second media
+   engine. Two real bugs found and fixed live (a client socket-singleton reconnect race, and a 1:1 call's
+   non-hanger-up side never getting marked `LEFT`) — see `docs/roadmap.md` Stage 15. Group-calling UI is
+   the one piece explicitly left for later (backend already accepts multiple `calleeUserIds`; no client UI
+   for it yet) — Stage 23's group "Start a meeting" shortcut deliberately used a real Meeting instead of
+   building that UI, for the reasons given there.
 2. ~~Contacts~~ — done, Stage 22. Block user (symmetric — either direction blocks both — checked at call
    initiation and DM creation; meeting invite has no targeted-invite endpoint to check in this codebase,
    noted honestly rather than invented), contact groups, favorites.
-3. **Groups** as a first-class concept beyond Team Chat's flat `GROUP` rooms: group photo, group-level
-   admins distinct from ChatMember, group meeting/call shortcuts. Whether this needs its own `Group` model
-   or is better modeled as `ChatRoom` gaining `photoUrl`/an `admin` role on `ChatMember` is worth a design
-   pass rather than assuming — the latter is much less new surface area.
-4. **Personal chat parity gaps**: same rewrite as Priority 1's chat-panel work, since Team Chat reuses the
-   same components — edit message, forward message, voice messages (record + upload as a `ChatAttachment`
-   with a distinct type), typing indicator (`WS_EVENTS.CHAT_TYPING` constant already exists, unwired — same
-   situation `WS_EVENTS.CHAT_REACTION` was in before this session), online status (needs Priority 5's
-   presence system, or a simpler "last seen" derived from session activity as a v1).
-5. **Calendar**: day/week/month views over existing scheduled meetings/classes (`GET /meetings?from=&to=`
-   equivalent) is mostly a new frontend page against data that already exists. Google/Outlook integration
-   is genuinely new: OAuth token storage + calendar API push/pull, scoped as architecture-and-stub first
-   (a `CalendarProvider` interface, mirroring how Stage 8 avoided hardcoding one AI vendor) rather than a
-   full two-way sync in the first pass.
+3. ~~Groups~~ — done, Stage 23. Went with the lighter option this item itself floated: `ChatRoom` gained
+   `photoUrl`, `ChatMember` gained `isAdmin`, rather than a new `Group` model. Group meeting/call shortcut
+   is a "Start a meeting" button (a real, already N-person-capable Meeting) rather than a new group-calling
+   UI on top of Calls — see `docs/roadmap.md` Stage 23 for why.
+4. ~~Personal chat parity gaps~~ — done, Stage 24. Edit message, forward message (text-only v1, denormalized
+   sender-name snapshot rather than a live pointer to the source), voice messages (`ChatAttachment` with an
+   `audio/*` `mimeType`, no separate type/model), typing indicator (`WS_EVENTS.CHAT_TYPING` wired up), and
+   online status as the simpler "last seen" v1 this item itself anticipated (`User.lastSeenAt`, bumped on
+   WebSocket connect — not Priority 5's fuller live-presence system). Two real bugs found and fixed live —
+   see `docs/roadmap.md` Stage 24.
+5. ~~Calendar~~ — done, Stage 25. Real month/week/day views (`GET /calendar/events?from=&to=`) merging
+   scheduled meetings and class sessions — two genuinely different scheduling fields
+   (`Meeting.scheduledStart` vs. `ClassSession.sessionDate`), not one query. A RECURRING meeting is
+   projected into individual occurrence dates at read time (`CalendarService.expandRecurrence`), since it's
+   stored as one rule, not per-occurrence rows — found and corrected a stale "done" claim about recurring
+   meetings while scoping this (see `docs/roadmap.md` Stage 25 and `docs/feature-gap-analysis.md` §1).
+   Google/Outlook integration is exactly the architecture-and-stub this item asked for: a `CalendarProvider`
+   interface + `NullCalendarProvider`, a real 503 rather than a full two-way sync.
+
+**Priority 3 is now fully closed out** — including item 1 (Calls), whose entry above had gone stale after
+Stage 15 shipped it and was corrected alongside this item.
 
 ## Priority 4 — AI meeting assistant, AI classroom assistant, live transcription, captions
 

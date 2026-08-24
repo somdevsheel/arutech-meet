@@ -11,9 +11,21 @@ export interface Contact {
   lastMetAt: string;
   isFavorite: boolean;
   groupIds: string[];
+  /** "Online status" v1 — see the schema comment on User.lastSeenAt. The
+   * client decides "online" vs. "last seen X ago" from this raw timestamp
+   * (a short recency window, not a separate boolean) rather than the server
+   * baking that judgment call in. */
+  lastSeenAt: string;
 }
 
-const USER_SELECT = { id: true, displayName: true, username: true, email: true, avatarUrl: true } as const;
+const USER_SELECT = {
+  id: true,
+  displayName: true,
+  username: true,
+  email: true,
+  avatarUrl: true,
+  lastSeenAt: true,
+} as const;
 
 /**
  * "Contacts" is derived entirely from real meeting history — everyone who has
@@ -88,6 +100,7 @@ export class ContactsService {
           lastMetAt: metAt,
           isFavorite: favoriteIds.has(p.user.id),
           groupIds: groupIdsByContact.get(p.user.id) ?? [],
+          lastSeenAt: p.user.lastSeenAt.toISOString(),
         });
       }
     }

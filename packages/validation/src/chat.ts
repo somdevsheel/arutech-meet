@@ -11,11 +11,28 @@ export const createChatRoomSchema = z.object({
 });
 export type CreateChatRoomDto = z.infer<typeof createChatRoomSchema>;
 
-export const sendRoomChatMessageSchema = z.object({
-  body: z.string().min(1).max(4000),
-  replyToId: z.string().uuid().optional(),
-});
+export const sendRoomChatMessageSchema = z
+  .object({
+    // Optional (not min(1)) so a file/voice message can be sent on its own —
+    // same allowance meeting chat's sendChatMessageSchema already has.
+    body: z.string().max(4000).optional(),
+    replyToId: z.string().uuid().optional(),
+    fileId: z.string().uuid().optional(),
+  })
+  .refine((data) => (data.body && data.body.length > 0) || data.fileId, {
+    message: "A message needs either text or an attached file",
+  });
 export type SendRoomChatMessageDto = z.infer<typeof sendRoomChatMessageSchema>;
+
+export const editMessageSchema = z.object({
+  body: z.string().min(1).max(4000),
+});
+export type EditMessageDto = z.infer<typeof editMessageSchema>;
+
+export const forwardMessageSchema = z.object({
+  messageId: z.string().uuid(),
+});
+export type ForwardMessageDto = z.infer<typeof forwardMessageSchema>;
 
 /** GROUP rooms only — rename and/or set a photo. Same "just a URL" convention
  * as User.avatarUrl/Organization.logoUrl (see the schema comment on

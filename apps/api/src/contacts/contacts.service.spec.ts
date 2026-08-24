@@ -3,8 +3,8 @@ import { ContactsService } from "./contacts.service";
 import type { PrismaService } from "../prisma/prisma.service";
 
 const ME = "user-me";
-const MET_A = { id: "user-a", displayName: "A", username: "a", email: "a@x.com", avatarUrl: null };
-const MET_B = { id: "user-b", displayName: "B", username: "b", email: "b@x.com", avatarUrl: null };
+const MET_A = { id: "user-a", displayName: "A", username: "a", email: "a@x.com", avatarUrl: null, lastSeenAt: new Date("2026-01-01T00:00:00Z") };
+const MET_B = { id: "user-b", displayName: "B", username: "b", email: "b@x.com", avatarUrl: null, lastSeenAt: new Date("2026-01-01T00:00:00Z") };
 
 function coParticipant(user: typeof MET_A, meetingId = "meeting-1") {
   return {

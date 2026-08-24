@@ -30,6 +30,7 @@ import { NotesModule } from "./notes/notes.module";
 import { ContactsModule } from "./contacts/contacts.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { SearchModule } from "./search/search.module";
+import { CalendarModule } from "./calendar/calendar.module";
 import { ObservabilityLoggingModule } from "./observability/logging.module";
 import { ObservabilityModule } from "./observability/observability.module";
 
@@ -68,6 +69,7 @@ import { ObservabilityModule } from "./observability/observability.module";
     ContactsModule,
     NotificationsModule,
     SearchModule,
+    CalendarModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

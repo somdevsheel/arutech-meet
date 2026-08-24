@@ -30,6 +30,7 @@ import { WsExceptionFilter } from "./ws-exception.filter";
 import { MetricsService } from "../observability/metrics.service";
 import { roomBroadcastChannel } from "./realtime-broadcast.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { PrismaService } from "../prisma/prisma.service";
 
 interface SocketData {
   userId: string;
@@ -78,6 +79,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly chat: ChatService,
     private readonly metrics: MetricsService,
     private readonly notifications: NotificationsService,
+    private readonly prisma: PrismaService,
     @Inject("REDIS") private readonly redis: Redis,
     @Inject("ENV") private readonly env: Env,
   ) {}
@@ -143,6 +145,15 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       // join step, the same way `meeting:{id}` rooms work for meeting events.
       await client.join(userRoom(payload.sub));
       this.metrics.websocketConnections.inc();
+      // "Online status" v1 (docs/roadmap.md) — a real timestamp, not live
+      // presence: bumped on connect, read back as "last seen X ago"/"online"
+      // (within a short window) wherever a contact/chat member is shown.
+      // Doesn't track ongoing activity within one long-lived connection, only
+      // the moment of connecting — a real, honest limitation of this simpler
+      // v1 versus a full presence system (Priority 5's own separate item).
+      void this.prisma.client.user
+        .update({ where: { id: payload.sub }, data: { lastSeenAt: new Date() } })
+        .catch((err) => this.logger.warn(`Failed to bump lastSeenAt for ${payload.sub}: ${String(err)}`));
     } catch {
       client.emit(WS_EVENTS.ERROR, { message: "Invalid or expired token" });
       client.disconnect(true);
@@ -261,6 +272,22 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.CHAT_REACTION, payload);
   }
 
+  /** Ephemeral, like hand-raise/reactions — never persisted, no capability
+   * check (matches how sending a message itself only requires membership).
+   * Handles both meeting chat and Team Chat with one handler rather than a
+   * second WS_EVENTS constant: exactly one of `meetingId`/`chatRoomId` is
+   * ever set, and the client already knows which context it's typing in. */
+  @SubscribeMessage(WS_EVENTS.CHAT_TYPING)
+  onChatTyping(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { meetingId?: string; chatRoomId?: string; isTyping: boolean },
+  ) {
+    const { userId } = client.data as SocketData;
+    const room = body.meetingId ? meetingRoom(body.meetingId) : body.chatRoomId ? chatRoomChannel(body.chatRoomId) : null;
+    if (!room) return;
+    client.to(room).emit(WS_EVENTS.CHAT_TYPING, { userId, isTyping: body.isTyping });
+  }
+
   // ── Team chat (standing GROUP/DIRECT rooms) ─────────────────────────────
   // Mirrors the JOIN_MEETING/CHAT_MESSAGE pair above, scoped to a ChatRoom
   // instead of a Meeting — membership (ChatService.requireMember) is the
@@ -285,19 +312,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   ) {
     const { userId } = client.data as SocketData;
     const dto = sendRoomChatMessageSchema.parse(body);
-    const message = await this.chat.persistRoomMessage(body.chatRoomId, userId, dto);
+    // Already in wire format (ChatMessagePayload, including any attachment)
+    // — ChatService.shapeMessage is the single place that builds it, shared
+    // with meeting chat and with the REST edit/forward paths.
+    const payload = await this.chat.persistRoomMessage(body.chatRoomId, userId, dto);
 
-    const payload = {
-      id: message.id,
-      chatRoomId: message.chatRoomId,
-      senderId: message.senderId,
-      senderName: message.sender?.displayName ?? "Unknown",
-      body: message.body,
-      replyToId: message.replyToId,
-      isPrivate: false,
-      toUserId: null,
-      createdAt: message.createdAt.toISOString(),
-    };
     // Members who have this room's tab open (joined chatRoomChannel) get it
     // immediately; members who don't still get it via their personal
     // `user:{id}` room, so an unread badge can update even off-screen. Anyone

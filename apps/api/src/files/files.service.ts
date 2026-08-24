@@ -4,7 +4,7 @@ import type { PresignUploadDto } from "@arutech/validation";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { PermissionService } from "../meetings/permission.service";
-import { ALLOWED_MIME_TYPES, sanitizeFileName } from "./file-upload.util";
+import { isAllowedMimeType, sanitizeFileName } from "./file-upload.util";
 
 /**
  * Real object-storage file uploads (chat/meeting attachments — see
@@ -35,7 +35,7 @@ export class FilesService {
   async presignMeetingUpload(meetingId: string, callerUserId: string, dto: PresignUploadDto) {
     await this.permissions.requireCapability(meetingId, callerUserId, "chat.send");
 
-    if (!ALLOWED_MIME_TYPES.has(dto.mimeType)) {
+    if (!isAllowedMimeType(dto.mimeType)) {
       throw new BadRequestException(`File type ${dto.mimeType} is not allowed`);
     }
 

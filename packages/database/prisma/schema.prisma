@@ -267,6 +267,12 @@ model User {
   locale          String     @default("en")
   systemRole      SystemRole @default(USER) @map("system_role")
   status          UserStatus @default(ACTIVE)
+  // "Online status" v1 (docs/roadmap.md's chat-parity stage) — bumped on
+  // every WebSocket connect (RealtimeGateway.handleConnection), read back as
+  // "online"/"last seen X ago" wherever a contact or chat member is shown.
+  // A real timestamp, not live presence — see that gateway's own comment for
+  // the honest limitation versus a full presence system.
+  lastSeenAt      DateTime   @default(now()) @map("last_seen_at")
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")
   deletedAt       DateTime?  @map("deleted_at")
@@ -680,6 +686,7 @@ model ChatRoom {
   createdBy User?         @relation("ChatRoomCreator", fields: [createdById], references: [id], onDelete: SetNull)
   members   ChatMember[]
   messages  ChatMessage[]
+  files     FileAsset[]
 
   @@map("chat_rooms")
 }
@@ -714,6 +721,13 @@ model ChatMessage {
   createdAt  DateTime  @default(now()) @map("created_at")
   editedAt   DateTime? @map("edited_at")
   deletedAt  DateTime? @map("deleted_at")
+  // Set only on a message created via ChatService.forwardMessage. A
+  // denormalized snapshot of the ORIGINAL sender's display name, not a live
+  // foreign key back to the source message — the viewer of a forwarded
+  // message may have no access to (or membership in) wherever it originally
+  // came from, so resolving a live reference could leak that source's
+  // existence/content. A snapshot avoids that entirely.
+  forwardedFromSenderName String? @map("forwarded_from_sender_name")
 
   chatRoom    ChatRoom         @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
   sender      User?            @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
@@ -1279,6 +1293,11 @@ model FileAsset {
   scope           FileScope
   meetingId       String?         @map("meeting_id")
   classId         String?         @map("class_id")
+  // CHAT scope only — a Team Chat room-message attachment (voice message or
+  // file), the room-chat equivalent of `meetingId` for meeting-chat
+  // attachments. The `CHAT` FileScope value already existed unused before
+  // this stage.
+  chatRoomId      String?         @map("chat_room_id")
   orgId           String?         @map("org_id")
   storageKey      String          @unique @map("storage_key")
   originalName    String          @map("original_name")
@@ -1294,6 +1313,7 @@ model FileAsset {
   uploader              User                   @relation(fields: [uploaderUserId], references: [id])
   meeting               Meeting?               @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   class                 Class?                 @relation(fields: [classId], references: [id], onDelete: Cascade)
+  chatRoom              ChatRoom?              @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
   organization          Organization?          @relation(fields: [orgId], references: [id], onDelete: Cascade)
   chatAttachments       ChatAttachment[]
   assignmentAttachments Assignment[]
@@ -1301,6 +1321,7 @@ model FileAsset {
 
   @@index([meetingId])
   @@index([classId])
+  @@index([chatRoomId])
   @@index([uploaderUserId])
   @@map("files")
 }

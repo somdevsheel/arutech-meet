@@ -8,7 +8,7 @@ import { useNotifications } from "@/hooks/use-notifications";
 import { apiFetch } from "@/lib/api-client";
 import { CallOverlay } from "@/components/calls/call-overlay";
 
-export type ActiveNav = "home" | "classes" | "courses" | "chat" | "contacts" | "recordings" | "notes" | "apps" | "admin";
+export type ActiveNav = "home" | "calendar" | "classes" | "courses" | "chat" | "contacts" | "recordings" | "notes" | "apps" | "admin";
 
 export interface AppShellProps {
   user: AuthUser;
@@ -255,6 +255,10 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
           <SidebarLink href="/dashboard" label="Home" active={active === "home"}>
             <path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
             <path d="M9 21v-8h6v8" />
+          </SidebarLink>
+          <SidebarLink href="/calendar" label="Calendar" active={active === "calendar"}>
+            <rect x="3" y="4.5" width="18" height="16" rx="2" />
+            <path d="M3 9.5h18M8 3v3M16 3v3" />
           </SidebarLink>
           <SidebarLink href="/classes" label="Classes" active={active === "classes"}>
             <path d="M12 3 2 8l10 5 10-5-10-5Z" />

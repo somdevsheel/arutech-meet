@@ -6,7 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { ClassesService } from "../classes/classes.service";
 import { NotificationsService } from "../notifications/notifications.service";
-import { ALLOWED_MIME_TYPES, sanitizeFileName } from "../files/file-upload.util";
+import { isAllowedMimeType, sanitizeFileName } from "../files/file-upload.util";
 
 /**
  * Classroom assignments — create, attach material, students submit (with
@@ -210,7 +210,7 @@ export class AssignmentsService {
   async presignAttachment(classId: string, callerUserId: string, dto: PresignUploadDto) {
     await this.classes.requireMember(classId, callerUserId);
 
-    if (!ALLOWED_MIME_TYPES.has(dto.mimeType)) {
+    if (!isAllowedMimeType(dto.mimeType)) {
       throw new BadRequestException(`File type ${dto.mimeType} is not allowed`);
     }
 

@@ -1,5 +1,13 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import type { SendChatMessageDto, CreateChatRoomDto, SendRoomChatMessageDto } from "@arutech/validation";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "crypto";
+import type {
+  SendChatMessageDto,
+  CreateChatRoomDto,
+  SendRoomChatMessageDto,
+  UpdateChatRoomDto,
+  EditMessageDto,
+  PresignUploadDto,
+} from "@arutech/validation";
 import { WS_EVENTS, type ChatMessagePayload, type ChatMessageReactionGroup } from "@arutech/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService } from "../meetings/permission.service";
@@ -7,12 +15,15 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service";
 import { AuditLogService } from "../audit/audit-log.service";
 import { ContactsService } from "../contacts/contacts.service";
+import { StorageService } from "../storage/storage.service";
+import { isAllowedMimeType, sanitizeFileName } from "../files/file-upload.util";
 
 const MEMBER_SELECT = {
   id: true,
   displayName: true,
   username: true,
   avatarUrl: true,
+  lastSeenAt: true,
 } as const;
 
 const MESSAGE_INCLUDE = {
@@ -31,7 +42,9 @@ type RawMessage = {
   isPrivate: boolean;
   toUserId: string | null;
   createdAt: Date;
+  editedAt: Date | null;
   deletedAt: Date | null;
+  forwardedFromSenderName: string | null;
   reactions: { emoji: string; userId: string }[];
   attachments: { file: { id: string; originalName: string; mimeType: string; sizeBytes: bigint } }[];
 };
@@ -45,12 +58,15 @@ export class ChatService {
     private readonly broadcast: RealtimeBroadcastService,
     private readonly auditLog: AuditLogService,
     private readonly contacts: ContactsService,
+    private readonly storage: StorageService,
   ) {}
 
   /** Shapes a raw Prisma row (with MESSAGE_INCLUDE) into the wire format both
    * REST history and every WS broadcast use — keeping these consistent is
    * what lets the client treat a message loaded via `GET .../messages` and
-   * one that arrived live over the socket identically. */
+   * one that arrived live over the socket identically. Shared by meeting chat
+   * AND Team Chat room messages (same `ChatMessage` table underneath, no
+   * per-room-type branching needed here). */
   private shapeMessage(message: RawMessage): ChatMessagePayload {
     const reactionGroups = new Map<string, Set<string>>();
     for (const r of message.reactions) {
@@ -81,7 +97,9 @@ export class ChatService {
       isPrivate: message.isPrivate,
       toUserId: message.toUserId,
       createdAt: message.createdAt.toISOString(),
+      editedAt: message.editedAt?.toISOString() ?? null,
       deletedAt: message.deletedAt?.toISOString() ?? null,
+      forwardedFromSenderName: message.forwardedFromSenderName,
       reactions,
       attachment,
     };
@@ -200,6 +218,29 @@ export class ChatService {
     await this.broadcast.publish(meetingId, WS_EVENTS.CHAT_MESSAGE_DELETED, { messageId });
   }
 
+  /** Own-message-only — unlike delete, there's no "edit any message"
+   * capability for a host to reach for; editing someone else's words (even as
+   * a moderation action) is a different, more editorial kind of power than
+   * removing them, and isn't something this app grants anyone. */
+  async editMessage(meetingId: string, callerUserId: string, messageId: string, dto: EditMessageDto) {
+    const message = await this.getMeetingScopedMessage(meetingId, messageId);
+    if (message.senderId !== callerUserId) {
+      throw new ForbiddenException("You can only edit your own messages");
+    }
+    if (message.deletedAt) {
+      throw new BadRequestException("Can't edit a deleted message");
+    }
+
+    const updated = await this.prisma.client.chatMessage.update({
+      where: { id: messageId },
+      data: { body: dto.body, editedAt: new Date() },
+      include: MESSAGE_INCLUDE,
+    });
+    const payload = this.shapeMessage(updated);
+    await this.broadcast.publish(meetingId, WS_EVENTS.CHAT_MESSAGE_EDITED, payload);
+    return payload;
+  }
+
   /** Loads a message and confirms it actually belongs to this meeting's chat
    * room — without this, a meeting participant could react to or (attempt to)
    * delete a message from a completely different meeting by guessing/reusing
@@ -284,10 +325,12 @@ export class ChatService {
    * admin, so this is its own small check rather than reusing PermissionService). */
   async updateRoom(chatRoomId: string, userId: string, dto: UpdateChatRoomDto) {
     const room = await this.requireGroupAdmin(chatRoomId, userId);
-    return this.prisma.client.chatRoom.update({
+    const updated = await this.prisma.client.chatRoom.update({
       where: { id: room.id },
       data: { name: dto.name, photoUrl: dto.photoUrl },
     });
+    await this.broadcastRoomUpdated(room.id);
+    return updated;
   }
 
   async addMember(chatRoomId: string, userId: string, targetUserId: string) {
@@ -296,7 +339,9 @@ export class ChatService {
       where: { chatRoomId_userId: { chatRoomId: room.id, userId: targetUserId } },
     });
     if (existing) throw new ConflictException("Already a member of this group");
-    return this.prisma.client.chatMember.create({ data: { chatRoomId: room.id, userId: targetUserId } });
+    const member = await this.prisma.client.chatMember.create({ data: { chatRoomId: room.id, userId: targetUserId } });
+    await this.broadcastRoomUpdated(room.id);
+    return member;
   }
 
   /** Removing yourself is `POST /chat-rooms/:id/leave` (self-service, no
@@ -307,6 +352,7 @@ export class ChatService {
       throw new BadRequestException("Use leave to remove yourself");
     }
     await this.prisma.client.chatMember.deleteMany({ where: { chatRoomId: room.id, userId: targetUserId } });
+    await this.broadcastRoomUpdated(room.id);
   }
 
   async promoteAdmin(chatRoomId: string, userId: string, targetUserId: string) {
@@ -315,7 +361,9 @@ export class ChatService {
       where: { chatRoomId_userId: { chatRoomId: room.id, userId: targetUserId } },
     });
     if (!target) throw new NotFoundException("Not a member of this group");
-    return this.prisma.client.chatMember.update({ where: { id: target.id }, data: { isAdmin: true } });
+    const promoted = await this.prisma.client.chatMember.update({ where: { id: target.id }, data: { isAdmin: true } });
+    await this.broadcastRoomUpdated(room.id);
+    return promoted;
   }
 
   /** Refuses to demote the group's last remaining admin — a group with zero
@@ -331,7 +379,9 @@ export class ChatService {
     const adminCount = await this.prisma.client.chatMember.count({ where: { chatRoomId: room.id, isAdmin: true } });
     if (adminCount <= 1) throw new BadRequestException("A group needs at least one admin");
 
-    return this.prisma.client.chatMember.update({ where: { id: target.id }, data: { isAdmin: false } });
+    const demoted = await this.prisma.client.chatMember.update({ where: { id: target.id }, data: { isAdmin: false } });
+    await this.broadcastRoomUpdated(room.id);
+    return demoted;
   }
 
   private async requireGroupAdmin(chatRoomId: string, userId: string) {
@@ -344,15 +394,28 @@ export class ChatService {
     return room;
   }
 
+  /** Signals every open panel on this room to refetch — group details,
+   * membership, and admin status all change infrequently enough that pushing
+   * the full new state isn't worth a second payload shape; the client already
+   * has the GET to call (see WS_EVENTS.ROOM_UPDATED's own doc comment). */
+  private async broadcastRoomUpdated(chatRoomId: string): Promise<void> {
+    await this.broadcast.publishToRoom(`chatroom:${chatRoomId}`, WS_EVENTS.ROOM_UPDATED, { chatRoomId });
+  }
+
+  // Not filtered to deletedAt: null — same as meeting chat's history(), a
+  // deleted room message still returns as a row with body: null so the
+  // client can render "Message deleted" in place rather than the message
+  // just silently vanishing from history with no explanation.
   async roomHistory(chatRoomId: string, userId: string, cursor?: string, take = 50) {
     await this.requireMember(chatRoomId, userId);
-    return this.prisma.client.chatMessage.findMany({
-      where: { chatRoomId, deletedAt: null },
-      include: { sender: { select: MEMBER_SELECT } },
+    const messages = await this.prisma.client.chatMessage.findMany({
+      where: { chatRoomId },
+      include: MESSAGE_INCLUDE,
       orderBy: { createdAt: "desc" },
       take,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
+    return messages.map((m) => this.shapeMessage(m));
   }
 
   async getRoomMemberIds(chatRoomId: string): Promise<string[]> {
@@ -363,11 +426,20 @@ export class ChatService {
     return members.map((m) => m.userId);
   }
 
-  async persistRoomMessage(chatRoomId: string, senderId: string, dto: SendRoomChatMessageDto) {
+  async persistRoomMessage(chatRoomId: string, senderId: string, dto: SendRoomChatMessageDto): Promise<ChatMessagePayload> {
     await this.requireMember(chatRoomId, senderId);
+
+    if (dto.fileId) await this.assertRoomFile(chatRoomId, senderId, dto.fileId);
+
     const message = await this.prisma.client.chatMessage.create({
-      data: { chatRoomId, senderId, body: dto.body, replyToId: dto.replyToId },
-      include: { sender: { select: MEMBER_SELECT } },
+      data: {
+        chatRoomId,
+        senderId,
+        body: dto.body,
+        replyToId: dto.replyToId,
+        attachments: dto.fileId ? { create: [{ fileId: dto.fileId }] } : undefined,
+      },
+      include: MESSAGE_INCLUDE,
     });
     // The sender has, by definition, read their own message — keeps their own
     // unread badge from lighting up on a room they just posted in.
@@ -375,6 +447,178 @@ export class ChatService {
       where: { chatRoomId_userId: { chatRoomId, userId: senderId } },
       data: { lastReadMessageId: message.id },
     });
+    return this.shapeMessage(message);
+  }
+
+  /** Own-message-only, same reasoning as editMessage above. */
+  async editRoomMessage(chatRoomId: string, callerUserId: string, messageId: string, dto: EditMessageDto) {
+    const message = await this.getRoomScopedMessage(chatRoomId, messageId);
+    if (message.senderId !== callerUserId) {
+      throw new ForbiddenException("You can only edit your own messages");
+    }
+    if (message.deletedAt) {
+      throw new BadRequestException("Can't edit a deleted message");
+    }
+
+    const updated = await this.prisma.client.chatMessage.update({
+      where: { id: messageId },
+      data: { body: dto.body, editedAt: new Date() },
+      include: MESSAGE_INCLUDE,
+    });
+    const payload = this.shapeMessage(updated);
+    await this.broadcast.publishToRoom(`chatroom:${chatRoomId}`, WS_EVENTS.ROOM_MESSAGE_EDITED, payload);
+    return payload;
+  }
+
+  /** Own-message-only — Team Chat has no hosts/moderators the way a meeting
+   * does, and group admin (Stage 23) manages membership, not message content,
+   * so there's no "delete any message" capability here at all, not even for
+   * a group admin. */
+  async deleteRoomMessage(chatRoomId: string, callerUserId: string, messageId: string): Promise<void> {
+    const message = await this.getRoomScopedMessage(chatRoomId, messageId);
+    if (message.senderId !== callerUserId) {
+      throw new ForbiddenException("You can only delete your own messages");
+    }
+
+    await this.prisma.client.chatMessage.update({
+      where: { id: messageId },
+      data: { body: null, deletedAt: new Date() },
+    });
+    await this.broadcast.publishToRoom(`chatroom:${chatRoomId}`, WS_EVENTS.ROOM_MESSAGE_DELETED, { messageId });
+  }
+
+  /** Forwards a message's TEXT to another room the caller is a member of.
+   * Deliberately text-only in this v1 — an attachment/voice message can't be
+   * forwarded (refused outright below) rather than silently forwarding an
+   * empty body: the attachment's download permission is scoped to its
+   * original meeting/class/room, and re-pointing a `ChatAttachment` at a
+   * brand-new room without re-checking that would either break the download
+   * for the new room's members or, worse, accidentally grant them access to
+   * a file from a context they were never part of. The source can be EITHER
+   * a meeting-chat message or another Team Chat room's message — both live in
+   * the same `ChatMessage` table, the only difference is which permission
+   * check applies to reading the source (meeting participancy vs. room
+   * membership), resolved here from the source's own `ChatRoom.type` rather
+   * than requiring the caller to say which kind it is. */
+  async forwardMessage(callerUserId: string, targetChatRoomId: string, sourceMessageId: string) {
+    const source = await this.prisma.client.chatMessage.findUnique({
+      where: { id: sourceMessageId },
+      include: { chatRoom: true, sender: { select: { displayName: true } } },
+    });
+    if (!source) throw new NotFoundException("Message not found");
+    if (source.deletedAt || !source.body) {
+      throw new BadRequestException("Nothing to forward — this message has no text (or was deleted)");
+    }
+
+    if (source.chatRoom.type === "MEETING" || source.chatRoom.type === "CLASS") {
+      if (!source.chatRoom.meetingId) throw new NotFoundException("Message not found");
+      await this.permissions.getParticipant(source.chatRoom.meetingId, callerUserId);
+    } else {
+      await this.requireMember(source.chatRoomId, callerUserId);
+    }
+    await this.requireMember(targetChatRoomId, callerUserId);
+
+    const message = await this.prisma.client.chatMessage.create({
+      data: {
+        chatRoomId: targetChatRoomId,
+        senderId: callerUserId,
+        body: source.body,
+        forwardedFromSenderName: source.sender?.displayName ?? "Unknown",
+      },
+      include: MESSAGE_INCLUDE,
+    });
+    const payload = this.shapeMessage(message);
+    await this.broadcast.publishToRoom(`chatroom:${targetChatRoomId}`, WS_EVENTS.ROOM_MESSAGE, payload);
+
+    // No cheap way to tell who's actively viewing from a REST handler (that
+    // distinction is only available inside the gateway, which owns the live
+    // socket set) — forwarding is low-frequency enough that notifying every
+    // other member unconditionally, rather than only the ones not currently
+    // looking at it, is an acceptable simplification over ROOM_MESSAGE's own
+    // socket-aware path in RealtimeGateway.onRoomMessage.
+    const memberIds = await this.getRoomMemberIds(targetChatRoomId);
+    for (const memberId of memberIds) {
+      if (memberId === callerUserId) continue;
+      await this.notifications.create({
+        userId: memberId,
+        type: "CHAT_MESSAGE",
+        title: payload.senderName,
+        body: payload.body?.slice(0, 140) ?? "",
+        data: { chatRoomId: targetChatRoomId },
+      });
+    }
+
+    return payload;
+  }
+
+  /** Presigned upload for a Team Chat room attachment (file or voice
+   * message) — the `CHAT` FileScope value existed unused before this stage;
+   * mirrors FilesService.presignMeetingUpload exactly, scoped to a
+   * `chatRoomId` instead of a `meetingId`. */
+  async presignRoomAttachment(chatRoomId: string, callerUserId: string, dto: PresignUploadDto) {
+    await this.requireMember(chatRoomId, callerUserId);
+
+    if (!isAllowedMimeType(dto.mimeType)) {
+      throw new BadRequestException(`File type ${dto.mimeType} is not allowed`);
+    }
+
+    const safeName = sanitizeFileName(dto.fileName);
+    const storageKey = `chat-uploads/room/${chatRoomId}/${Date.now()}-${randomUUID()}-${safeName}`;
+
+    const file = await this.prisma.client.fileAsset.create({
+      data: {
+        uploaderUserId: callerUserId,
+        scope: "CHAT",
+        chatRoomId,
+        storageKey,
+        originalName: safeName,
+        mimeType: dto.mimeType,
+        sizeBytes: dto.sizeBytes,
+        virusScanStatus: "PENDING",
+      },
+    });
+
+    const uploadUrl = await this.storage.getSignedUploadUrl(storageKey, dto.mimeType);
+    return { fileId: file.id, uploadUrl };
+  }
+
+  /** Permission-checked download for a room attachment — the caller must be
+   * a member of the room the file was actually uploaded to, mirroring
+   * FilesService.getDownloadUrl's meeting-scoped equivalent. */
+  async getRoomAttachmentDownloadUrl(chatRoomId: string, callerUserId: string, fileId: string) {
+    await this.requireMember(chatRoomId, callerUserId);
+
+    const file = await this.prisma.client.fileAsset.findUnique({ where: { id: fileId } });
+    if (!file || file.chatRoomId !== chatRoomId || file.deletedAt) {
+      throw new NotFoundException("File not found");
+    }
+    if (file.virusScanStatus === "INFECTED") {
+      throw new ForbiddenException("This file failed a virus scan and cannot be downloaded");
+    }
+
+    const url = await this.storage.getSignedDownloadUrl(file.storageKey);
+    return { url, fileName: file.originalName, mimeType: file.mimeType, expiresInSeconds: 600 };
+  }
+
+  /** A fileId supplied on a room message must actually be a `CHAT`-scoped
+   * file belonging to THIS room, uploaded by the caller — prevents attaching
+   * someone else's file, or a file uploaded to a different room/meeting
+   * entirely, by guessing/reusing an id (same pattern
+   * AssignmentsService.assertClassFile already established). */
+  private async assertRoomFile(chatRoomId: string, uploaderUserId: string, fileId: string): Promise<void> {
+    const file = await this.prisma.client.fileAsset.findUnique({ where: { id: fileId } });
+    if (!file || file.chatRoomId !== chatRoomId || file.uploaderUserId !== uploaderUserId) {
+      throw new BadRequestException("Invalid attachment");
+    }
+  }
+
+  /** Loads a message and confirms it actually belongs to this ChatRoom —
+   * same reasoning as getMeetingScopedMessage above. */
+  private async getRoomScopedMessage(chatRoomId: string, messageId: string) {
+    const message = await this.prisma.client.chatMessage.findUnique({ where: { id: messageId } });
+    if (!message || message.chatRoomId !== chatRoomId) {
+      throw new NotFoundException("Message not found");
+    }
     return message;
   }
 

@@ -16,6 +16,7 @@ export class UsersService {
         timezone: true,
         locale: true,
         createdAt: true,
+        lastSeenAt: true,
       },
     });
     if (!user) throw new NotFoundException("User not found");
