@@ -11,6 +11,8 @@ interface Props {
   activePanel: PanelKind | null;
   onTogglePanel: (panel: PanelKind) => void;
   onLeave: () => void;
+  canEndMeeting: boolean;
+  onEndMeeting: () => void;
   isRecording: boolean;
   canShareScreen: boolean;
   participantCount: number;
@@ -27,6 +29,8 @@ export function MeetingToolbar({
   activePanel,
   onTogglePanel,
   onLeave,
+  canEndMeeting,
+  onEndMeeting,
   isRecording,
   canShareScreen,
   participantCount,
@@ -40,6 +44,22 @@ export function MeetingToolbar({
   const [busy, setBusy] = useState(false);
   const [reactionsOpen, setReactionsOpen] = useState(false);
   const [backgroundOpen, setBackgroundOpen] = useState(false);
+  // Ending a meeting disconnects every participant, not just the host — a
+  // much bigger blast radius than any other button on this bar, and there's
+  // no confirm-dialog pattern anywhere else in this app to reuse. Arm on the
+  // first click (button re-labels itself, auto-disarms after a few seconds),
+  // only actually end it on the second.
+  const [endArmed, setEndArmed] = useState(false);
+
+  function handleEndClick() {
+    if (!endArmed) {
+      setEndArmed(true);
+      setTimeout(() => setEndArmed(false), 4000);
+      return;
+    }
+    setEndArmed(false);
+    onEndMeeting();
+  }
 
   async function toggle(kind: "mic" | "cam" | "screen") {
     setBusy(true);
@@ -175,12 +195,24 @@ export function MeetingToolbar({
         </Control>
       </div>
 
-      <button
-        onClick={onLeave}
-        className="flex-none rounded-lg bg-danger-strong px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
-      >
-        Leave
-      </button>
+      <div className="flex flex-none items-center gap-2">
+        {canEndMeeting && (
+          <button
+            onClick={handleEndClick}
+            className={`rounded-lg px-4 py-2.5 text-sm font-semibold transition hover:brightness-110 ${
+              endArmed ? "bg-danger text-white" : "bg-surface-chip text-ink-2 hover:text-white"
+            }`}
+          >
+            {endArmed ? "Click again to end for everyone" : "End meeting"}
+          </button>
+        )}
+        <button
+          onClick={onLeave}
+          className="rounded-lg bg-danger-strong px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
+        >
+          Leave
+        </button>
+      </div>
     </footer>
   );
 }

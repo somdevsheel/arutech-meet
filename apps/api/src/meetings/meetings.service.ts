@@ -175,11 +175,18 @@ export class MeetingsService {
     await this.permissions.requireOwnerOrCapability(meetingId, userId, "meeting.end");
     const meeting = await this.findById(meetingId);
 
-    await this.liveKit.endRoom(meeting.livekitRoomName);
-    return this.prisma.client.meeting.update({
+    const updated = await this.prisma.client.meeting.update({
       where: { id: meeting.id },
       data: { status: "ENDED", actualEnd: new Date() },
     });
+    // Broadcast before forcibly closing the LiveKit room, not after: everyone
+    // still connected gets the friendly "this meeting has ended" screen
+    // (already fully wired client-side — see use-meeting-socket.ts's
+    // `meetingEnded` state — this was the one missing piece) an instant
+    // before LiveKit's own disconnect lands, instead of just going dark.
+    await this.broadcast.publish(meeting.id, WS_EVENTS.MEETING_ENDED, {});
+    await this.liveKit.endRoom(meeting.livekitRoomName);
+    return updated;
   }
 
   /**

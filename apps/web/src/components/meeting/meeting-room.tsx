@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { LiveKitRoom } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { WS_EVENTS } from "@arutech/types";
+import { WS_EVENTS, can, type ParticipantRole } from "@arutech/types";
 import { VideoGrid } from "./video-grid";
 import { MeetingToolbar, type PanelKind } from "./meeting-toolbar";
 import { ChatPanel } from "./chat-panel";
@@ -64,6 +64,23 @@ export function MeetingRoom({
   const [elapsed, setElapsed] = useState(0);
   const [seenChatCount, setSeenChatCount] = useState(0);
   const isModerator = MODERATOR_ROLES.has(role);
+  // Narrower than isModerator on purpose — CO_HOST is a moderator role but
+  // doesn't hold `meeting.end` in the permissions matrix (only OWNER/HOST/
+  // TEACHER do), and PermissionService enforces that same check server-side
+  // (see MeetingsController's POST /:id/end) — this only decides whether to
+  // render the button, not whether the action is allowed.
+  const canEndMeeting = can(role as ParticipantRole, "meeting.end");
+
+  async function endMeeting() {
+    try {
+      await apiFetch(`/meetings/${meetingId}/end`, { method: "POST" });
+    } catch {
+      // Ending genuinely failed server-side (network/permission/already-ended)
+      // — don't navigate the host away from a meeting that's still running.
+      return;
+    }
+    onLeave();
+  }
 
   const {
     participants,
@@ -316,6 +333,8 @@ export function MeetingRoom({
         activePanel={panel}
         onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
         onLeave={onLeave}
+        canEndMeeting={canEndMeeting}
+        onEndMeeting={endMeeting}
         isRecording={isRecording}
         canShareScreen={true}
         participantCount={participants.length}
