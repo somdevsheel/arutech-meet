@@ -1040,3 +1040,148 @@ hour-grid some calendar apps use); and, as scoped from the start, any actual OAu
 `docs/advanced-features-roadmap.md` had gone stale after Stage 15 shipped it and was corrected this stage
 alongside the recurring-meetings correction above.
 
+## Bug fix: missing "End meeting" button
+
+User-reported: "meeting end button is missing." Confirmed real — a host had no way to end a meeting for
+everyone from the UI at all. `apps/web/src/components/meeting/meeting-toolbar.tsx` only ever had one
+button, "Leave", which just disconnects the local participant from LiveKit; the meeting itself kept
+running for everyone else regardless of who left, including the owner. `POST /meetings/:id/end`
+(`MeetingsService.end`) already existed server-side and was already correctly capability-gated
+(`meeting.end` — OWNER/HOST/TEACHER only, not CO_HOST) — it was simply never called from anywhere in the
+frontend.
+
+**A second, related bug surfaced while fixing the first**: `apps/web/src/hooks/use-meeting-socket.ts`
+already had a complete, working `WS_EVENTS.MEETING_ENDED` listener — state (`meetingEnded`), and
+`meeting-room.tsx` already had a whole `EndedScreen` ("This meeting has ended.") ready to render off it.
+None of it could ever fire: `MeetingsService.end` updated the DB and closed the LiveKit room, but never
+broadcast the event the client was already listening for. Every other participant's only signal that the
+meeting was over was LiveKit's own forced disconnect going dark — never the friendly screen the client
+already had fully built. Fixed by adding one `this.broadcast.publish(meeting.id, WS_EVENTS.MEETING_ENDED,
+{})` call, sent *before* `liveKit.endRoom()` so it lands while participants are still connected to receive
+it.
+
+**Fix**: a host-only "End meeting" control next to "Leave" (gated on the `meeting.end` capability via the
+shared `can()` matrix, not the broader `isModerator` flag — CO_HOST is a moderator role but doesn't hold
+`meeting.end`, matching the server-side check exactly rather than showing a button that would just 403).
+No confirm-dialog pattern exists anywhere else in this app to reuse, and ending a meeting has a much
+bigger blast radius than any other single-click toolbar action (it disconnects every participant, not
+just the host), so it arms on the first click (relabels to "Click again to end for everyone", auto-disarms
+after 4s) and only actually calls the endpoint on the second.
+
+3 new `MeetingsService` unit tests (capability check, status update, and — the regression test for the
+actual bug — that `MEETING_ENDED` broadcasts before `liveKit.endRoom` is called). Full API suite now 155
+tests across 19 suites.
+
+**Verified live** with two real registered users (`.run-driver/drive-end-meeting.js`, screenshots in
+`.run-driver/screenshots/end-meeting/`): the host sees exactly one "End meeting" button, the participant
+sees none. A first click arms it without ending anything (participant confirmed still in the meeting). The
+second click ends it — the host is routed to the dashboard, and the participant, without touching
+anything, sees the real live "This meeting has ended." screen. A direct `GET /meetings/:code` confirms
+`status: "ENDED"` server-side, not just a client-side illusion. Zero console errors on both sessions.
+
+**A real environment-recovery detour, not a code issue**: mid-fix, the sandbox VM restarted again (same
+class of event as Stages 22/23's write-ups). Docker containers came back `Exited` as before, but this time
+a second, unexpected wrinkle: a systemd-managed **production** build (`next start -p 3000` /
+`node apps/api/dist/main.js`, both `systemd+`-owned, both started at the exact VM-boot timestamp) had
+already claimed ports 3000 and 4000 by the time this session's own dev servers were relaunched — serving a
+stale pre-Stage-24 build with no `sudo` available to stop it. Rather than fight over the port, the API was
+relaunched normally on 4000 (its process won that race) and the web dev server was moved to **3100**
+(`CORS_ORIGINS` updated to allow both origins). A second discovery while reconnecting the media stack:
+`arutech-verify-livekit2` (port 27880), not `arutech-verify-livekit` (17880), is the LiveKit instance this
+session's `.env`/`.env.local` actually point at (confirmed by reading the root `.env` this session created
+earlier, which records `LIVEKIT_URL=ws://localhost:27880` and matching S3/Redis/Postgres credentials) —
+the first recovery attempt guessed the wrong one and had to be corrected. **Port 3000 still serves a stale
+build and needs a `sudo`-capable session to stop/replace that systemd unit** — everything in this stage
+was verified against the correct, current code on port 3100/4000, not the stale instance.
+
+## Live captions (Stage 26)
+
+The one open item left in Priority 4, closing it out. Real streaming, in-meeting captions — architecturally
+distinct from Stage 8's AI meeting assistant, which is a *batch* pipeline (recording file → ffmpeg →
+Whisper, after the meeting ends). This runs *while* the meeting is happening, against live LiveKit audio.
+
+**A real new process type**: `services/transcription`, a genuine LiveKit Agents worker (`@livekit/agents` +
+`@livekit/agents-plugin-openai`) — the first inhabitant of the `services/*` workspace glob that's ever had
+actual code in it. It registers with LiveKit under a fixed agent name (`CAPTIONS_AGENT_IDENTITY`,
+`@arutech/types`) and only joins a room via **explicit dispatch**, never automatically — a host clicks the
+toolbar's new "Captions" control, `CaptionsService.start` calls `LiveKitService.startCaptions`, which calls
+`AgentDispatchClient.createDispatch`. Same "real infra cost, so opt-in rather than on for every meeting"
+reasoning recording already has.
+
+**One STT stream per speaking participant, not one per room** — a deliberate departure from the framework's
+own higher-level `AgentSession`/`RoomIO` stack, which is built around one agent linked to a *single*
+participant (a voice-assistant shape: `RoomInputOptions.participantIdentity` defaults to "link to the first
+participant" if left unset). Wrong for a meeting where anyone can speak. The agent instead uses
+`@livekit/agents`' lower-level `Room`/`STT` primitives directly: on every `TrackSubscribed` audio track it
+opens its own `SpeechStream`, pumps that participant's real audio frames in, and publishes each
+interim/final segment back via `LocalParticipant.publishTranscription` — attributed to the *speaker's own*
+LiveKit identity, not the agent's. That's LiveKit's own native room-transcription protocol, not a custom
+event on this app's Socket.IO gateway: the web client reads it with `@livekit/components-react`'s
+`useTranscriptions()` (new `caption-bar.tsx`), the same "reuse the media engine's own primitives" instinct
+Stage 4's virtual background followed with `@livekit/track-processors`. STT itself is
+`@livekit/agents-plugin-openai`'s `STT`, backed by OpenAI's Realtime transcription WebSocket API — a
+different, genuinely streaming product from Stage 8's `whisper-1` REST call.
+
+**Honest failure, not fake captions**: no `OPENAI_API_KEY` is configured in this session's environment
+(the same gap Stage 8's AI meeting assistant hit). Rather than silently produce nothing, the agent checks
+for the key right after connecting and, if missing, logs a clear reason and shuts the job down immediately
+— mirroring `NullTranscriptionProvider`'s "fail loudly, never fabricate" convention. This is genuinely
+useful in practice, not just principled: it's exactly what let this stage be live-verified as far as it
+honestly could be (below) without a real OpenAI account.
+
+**A real environment limitation found and worked around, live, mid-stage** — not a design choice made in
+advance: the obvious way to answer "is captioning currently on for this room?" is
+`AgentDispatchClient.listDispatch(roomName)`, LiveKit's own list-by-room API. Calling it — first through a
+one-off script directly against the SDK, then confirmed again through the running API with debug logging —
+showed it does **not** reliably scope by room against this LiveKit server build: a brand-new meeting that
+had never once started captions still came back with an "active" dispatch, and the response's own `room`
+field simply echoed back whatever room name was queried rather than reflecting where the dispatch actually
+lived. `createDispatch`/`deleteDispatch` (given an exact, already-known dispatch id) were confirmed working
+correctly — only the *list* call lies. Rather than build `captionsActive`/`stopCaptions` on a read call
+that was directly observed to return wrong answers, `LiveKitService` now tracks the one active dispatch id
+per room itself, in Redis (`{prefix}:captions:dispatch:{roomName}`) — this app's existing, explicitly
+ephemeral-state store (see `RedisModule`'s own doc comment: "presence, distributed locks, rate limiting,
+waiting-room queues... never a durable store"), set on start, read/cleared on stop and status checks, with
+a 24h TTL as a safety net against a stop that never arrives. Re-verified after the fix: a fresh meeting
+correctly reports `active: false`, flips to `true` after a real start, and back to `false` after stop —
+confirmed via direct API calls before ever re-running the Playwright driver.
+
+**The bot never leaks into the UI.** The agent's fixed identity means `video-grid.tsx` can filter it out by
+exact match — necessary because `useTracks({withPlaceholder: true})` would otherwise still hand it an empty
+camera tile (it never publishes video, being subscribe-only). It was never wired into `ParticipantsPanel`
+at all, since that panel is driven entirely by this app's own `MeetingParticipant` roster via the real
+`join()` REST flow — the agent bypasses that path entirely, connecting straight to LiveKit with its own
+dispatch-issued token, so it was structurally invisible there without any extra work.
+
+**Permissions**: new `captions.manage` capability, placed at the exact same tier as `recording.start`/
+`recording.stop` in the shared matrix (owner/host/co-host/teacher — a co-host can start/stop captions the
+same way they can start/stop a recording; a plain participant/student cannot). The toolbar's CC control
+does double duty depending on role: for someone with `captions.manage` it starts/stops captioning
+server-side; for everyone else, once captions are active, the same button only toggles their own local
+caption-bar visibility — never a second, confusingly-similar button.
+
+3 new `CaptionsService` unit tests plus a `captions.manage` capability-tier test in the shared permissions
+matrix suite; full API suite now 159 tests across 20 suites, typecheck/lint clean on `apps/api`, `apps/web`,
+and the new `services/transcription` package.
+
+**Verified live** with two real registered users (`.run-driver/drive-captions.js`, screenshots in
+`.run-driver/screenshots/captions/`): only the host sees the manage-captions control before anything
+starts; starting it is a real dispatch, confirmed by tailing the live agent worker's own log — it genuinely
+received the job, connected over real WebRTC, and joined the *exact* right meeting's room; every
+participant learns captions are on live via broadcast, not a poll; the bot participant never rendered a
+video tile and its raw identity never leaked into the visible UI anywhere; stopping cleanly cleared the
+control for both sessions with no leftover state. Zero console errors on either side. The one thing this
+environment genuinely could not verify — real caption text — is documented as an honest gap, not silently
+skipped: the agent log for this exact run shows it receiving the dispatch, joining the room, and correctly
+refusing to caption anything because `OPENAI_API_KEY` isn't set here, exactly as designed.
+
+**Not yet built**: an actual language-selection UI (every segment already carries a real `language` field
+end-to-end, but only one language is ever surfaced today), a downloadable transcript of what was captioned
+live (deliberately out of scope — Stage 8's post-meeting transcript already covers "a copy of what was
+said," live captions here are purely "read it on screen while it's happening"), and — should a
+horizontally-scaled deployment ever need it — running more than one `services/transcription` worker
+instance behind the same `agentName` (LiveKit's own worker pool would load-balance jobs across them; nothing
+in this stage's code assumes exactly one).
+
+**Priority 4 is now fully closed out.**
+

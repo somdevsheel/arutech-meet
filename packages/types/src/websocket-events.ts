@@ -66,6 +66,17 @@ export const WS_EVENTS = {
   // Attendance
   ATTENDANCE_UPDATED: "attendance:updated",
 
+  // Live captions — state-only signals ("captioning is on/off now"), used to
+  // seed/update the toolbar's CC control. The caption TEXT itself never
+  // travels over this Socket.IO channel: it's published by the captions
+  // agent worker (services/transcription) as LiveKit's own native room
+  // transcription, delivered peer-to-peer through the SFU and read
+  // client-side via @livekit/components-react's useTranscriptions() — see
+  // docs/roadmap.md's Live captions stage for why splitting it this way
+  // (state here, content over LiveKit's own channel) is deliberate.
+  CAPTIONS_STARTED: "captions:started",
+  CAPTIONS_STOPPED: "captions:stopped",
+
   // Recording
   RECORDING_STARTED: "recording:started",
   RECORDING_STOPPED: "recording:stopped",
@@ -215,3 +226,12 @@ export interface WhiteboardOpPayload {
   };
   fromUserId: string;
 }
+
+/** The fixed LiveKit participant identity the captions agent worker
+ * (services/transcription) connects to a room's job with — set explicitly
+ * (not left to the framework's auto-generated id) so both the API's dispatch
+ * call and the web client's "don't render a video tile / roster row for the
+ * bot" filter agree on the exact same string without importing from each
+ * other. Real LiveKit identity, real filter — not a magic string duplicated
+ * by hand in two places. */
+export const CAPTIONS_AGENT_IDENTITY = "captions-agent";

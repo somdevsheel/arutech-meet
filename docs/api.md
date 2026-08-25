@@ -37,7 +37,7 @@ Base path: `/api/v1` (health check lives outside the prefix, at `/health`).
 | GET | `/meetings` | required | meetings I own or participate in |
 | GET | `/meetings/:code` | public | preview only (title, password-required flag) |
 | PATCH | `/meetings/:id/settings` | owner/`meeting.settings.update` | |
-| POST | `/meetings/:id/end` | owner/`meeting.end` | ends the LiveKit room too |
+| POST | `/meetings/:id/end` | owner/`meeting.end` | broadcasts `WS_EVENTS.MEETING_ENDED` to every still-connected participant, then ends the LiveKit room. Reachable from the meeting toolbar's host-only "End meeting" control (a second, confirming click — see `docs/roadmap.md`) |
 | POST | `/meetings/:code/join` | required | authenticated join |
 | POST | `/meetings/:code/join-as-guest` | public | guest join (name required) |
 | POST | `/meetings/:id/participants/:participantId/token` | required | reissue a LiveKit token (self, or a moderator on someone else's behalf) |
@@ -139,6 +139,21 @@ implementation, `NullCalendarProvider`, always returns a real `503`, not a fake 
 
 See `docs/webrtc.md` §Recording for the full Egress architecture (separate worker service, webhook-driven
 status transitions, the two-S3-endpoint split for presigned URLs).
+
+## Live captions (`/meetings/:meetingId/captions`)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/start` | owner/`captions.manage` | dispatches the real captions agent worker (`services/transcription`) into the meeting's LiveKit room; broadcasts `WS_EVENTS.CAPTIONS_STARTED` |
+| POST | `/stop` | owner/`captions.manage` | tears the dispatch down; broadcasts `WS_EVENTS.CAPTIONS_STOPPED` |
+| GET | `/status` | participant | `{ active: boolean }` — lets a late joiner learn captions are already on without having caught the live broadcast |
+
+`captions.manage` sits at the same tier as `recording.start`/`recording.stop` (owner/host/co-host/teacher,
+not plain participants). The caption *text* itself never touches this REST surface or this app's own
+WebSocket gateway at all — the agent publishes it directly as LiveKit's native room transcription,
+consumed client-side via `@livekit/components-react`'s `useTranscriptions()`. See `docs/webrtc.md` §Live
+captions for the full architecture, including a real LiveKit-server read-API limitation this stage found
+and worked around (why `/status` is backed by a Redis-tracked dispatch id rather than re-querying LiveKit).
 
 ## AI meeting assistant (`/meetings/:meetingId/transcripts`)
 

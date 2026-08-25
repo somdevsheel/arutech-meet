@@ -160,6 +160,65 @@ LLM summarization → `MeetingTranscript` / `TranscriptSegment` / `AiSummary`. I
   chunks; the full pipeline (permissions, state machine, error handling) is covered by
   `apps/api/src/ai/transcripts.service.spec.ts` with the provider boundary mocked.
 
+## Live captions
+
+Architecturally distinct from the AI meeting assistant above, not an extension of it — that pipeline is
+*batch* (a finished recording file, processed after the meeting ends); this one is *streaming* (audio
+while the meeting is happening). Implemented as a real **LiveKit Agents worker**,
+`services/transcription/src/agent.ts` — a genuinely separate process type from anything else in this repo
+(the closest precedent, egress recording, is an external LiveKit-provided container, not custom code
+here), explicitly dispatched into a meeting's room (`CaptionsService.start` →
+`LiveKitService.startCaptions` → `AgentDispatchClient.createDispatch`) when a host clicks the toolbar's
+"Captions" button — never automatic for every meeting, the same "real infra cost, so opt-in" reasoning
+recording already has.
+
+- **One STT stream per remote participant, not one per room.** `@livekit/agents`' higher-level
+  `AgentSession`/`RoomIO` stack is built around one agent linked to *one* participant (a voice-assistant
+  shape — `RoomInputOptions.participantIdentity` defaults to "link to the first participant" if unset),
+  wrong for a meeting where anyone can speak. The agent instead uses the lower-level `Room`/`STT`
+  primitives directly: on every `TrackSubscribed` audio track, it opens its own `SpeechStream`, pumps that
+  participant's real audio frames into it, and publishes each interim/final segment back to the room via
+  `LocalParticipant.publishTranscription`, **attributed to the speaking participant's own LiveKit
+  identity** — not the agent's. That's LiveKit's own native room-transcription protocol (not a custom
+  event on this app's Socket.IO gateway), read client-side via `@livekit/components-react`'s
+  `useTranscriptions()` (`caption-bar.tsx`) — the same "reuse the media engine's own primitives" principle
+  Stage 4's virtual background followed with `@livekit/track-processors`.
+- **STT provider**: `@livekit/agents-plugin-openai`'s `STT`, which uses OpenAI's Realtime transcription
+  WebSocket API (streaming), a different product from Stage 8's `whisper-1` REST call — genuinely
+  real-time, not chunked-and-polled. Falls back to nothing if `OPENAI_API_KEY` is unset: the agent
+  explicitly refuses to start captioning and shuts the job down with a clear log reason, rather than
+  silently producing empty captions — same "fail loudly, never fabricate" convention as
+  `NullTranscriptionProvider`.
+- **Bot participant, filtered out of the UI.** The agent connects with a fixed identity
+  (`CAPTIONS_AGENT_IDENTITY`, `@arutech/types`) rather than a framework-generated one, so both
+  `LiveKitService`'s dispatch call and the web client's video-grid filter agree on the exact same string.
+  It never publishes camera/mic, but LiveKit component hooks default to placeholder tiles for every
+  participant regardless — `video-grid.tsx` explicitly excludes this one identity so it never gets an
+  empty tile, and it was never wired into `ParticipantsPanel` at all (that panel is driven by this app's
+  own `MeetingParticipant` roster via the real `join()` REST flow, which the bot never goes through).
+- **A real environment limitation found and worked around, not swept under a schema change**:
+  `AgentDispatchClient.listDispatch(roomName)` — the LiveKit server API this app would naturally use to
+  ask "is captioning currently on for this room?" — was found, live, to not reliably scope by room against
+  this LiveKit server build: a brand-new room that never had a dispatch still came back with an active
+  dispatch, its `room` field simply echoing back whatever name was queried. `createDispatch`/
+  `deleteDispatch` (by an exact, already-known dispatch id) were confirmed working correctly, so
+  `LiveKitService` tracks the one active dispatch id per room itself in Redis (`captions:dispatch:
+  {roomName}`, this app's existing ephemeral-state store) instead of trusting that read call — see
+  `LiveKitService.captionsActive`'s own doc comment for the full story.
+- **Not persisted.** Live captions are ephemeral, matching the roadmap's own scoping — a downloadable
+  transcript already exists post-meeting via Stage 8's pipeline; this is purely "read the words on screen
+  while it's happening."
+- **Multilingual, structurally**: every `TranscriptionSegment` carries its own `language` field (LiveKit's
+  wire type), populated from whatever the STT plugin reports — no hardcoded English assumption baked into
+  the transport, even though only one caption language is surfaced in the UI today.
+- **Not live-verified against real caption text** — no `OPENAI_API_KEY` was available in this session's
+  environment, the same gap Stage 8 hit. What *was* verified for real: the worker genuinely registers with
+  LiveKit, accepts a real host-triggered dispatch, joins the exact target meeting's room over real WebRTC,
+  and — the part that matters — the whole rest of the feature around it (host-only control gating, the
+  live broadcast telling every participant captions are on, the bot never appearing as a video tile,
+  clean start/stop with no state leaking across meetings) was verified live with two real browser sessions.
+  See `docs/roadmap.md`'s Live captions stage for that evidence.
+
 ## End-to-end encryption
 
 Not implemented. Documented honestly rather than mischaracterized:

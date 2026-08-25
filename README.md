@@ -139,6 +139,20 @@ pnpm --filter @arutech/web dev
 Point `DATABASE_URL`/`REDIS_URL`/`LIVEKIT_*`/`S3_*` in `.env.development` (API) and
 `apps/web/.env.local` (web) at wherever those services actually are.
 
+**Live captions** are an optional third process, `services/transcription` — a real LiveKit Agents worker,
+not part of the two above. It only needs to run if you want to try the meeting toolbar's "Captions"
+button; nothing else in the app depends on it being up.
+
+```bash
+LIVEKIT_URL=ws://localhost:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=<your secret> \
+OPENAI_API_KEY=<your key> \
+pnpm --filter @arutech/transcription-agent dev
+```
+
+Without `OPENAI_API_KEY` it still registers with LiveKit and joins a room on dispatch — it just refuses to
+start captioning once there (an honest 503-equivalent, not a fake transcript) and shuts back down. See
+`docs/roadmap.md`'s Live captions stage for the full architecture.
+
 ## Testing
 
 ```bash

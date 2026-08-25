@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTracks, RoomAudioRenderer, isTrackReference } from "@livekit/components-react";
 import type { TrackReferenceOrPlaceholder } from "@livekit/components-react";
 import { Track } from "livekit-client";
+import { CAPTIONS_AGENT_IDENTITY } from "@arutech/types";
 import { VideoTile } from "./video-tile";
 
 type ViewMode = "gallery" | "speaker";
@@ -50,7 +51,13 @@ export function VideoGrid() {
 
   const cameraTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], {
     onlySubscribed: false,
-  });
+    // The captions agent (services/transcription) connects as a real,
+    // subscribe-only bot participant — it never publishes a camera, so
+    // withPlaceholder would otherwise still give it an empty tile here.
+    // Filtered by its own fixed identity (CAPTIONS_AGENT_IDENTITY), not a
+    // heuristic, so a real human who happened to share that name never gets
+    // hidden by mistake.
+  }).filter((t) => t.participant.identity !== CAPTIONS_AGENT_IDENTITY);
   const screenShareTracks = useTracks([{ source: Track.Source.ScreenShare, withPlaceholder: false }], {
     onlySubscribed: false,
   });

@@ -1,6 +1,8 @@
 import { Inject, Injectable, InternalServerErrorException, Logger } from "@nestjs/common";
+import type Redis from "ioredis";
 import {
   AccessToken,
+  AgentDispatchClient,
   EgressClient,
   EncodedFileOutput,
   EncodedFileType,
@@ -12,6 +14,7 @@ import {
   type VideoGrant,
 } from "livekit-server-sdk";
 import type { Env } from "@arutech/config";
+import { CAPTIONS_AGENT_IDENTITY } from "@arutech/types";
 
 export interface S3UploadConfig {
   accessKey: string;
@@ -43,8 +46,12 @@ export class LiveKitService {
   private readonly roomService: RoomServiceClient;
   private readonly egressClient: EgressClient;
   private readonly webhookReceiver: WebhookReceiver;
+  private readonly agentDispatch: AgentDispatchClient;
 
-  constructor(@Inject("ENV") private readonly env: Env) {
+  constructor(
+    @Inject("ENV") private readonly env: Env,
+    @Inject("REDIS") private readonly redis: Redis,
+  ) {
     this.roomService = new RoomServiceClient(
       this.env.LIVEKIT_HTTP_URL,
       this.env.LIVEKIT_API_KEY,
@@ -56,6 +63,11 @@ export class LiveKitService {
       this.env.LIVEKIT_API_SECRET,
     );
     this.webhookReceiver = new WebhookReceiver(this.env.LIVEKIT_API_KEY, this.env.LIVEKIT_API_SECRET);
+    this.agentDispatch = new AgentDispatchClient(
+      this.env.LIVEKIT_HTTP_URL,
+      this.env.LIVEKIT_API_KEY,
+      this.env.LIVEKIT_API_SECRET,
+    );
   }
 
   async createRoomToken(opts: GrantOptions): Promise<string> {
@@ -191,6 +203,55 @@ export class LiveKitService {
 
   async stopEgress(egressId: string): Promise<EgressInfo> {
     return this.egressClient.stopEgress(egressId);
+  }
+
+  /**
+   * Explicit Agent Dispatch (not automatic — the captions agent registers
+   * with `agentName: CAPTIONS_AGENT_IDENTITY` in `services/transcription` and
+   * only joins a room when told to, same "opt-in, not on for every meeting"
+   * reasoning as recording being start/stop rather than always-on).
+   *
+   * `createDispatch`/`deleteDispatch` (by exact dispatch id) are genuine
+   * LiveKit server API calls, confirmed working end-to-end (a real worker
+   * process picking up a real job — see docs/roadmap.md's Live captions
+   * stage). `listDispatch`, however, was found to NOT reliably scope by room
+   * against this LiveKit server build in this environment — reproduced
+   * directly against the SDK, outside this app: a brand-new room that never
+   * had a dispatch still came back non-empty, with the response's own
+   * `room` field echoing whatever room name was queried rather than where
+   * the dispatch actually lived. Rather than build "is captioning on?" on a
+   * read call directly observed to lie, this tracks the one dispatch id per
+   * room itself in Redis (this app's existing ephemeral-state store — see
+   * RedisModule's own doc comment) — set on start, read/cleared on
+   * stop/status, with a generous TTL as a safety net against a stop that
+   * never comes (e.g. the API restarting mid-meeting).
+   */
+  private captionsDispatchKey(roomName: string): string {
+    return `${this.env.REDIS_PREFIX}:captions:dispatch:${roomName}`;
+  }
+
+  async startCaptions(roomName: string) {
+    const dispatch = await this.agentDispatch.createDispatch(roomName, CAPTIONS_AGENT_IDENTITY);
+    await this.redis.set(this.captionsDispatchKey(roomName), dispatch.id, "EX", 60 * 60 * 24);
+    return dispatch;
+  }
+
+  async stopCaptions(roomName: string): Promise<void> {
+    const key = this.captionsDispatchKey(roomName);
+    const dispatchId = await this.redis.get(key);
+    if (dispatchId) {
+      try {
+        await this.agentDispatch.deleteDispatch(dispatchId, roomName);
+      } catch (err) {
+        this.logger.warn(`stopCaptions(${roomName}): deleteDispatch failed (may already be gone): ${String(err)}`);
+      }
+    }
+    await this.redis.del(key);
+  }
+
+  async captionsActive(roomName: string): Promise<boolean> {
+    const dispatchId = await this.redis.get(this.captionsDispatchKey(roomName));
+    return dispatchId !== null;
   }
 
   /** Verifies a LiveKit webhook payload's Authorization header signature and parses it. */

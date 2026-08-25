@@ -13,6 +13,11 @@ interface Props {
   onLeave: () => void;
   canEndMeeting: boolean;
   onEndMeeting: () => void;
+  canManageCaptions: boolean;
+  captionsActive: boolean;
+  captionsPending: boolean;
+  captionsHidden: boolean;
+  onToggleCaptions: () => void;
   isRecording: boolean;
   canShareScreen: boolean;
   participantCount: number;
@@ -31,6 +36,11 @@ export function MeetingToolbar({
   onLeave,
   canEndMeeting,
   onEndMeeting,
+  canManageCaptions,
+  captionsActive,
+  captionsPending,
+  captionsHidden,
+  onToggleCaptions,
   isRecording,
   canShareScreen,
   participantCount,
@@ -193,6 +203,28 @@ export function MeetingToolbar({
           <rect x="3" y="14" width="7" height="7" rx="1.5" />
           <rect x="14" y="14" width="7" height="7" rx="1.5" />
         </Control>
+        {(canManageCaptions || captionsActive) && (
+          <Control
+            label={
+              canManageCaptions
+                ? captionsPending
+                  ? "…"
+                  : captionsActive
+                    ? "Stop captions"
+                    : "Captions"
+                : captionsHidden
+                  ? "Show captions"
+                  : "Hide captions"
+            }
+            active={captionsActive && !captionsHidden}
+            accentActive={canManageCaptions && captionsActive}
+            disabled={captionsPending}
+            onClick={onToggleCaptions}
+          >
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <path d="M7.5 11.5a2 2 0 1 1 0 3.2M13.5 11.5a2 2 0 1 1 0 3.2" />
+          </Control>
+        )}
       </div>
 
       <div className="flex flex-none items-center gap-2">

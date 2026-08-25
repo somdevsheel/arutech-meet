@@ -1,0 +1,25 @@
+{
+  "name": "@arutech/transcription-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LiveKit Agents worker that joins a meeting room on explicit dispatch (see apps/api/src/captions) and forwards streaming speech-to-text as LiveKit's native room transcription — consumed client-side via @livekit/components-react's useTranscriptions(), not a custom WebSocket event. See docs/roadmap.md's Live captions stage for the full architecture and honest scope.",
+  "scripts": {
+    "dev": "tsx src/agent.ts dev",
+    "start": "node --enable-source-maps dist/agent.js start",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"src/**/*.ts\""
+  },
+  "dependencies": {
+    "@arutech/types": "workspace:*",
+    "@livekit/agents": "^1.7.0",
+    "@livekit/agents-plugin-openai": "^1.7.0",
+    "@livekit/rtc-node": "^0.13.34",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -15,6 +15,7 @@ not built at all. See `docs/advanced-features-roadmap.md` for what happens next 
 | Meeting templates | ❌ | No `MeetingTemplate` model or "save as template" flow anywhere |
 | Password, waiting room, host controls, co-host, lock, remove/mute participant, request-to-unmute, disable camera, allow/deny screen-share/chat/recording, join-before-host | ✅ | `MeetingSettings` model + `PermissionService`/`packages/types/src/permissions.ts` capability matrix, `WaitingRoomPanel`, `ParticipantsPanel` |
 | Automatic meeting end, meeting timer | ✅ | `MeetingsEventsService` (`room_finished` webhook ends the meeting), in-room elapsed timer (`meeting-room.tsx`) |
+| Manual "End meeting for everyone" (host) | ✅ **(bug fix this session)** | `POST /meetings/:id/end` existed server-side but had no UI button at all — a host could only "Leave" (disconnect themselves; the meeting kept running for everyone else). Added a host-only toolbar control (armed on first click, fires on a second confirming click) plus a real `WS_EVENTS.MEETING_ENDED` broadcast the client was already fully wired to receive but the server never sent. See `docs/roadmap.md`'s write-up |
 | Meeting info panel | ✅ **(this session)** | `meeting-info-panel.tsx` — click the meeting title/code (Zoom-style) to open it: invite-link copy, meeting-code copy, security summary (password/waiting-room on-off, honest E2EE caveat), current recording status. See `docs/roadmap.md` Stage 17 |
 
 ## 2. Advanced video features
@@ -160,10 +161,16 @@ see a draft — 404, not just a hidden UI element). See `docs/roadmap.md` Stage 
 
 ## 21–22. Live transcription, captions
 
-❌ Not built. The existing AI assistant is **post-meeting only** (batch: recording → ffmpeg → Whisper). Live
-in-meeting captions need a fundamentally different pipeline — streaming STT against live LiveKit audio
-tracks (e.g. a LiveKit Agent subscribing to room audio, or client-side `SpeechRecognition` per participant)
-— see roadmap doc for why this is architecturally distinct from, not an extension of, Stage 8.
+✅ **Built (Stage 26)** — a real LiveKit Agents worker (`services/transcription`), host-triggered via a
+toolbar "Captions" control, streaming per-speaker audio through OpenAI's Realtime STT and publishing
+captions as LiveKit's own native room transcription (`useTranscriptions()`, `caption-bar.tsx`) — not the
+client-side `SpeechRecognition` alternative this doc previously left open, which the roadmap item itself
+called the architecturally weaker option for this product's ambitions. See `docs/webrtc.md` §Live captions
+for the full design (including a real LiveKit-server read-API limitation found and worked around) and
+`docs/roadmap.md`'s Stage 26 for live-verification evidence. Honest gap: no `OPENAI_API_KEY` was available
+in this session's environment, so actual caption *text* wasn't live-verified — same limitation Stage 8's
+AI meeting assistant already had; everything else (dispatch, the agent genuinely joining the right room,
+host-only gating, the live "captions on" broadcast, clean start/stop) was.
 
 ## 23. Voice and video calls
 

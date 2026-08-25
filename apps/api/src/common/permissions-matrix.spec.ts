@@ -25,4 +25,13 @@ describe("centralized capability matrix (@arutech/types)", () => {
     expect(can("STUDENT", "waiting_room.admit")).toBe(false);
     expect(can("PARTICIPANT", "waiting_room.admit")).toBe(false);
   });
+
+  it("grants captions.manage the same tier as recording.start (host/co-host/teacher, not plain participants)", () => {
+    for (const role of ["OWNER", "HOST", "CO_HOST", "TEACHER"] as const) {
+      expect(can(role, "captions.manage")).toBe(true);
+    }
+    for (const role of ["PARTICIPANT", "STUDENT", "GUEST"] as const) {
+      expect(can(role, "captions.manage")).toBe(false);
+    }
+  });
 });

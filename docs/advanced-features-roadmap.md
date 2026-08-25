@@ -100,20 +100,18 @@ Stage 15 shipped it and was corrected alongside this item.
 
 - AI meeting assistant: **done** (Stage 8, two sessions ago).
 - AI classroom assistant: see Priority 2 item 4 above.
-- **Live transcription and captions are architecturally distinct from Stage 8**, not an extension of it —
-  worth stating plainly since they sound adjacent. Stage 8 is a *batch* pipeline (recording file → ffmpeg →
-  Whisper, after the meeting ends). Live captions need a *streaming* pipeline against audio while the
-  meeting is happening: either (a) a LiveKit Agent (a server-side participant that subscribes to room audio
-  tracks and runs streaming STT, publishing caption text back over data channels — LiveKit's documented
-  pattern for exactly this), or (b) client-side `SpeechRecognition` per participant, self-reported to the
-  room. (a) gives every participant consistent captions and server-side control (recordable, moderatable);
-  (b) needs zero new backend infra but is Chrome-only-ish, per-participant-accuracy-dependent, and each
-  client hears only what its own mic picks up (not a real substitute for a shared caption stream). (a) is
-  the architecturally correct choice for a product aiming to be "competitive with Zoom/Meet/Teams", at the
-  cost of being real new infrastructure (a LiveKit Agent worker process, a new `TRANSCRIPTION_PROVIDER`
-  streaming variant of the interface Stage 8 already established). Multilingual support: design the caption
-  text payload with a `language` field from the start (matches `MeetingTranscript.language` already) even
-  before more than one language is actually offered.
+- ~~Live transcription and captions~~ — done, Stage 26. Went with option (a) this item itself identified as
+  architecturally correct: a real LiveKit Agents worker (`services/transcription`), host-dispatched into a
+  meeting's room, one streaming STT connection per speaking participant (not one per room — the framework's
+  higher-level voice-assistant stack assumes a single linked participant, wrong for a multi-party meeting,
+  so this uses the lower-level `Room`/`STT` primitives directly instead). Captions are published as
+  LiveKit's own native room transcription (real per-segment `language` field, satisfying this item's
+  multilingual-readiness note structurally) rather than a custom event on this app's own gateway. A real
+  LiveKit-server read-API limitation was found and worked around live, not glossed over — see
+  `docs/webrtc.md` §Live captions. Honest gap: no `OPENAI_API_KEY` in this session's environment, so actual
+  caption text wasn't live-verified — same limitation Stage 8 already had; everything else was.
+
+**Priority 4 is now fully closed out.**
 
 ## Priority 5 — Organizations, teams, custom branding, global search, advanced analytics, admin tools
 

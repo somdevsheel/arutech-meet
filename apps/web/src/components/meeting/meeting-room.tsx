@@ -13,6 +13,7 @@ import { ClassroomPanel } from "./classroom/classroom-panel";
 import { RecordingsPanel } from "./recordings-panel";
 import { MeetingInfoPanel } from "./meeting-info-panel";
 import { ReactionsOverlay } from "./reactions-overlay";
+import { CaptionBar } from "./caption-bar";
 import { useMeetingSocket } from "@/hooks/use-meeting-socket";
 import { apiFetch } from "@/lib/api-client";
 
@@ -60,6 +61,9 @@ export function MeetingRoom({
   const [panel, setPanel] = useState<PanelKind | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingBanner, setRecordingBanner] = useState(false);
+  const [captionsActive, setCaptionsActive] = useState(false);
+  const [captionsPending, setCaptionsPending] = useState(false);
+  const [captionsHidden, setCaptionsHidden] = useState(false);
   const [conn, setConn] = useState<ActiveConnection>({ token, url: livekitUrl, label: null });
   const [elapsed, setElapsed] = useState(0);
   const [seenChatCount, setSeenChatCount] = useState(0);
@@ -70,6 +74,7 @@ export function MeetingRoom({
   // (see MeetingsController's POST /:id/end) — this only decides whether to
   // render the button, not whether the action is allowed.
   const canEndMeeting = can(role as ParticipantRole, "meeting.end");
+  const canManageCaptions = can(role as ParticipantRole, "captions.manage");
 
   async function endMeeting() {
     try {
@@ -161,6 +166,40 @@ export function MeetingRoom({
     return () => clearTimeout(id);
   }, [recordingBanner]);
 
+  // Same "seed from real current state, then stay live via broadcast" shape
+  // as the recording flag above — a late joiner should see captions are
+  // already on rather than only learning it from the next CAPTIONS_STARTED.
+  useEffect(() => {
+    apiFetch<{ active: boolean }>(`/meetings/${meetingId}/captions/status`)
+      .then((r) => setCaptionsActive(r.active))
+      .catch(() => {});
+  }, [meetingId]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onStarted = () => setCaptionsActive(true);
+    const onStopped = () => setCaptionsActive(false);
+    socket.on(WS_EVENTS.CAPTIONS_STARTED, onStarted);
+    socket.on(WS_EVENTS.CAPTIONS_STOPPED, onStopped);
+    return () => {
+      socket.off(WS_EVENTS.CAPTIONS_STARTED, onStarted);
+      socket.off(WS_EVENTS.CAPTIONS_STOPPED, onStopped);
+    };
+  }, [socket]);
+
+  async function toggleCaptions() {
+    setCaptionsPending(true);
+    try {
+      const path = captionsActive ? "stop" : "start";
+      const result = await apiFetch<{ active: boolean }>(`/meetings/${meetingId}/captions/${path}`, {
+        method: "POST",
+      });
+      setCaptionsActive(result.active);
+    } finally {
+      setCaptionsPending(false);
+    }
+  }
+
   if (meetingEnded) {
     return <EndedScreen onLeave={onLeave} />;
   }
@@ -239,6 +278,7 @@ export function MeetingRoom({
         <div data-video-grid-root className="relative min-h-0 min-w-0 flex-1 p-3">
           <VideoGrid />
           <ReactionsOverlay reactions={reactions} onDismiss={dismissReaction} />
+          {captionsActive && !captionsHidden && <CaptionBar onHide={() => setCaptionsHidden(true)} />}
           {recordingBanner && (
             <div
               role="alert"
@@ -335,6 +375,11 @@ export function MeetingRoom({
         onLeave={onLeave}
         canEndMeeting={canEndMeeting}
         onEndMeeting={endMeeting}
+        canManageCaptions={canManageCaptions}
+        captionsActive={captionsActive}
+        captionsPending={captionsPending}
+        captionsHidden={captionsHidden}
+        onToggleCaptions={canManageCaptions ? toggleCaptions : () => setCaptionsHidden((v) => !v)}
         isRecording={isRecording}
         canShareScreen={true}
         participantCount={participants.length}
