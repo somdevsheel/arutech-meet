@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { loginSchema } from "@arutech/validation";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 
-export default function LoginPage() {
+function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const setSession = useAuthStore((s) => s.setSession);
@@ -85,5 +85,18 @@ export default function LoginPage() {
         </p>
       </form>
     </main>
+  );
+}
+
+// `useSearchParams()` above opts this page out of static rendering unless
+// it's wrapped in Suspense — same fix already applied to chat/page.tsx's
+// TeamChatPageWrapper; `next build`'s static prerendering enforces this even
+// though `next dev` never surfaces it, which is why this only ever showed up
+// building a real production image (see docs/deployment-lightsail.md).
+export default function LoginPageWrapper() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPage />
+    </Suspense>
   );
 }

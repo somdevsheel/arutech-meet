@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { registerSchema } from "@arutech/validation";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 
-export default function RegisterPage() {
+function RegisterPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const setSession = useAuthStore((s) => s.setSession);
@@ -116,5 +116,18 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="text-sm text-slate-300">{label}</span>
       {children}
     </label>
+  );
+}
+
+// `useSearchParams()` above opts this page out of static rendering unless
+// it's wrapped in Suspense — same fix already applied to chat/page.tsx's
+// TeamChatPageWrapper; `next build`'s static prerendering enforces this even
+// though `next dev` never surfaces it, which is why this only ever showed up
+// building a real production image (see docs/deployment-lightsail.md).
+export default function RegisterPageWrapper() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterPage />
+    </Suspense>
   );
 }
