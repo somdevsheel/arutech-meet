@@ -12,7 +12,7 @@ specific test deployment. Read that doc for the full explanation of *why* each s
 | Domain | `geoworldmedia.com` — the **apex/root domain itself**, not a subdomain |
 | Static IP | **Skipped** — using the instance's regular public IP instead. See caveat below. |
 | Instance plan | 4 GB RAM / 2 vCPU (~$20/mo) — recording (Egress) not expected to be reliable at this size; bump to 8 GB (~$40/mo) first if recording needs testing |
-| Storage (recordings) | Not yet decided — default to real S3 per `docs/deployment-lightsail.md` §6 unless told otherwise |
+| Storage (recordings) | Self-hosted MinIO (in the same Docker Compose stack) — see the recording-playback-from-outside caveat in `docs/deployment-lightsail.md` §6 if recording gets tested |
 | LiveKit | Self-hosted (not LiveKit Cloud) — runs in the same Docker Compose stack as everything else |
 | SSH access | This session's own key is the one authorized on the instance: |
 
@@ -91,17 +91,27 @@ step skipped as decided above.
 
 ## Status
 
-- [ ] Instance created
-- [ ] Firewall rules added
-- [ ] Public IP obtained
-- [ ] Existing apex A record edited to the new IP, and resolving
-- [ ] Server setup (Docker install, repo clone)
-- [ ] Secrets generated (`.env.lightsail`)
-- [ ] LiveKit/nginx/egress configs rendered
-- [ ] TLS certificate issued
-- [ ] Stack built and started
-- [ ] Migration run
-- [ ] Verified from a real browser (camera/mic prompt, padlock, real meeting)
+- [x] Instance created — `indium`, 4 GB/2 vCPU, Ubuntu 22.04, Mumbai (ap-south-1), public IP `13.200.249.4`
+- [x] Firewall rules added — 22, 80, 443, 7880, 7881 TCP + 50000-50100 UDP, all confirmed open from outside
+- [x] Public IP obtained
+- [x] Existing apex A record edited to the new IP, and resolving
+- [x] Server setup (Docker install, repo clone)
+- [x] Secrets generated (`.env.lightsail`) — storage backend: self-hosted MinIO
+- [x] LiveKit/nginx/egress configs rendered
+- [x] TLS certificate issued — real Let's Encrypt cert, confirmed via `curl -vI https://geoworldmedia.com`
+- [x] Stack built and started — all 8 services (api, web, postgres, redis, livekit, egress, minio, nginx) up
+- [x] Migration run — all Prisma migrations applied, `/health` confirms Postgres + Redis
+- [ ] Verified from a real browser (camera/mic prompt, padlock, real meeting) — **next step, needs a human with a real browser/camera**
+
+Fixed along the way (see git history on `main` for details):
+- SSH key wasn't added to the instance at creation — added via the Lightsail browser SSH terminal.
+- `next build` failed on `/login` and `/register` (`useSearchParams()` needs a Suspense boundary) — real bug,
+  never caught before because this session had only ever run `next dev`. Fixed in commit `445d1f7`.
+- Certbot's first real issuance landed in a `-0001`-suffixed lineage instead of the placeholder cert's path —
+  fixed by hand-restructuring the `certbot-conf` volume so nginx picked up the real cert.
+- **Port 7880 looked firewalled from outside but wasn't** — nginx never actually had a `listen 7880` server
+  block (only 80/443 existed), even though the compose file and docs assumed one existed for TLS-terminated
+  LiveKit signaling. The Lightsail firewall rule was correct the whole time. Fixed in commit `7b69fe9`.
 
 ## Teardown
 
