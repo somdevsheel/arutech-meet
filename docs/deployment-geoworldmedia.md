@@ -112,6 +112,14 @@ Fixed along the way (see git history on `main` for details):
 - **Port 7880 looked firewalled from outside but wasn't** — nginx never actually had a `listen 7880` server
   block (only 80/443 existed), even though the compose file and docs assumed one existed for TLS-terminated
   LiveKit signaling. The Lightsail firewall rule was correct the whole time. Fixed in commit `7b69fe9`.
+- **Server-side "Meeting recording"** returns "Internal server error" on this instance — LiveKit Egress
+  logs `not enough cpu for some egress types (minimumCpu: 4, available: 2)` at startup; room-composite
+  recording needs more CPU than this 4GB/2vCPU plan has, exactly as flagged in the "Decisions already made"
+  table above. Not a bug — needs an 8GB/4vCPU resize to fix (deferred; not done on this instance). **Local
+  recording** (device-side, no server involved) works fine as a substitute in the meantime.
+- **Local recording auto-stopped when switching meeting-room panels** (e.g. clicking over to Chat mid-recording)
+  — a real bug, unrelated to this instance specifically. Found during real-device testing here, fixed and
+  verified live in commit `caa905d`, and deployed to this instance the same session.
 
 ## Teardown
 
