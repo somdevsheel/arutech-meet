@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { LiveKitRoom } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { WS_EVENTS, can, type ParticipantRole, type ParticipantPresencePayload } from "@arutech/types";
+import {
+  WS_EVENTS,
+  can,
+  type ParticipantRole,
+  type ParticipantPresencePayload,
+} from "@arutech/types";
 import { VideoGrid } from "./video-grid";
 import { MeetingToolbar, type PanelKind } from "./meeting-toolbar";
 import { ChatPanel } from "./chat-panel";
@@ -12,6 +17,7 @@ import { ReportParticipantModal } from "./report-participant-modal";
 import { WaitingRoomPanel } from "./waiting-room-panel";
 import { ClassroomPanel } from "./classroom/classroom-panel";
 import { RecordingsPanel } from "./recordings-panel";
+import { LocalRecordingProvider } from "./local-recording-control";
 import { MeetingInfoPanel } from "./meeting-info-panel";
 import { ReactionsOverlay } from "./reactions-overlay";
 import { CaptionBar } from "./caption-bar";
@@ -70,11 +76,16 @@ export function MeetingRoom({
   // guess. Controls hidden here still 403 if somehow clicked anyway; this
   // only avoids showing one that would. Defaults to everything enabled
   // while loading, matching the server's own "unconfigured = on" default.
-  const [featureFlags, setFeatureFlags] = useState({ WHITEBOARD: true, BREAKOUT_ROOMS: true, LIVE_CAPTIONS: true });
+  const [featureFlags, setFeatureFlags] = useState({
+    WHITEBOARD: true,
+    BREAKOUT_ROOMS: true,
+    LIVE_CAPTIONS: true,
+  });
   const [conn, setConn] = useState<ActiveConnection>({ token, url: livekitUrl, label: null });
   const [elapsed, setElapsed] = useState(0);
   const [seenChatCount, setSeenChatCount] = useState(0);
-  const [reportingParticipant, setReportingParticipant] = useState<ParticipantPresencePayload | null>(null);
+  const [reportingParticipant, setReportingParticipant] =
+    useState<ParticipantPresencePayload | null>(null);
   const [reportSent, setReportSent] = useState(false);
   const isModerator = MODERATOR_ROLES.has(role);
   // Narrower than isModerator on purpose — CO_HOST is a moderator role but
@@ -89,7 +100,8 @@ export function MeetingRoom({
   // mid-meeting), captionsActive alone still lets every participant see the
   // real, live hide/show toggle below — the flag only blocks starting a new
   // session, never hides a genuinely active one.
-  const canManageCaptions = can(role as ParticipantRole, "captions.manage") && featureFlags.LIVE_CAPTIONS;
+  const canManageCaptions =
+    can(role as ParticipantRole, "captions.manage") && featureFlags.LIVE_CAPTIONS;
 
   async function endMeeting() {
     try {
@@ -213,9 +225,12 @@ export function MeetingRoom({
     setCaptionsPending(true);
     try {
       const path = captionsActive ? "stop" : "start";
-      const result = await apiFetch<{ active: boolean }>(`/meetings/${meetingId}/captions/${path}`, {
-        method: "POST",
-      });
+      const result = await apiFetch<{ active: boolean }>(
+        `/meetings/${meetingId}/captions/${path}`,
+        {
+          method: "POST",
+        },
+      );
       setCaptionsActive(result.active);
     } finally {
       setCaptionsPending(false);
@@ -262,176 +277,192 @@ export function MeetingRoom({
       data-lk-theme="default"
       className="flex h-screen flex-col overflow-hidden bg-surface"
     >
-      <header className="flex h-14 flex-none items-center justify-between gap-4 border-b border-surface-border px-5">
-        <div className="flex items-center gap-2">
-          <Pill>
-            <span className="h-2.5 w-2.5 rounded-full bg-success" />
-            Encrypted
-          </Pill>
-          {isRecording && (
+      {/* Mounted once here, outside the `{panel && ...}` conditional below —
+          see LocalRecordingProvider's own comment for why: the Record tab's
+          panel content unmounts on every panel switch, but a recording in
+          progress must not. */}
+      <LocalRecordingProvider>
+        <header className="flex h-14 flex-none items-center justify-between gap-4 border-b border-surface-border px-5">
+          <div className="flex items-center gap-2">
             <Pill>
-              <span className="h-2.5 w-2.5 rounded-full bg-danger" />
-              Recording
+              <span className="h-2.5 w-2.5 rounded-full bg-success" />
+              Encrypted
             </Pill>
-          )}
-          {conn.label && (
-            <Pill>
-              <span className="h-2.5 w-2.5 rounded-full bg-warn" />
-              Breakout: {conn.label}
-            </Pill>
-          )}
-        </div>
-        <button
-          onClick={() => setPanel((cur) => (cur === "info" ? null : "info"))}
-          title="Meeting info"
-          className="min-w-0 rounded-lg px-2 py-1 text-center transition hover:bg-surface-field"
-        >
-          <h1 className="truncate text-sm font-semibold text-white">{title}</h1>
-          <p className="text-[11px] text-ink-muted">Code: {meetingCode}</p>
-        </button>
-        <div className="flex items-center justify-end gap-3" style={{ minWidth: 120 }}>
-          <span className="font-mono text-[13px] tabular-nums text-ink-muted">{timerLabel}</span>
-        </div>
-      </header>
+            {isRecording && (
+              <Pill>
+                <span className="h-2.5 w-2.5 rounded-full bg-danger" />
+                Recording
+              </Pill>
+            )}
+            {conn.label && (
+              <Pill>
+                <span className="h-2.5 w-2.5 rounded-full bg-warn" />
+                Breakout: {conn.label}
+              </Pill>
+            )}
+          </div>
+          <button
+            onClick={() => setPanel((cur) => (cur === "info" ? null : "info"))}
+            title="Meeting info"
+            className="min-w-0 rounded-lg px-2 py-1 text-center transition hover:bg-surface-field"
+          >
+            <h1 className="truncate text-sm font-semibold text-white">{title}</h1>
+            <p className="text-[11px] text-ink-muted">Code: {meetingCode}</p>
+          </button>
+          <div className="flex items-center justify-end gap-3" style={{ minWidth: 120 }}>
+            <span className="font-mono text-[13px] tabular-nums text-ink-muted">{timerLabel}</span>
+          </div>
+        </header>
 
-      {isModerator && !conn.label && <WaitingRoomPanel meetingId={meetingId} refreshSignal={waitingRoomCount} />}
-
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div data-video-grid-root className="relative min-h-0 min-w-0 flex-1 p-3">
-          <VideoGrid />
-          <ReactionsOverlay reactions={reactions} onDismiss={dismissReaction} />
-          {captionsActive && !captionsHidden && <CaptionBar onHide={() => setCaptionsHidden(true)} />}
-          {recordingBanner && (
-            <div
-              role="alert"
-              className="absolute left-1/2 top-4 z-10 flex -translate-x-1/2 items-center gap-2.5 rounded-lg bg-danger-strong px-4 py-2.5 text-xs font-medium text-white shadow-lg"
-            >
-              <span className="h-2 w-2 flex-none rounded-full bg-white" />
-              This meeting is being recorded.
-              <button
-                onClick={() => setRecordingBanner(false)}
-                aria-label="Dismiss recording notice"
-                className="ml-1 flex-none text-white/80 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-        </div>
-
-        {panel && (
-          <aside className="flex w-[320px] flex-none flex-col border-l border-surface-border bg-surface-raised">
-            <div className="flex gap-1 border-b border-surface-border px-3 pt-3">
-              {PANEL_TABS.map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setPanel(tab.key)}
-                  className={`border-b-2 px-1 pb-2.5 text-[13px] font-medium transition ${
-                    panel === tab.key
-                      ? "border-brand-500 text-white"
-                      : "border-transparent text-ink-muted hover:text-ink-2"
-                  }`}
-                >
-                  {tab.label === "Participants" ? `Participants (${participants.length})` : tab.label}
-                </button>
-              ))}
-              <button
-                onClick={() => setPanel(null)}
-                aria-label="Close panel"
-                className="ml-auto mb-2.5 self-start text-ink-muted hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {panel === "info" && (
-                <MeetingInfoPanel meetingCode={meetingCode} isRecording={isRecording} />
-              )}
-              {panel === "participants" && (
-                <ParticipantsPanel
-                  participants={participants}
-                  isModerator={isModerator}
-                  currentParticipantId={participantId}
-                  onMute={(id) => moderate("mute", id)}
-                  onDisableCamera={(id) => moderate("disable-camera", id)}
-                  onRemove={(id) => moderate("remove", id)}
-                  onBlock={(id) => moderate("block", id)}
-                  onPromote={(id) => moderate("promote-co-host", id)}
-                  onLowerHand={(targetUserId) => lowerHandFor(targetUserId)}
-                  onReport={(p) => setReportingParticipant(p)}
-                />
-              )}
-              {panel === "chat" && (
-                <ChatPanel
-                  meetingId={meetingId}
-                  messages={messages}
-                  participants={participants}
-                  socket={socket}
-                  onSend={sendMessage}
-                  onToggleReaction={toggleChatReaction}
-                  onDeleteMessage={deleteChatMessage}
-                  onEditMessage={editChatMessage}
-                  currentUserId={userId}
-                  isModerator={isModerator}
-                />
-              )}
-              {panel === "tools" && (
-                <ClassroomPanel
-                  meetingId={meetingId}
-                  socket={socket}
-                  isModerator={isModerator}
-                  onJoinBreakoutRoom={joinBreakoutRoom}
-                  onReturnToMain={returnToMain}
-                  inBreakoutRoom={Boolean(conn.label)}
-                  featureFlags={featureFlags}
-                />
-              )}
-              {panel === "recordings" && (
-                <RecordingsPanel meetingId={meetingId} socket={socket} isModerator={isModerator} />
-              )}
-            </div>
-          </aside>
+        {isModerator && !conn.label && (
+          <WaitingRoomPanel meetingId={meetingId} refreshSignal={waitingRoomCount} />
         )}
-      </div>
 
-      <MeetingToolbar
-        activePanel={panel}
-        onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
-        onLeave={onLeave}
-        canEndMeeting={canEndMeeting}
-        onEndMeeting={endMeeting}
-        canManageCaptions={canManageCaptions}
-        captionsActive={captionsActive}
-        captionsPending={captionsPending}
-        captionsHidden={captionsHidden}
-        onToggleCaptions={canManageCaptions ? toggleCaptions : () => setCaptionsHidden((v) => !v)}
-        isRecording={isRecording}
-        canShareScreen={true}
-        participantCount={participants.length}
-        unreadChatCount={unreadChatCount}
-        handRaised={myHandRaised}
-        onToggleHand={toggleHand}
-        onReact={sendReaction}
-      />
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div data-video-grid-root className="relative min-h-0 min-w-0 flex-1 p-3">
+            <VideoGrid />
+            <ReactionsOverlay reactions={reactions} onDismiss={dismissReaction} />
+            {captionsActive && !captionsHidden && (
+              <CaptionBar onHide={() => setCaptionsHidden(true)} />
+            )}
+            {recordingBanner && (
+              <div
+                role="alert"
+                className="absolute left-1/2 top-4 z-10 flex -translate-x-1/2 items-center gap-2.5 rounded-lg bg-danger-strong px-4 py-2.5 text-xs font-medium text-white shadow-lg"
+              >
+                <span className="h-2 w-2 flex-none rounded-full bg-white" />
+                This meeting is being recorded.
+                <button
+                  onClick={() => setRecordingBanner(false)}
+                  aria-label="Dismiss recording notice"
+                  className="ml-1 flex-none text-white/80 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+          </div>
 
-      {reportingParticipant && (
-        <ReportParticipantModal
-          meetingId={meetingId}
-          participant={reportingParticipant}
-          onClose={() => setReportingParticipant(null)}
-          onSubmitted={() => {
-            setReportingParticipant(null);
-            setReportSent(true);
-            setTimeout(() => setReportSent(false), 4000);
-          }}
-        />
-      )}
-      {reportSent && (
-        <div className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-surface-raised px-4 py-2.5 text-sm text-white shadow-xl">
-          Report submitted — an admin will review it.
+          {panel && (
+            <aside className="flex w-[320px] flex-none flex-col border-l border-surface-border bg-surface-raised">
+              <div className="flex gap-1 border-b border-surface-border px-3 pt-3">
+                {PANEL_TABS.map((tab) => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setPanel(tab.key)}
+                    className={`border-b-2 px-1 pb-2.5 text-[13px] font-medium transition ${
+                      panel === tab.key
+                        ? "border-brand-500 text-white"
+                        : "border-transparent text-ink-muted hover:text-ink-2"
+                    }`}
+                  >
+                    {tab.label === "Participants"
+                      ? `Participants (${participants.length})`
+                      : tab.label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setPanel(null)}
+                  aria-label="Close panel"
+                  className="ml-auto mb-2.5 self-start text-ink-muted hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {panel === "info" && (
+                  <MeetingInfoPanel meetingCode={meetingCode} isRecording={isRecording} />
+                )}
+                {panel === "participants" && (
+                  <ParticipantsPanel
+                    participants={participants}
+                    isModerator={isModerator}
+                    currentParticipantId={participantId}
+                    onMute={(id) => moderate("mute", id)}
+                    onDisableCamera={(id) => moderate("disable-camera", id)}
+                    onRemove={(id) => moderate("remove", id)}
+                    onBlock={(id) => moderate("block", id)}
+                    onPromote={(id) => moderate("promote-co-host", id)}
+                    onLowerHand={(targetUserId) => lowerHandFor(targetUserId)}
+                    onReport={(p) => setReportingParticipant(p)}
+                  />
+                )}
+                {panel === "chat" && (
+                  <ChatPanel
+                    meetingId={meetingId}
+                    messages={messages}
+                    participants={participants}
+                    socket={socket}
+                    onSend={sendMessage}
+                    onToggleReaction={toggleChatReaction}
+                    onDeleteMessage={deleteChatMessage}
+                    onEditMessage={editChatMessage}
+                    currentUserId={userId}
+                    isModerator={isModerator}
+                  />
+                )}
+                {panel === "tools" && (
+                  <ClassroomPanel
+                    meetingId={meetingId}
+                    socket={socket}
+                    isModerator={isModerator}
+                    onJoinBreakoutRoom={joinBreakoutRoom}
+                    onReturnToMain={returnToMain}
+                    inBreakoutRoom={Boolean(conn.label)}
+                    featureFlags={featureFlags}
+                  />
+                )}
+                {panel === "recordings" && (
+                  <RecordingsPanel
+                    meetingId={meetingId}
+                    socket={socket}
+                    isModerator={isModerator}
+                  />
+                )}
+              </div>
+            </aside>
+          )}
         </div>
-      )}
+
+        <MeetingToolbar
+          activePanel={panel}
+          onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
+          onLeave={onLeave}
+          canEndMeeting={canEndMeeting}
+          onEndMeeting={endMeeting}
+          canManageCaptions={canManageCaptions}
+          captionsActive={captionsActive}
+          captionsPending={captionsPending}
+          captionsHidden={captionsHidden}
+          onToggleCaptions={canManageCaptions ? toggleCaptions : () => setCaptionsHidden((v) => !v)}
+          isRecording={isRecording}
+          canShareScreen={true}
+          participantCount={participants.length}
+          unreadChatCount={unreadChatCount}
+          handRaised={myHandRaised}
+          onToggleHand={toggleHand}
+          onReact={sendReaction}
+        />
+
+        {reportingParticipant && (
+          <ReportParticipantModal
+            meetingId={meetingId}
+            participant={reportingParticipant}
+            onClose={() => setReportingParticipant(null)}
+            onSubmitted={() => {
+              setReportingParticipant(null);
+              setReportSent(true);
+              setTimeout(() => setReportSent(false), 4000);
+            }}
+          />
+        )}
+        {reportSent && (
+          <div className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-surface-raised px-4 py-2.5 text-sm text-white shadow-xl">
+            Report submitted — an admin will review it.
+          </div>
+        )}
+      </LocalRecordingProvider>
     </LiveKitRoom>
   );
 }
@@ -448,7 +479,10 @@ function EndedScreen({ onLeave }: { onLeave: () => void }) {
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-4 text-white">
       <p className="text-lg">This meeting has ended.</p>
-      <button onClick={onLeave} className="rounded-lg bg-brand-500 px-4 py-2 text-sm hover:bg-brand-600">
+      <button
+        onClick={onLeave}
+        className="rounded-lg bg-brand-500 px-4 py-2 text-sm hover:bg-brand-600"
+      >
         Back to dashboard
       </button>
     </div>
@@ -459,7 +493,10 @@ function RemovedScreen({ onLeave }: { onLeave: () => void }) {
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-4 text-white">
       <p className="text-lg">The host removed you from this meeting.</p>
-      <button onClick={onLeave} className="rounded-lg bg-brand-500 px-4 py-2 text-sm hover:bg-brand-600">
+      <button
+        onClick={onLeave}
+        className="rounded-lg bg-brand-500 px-4 py-2 text-sm hover:bg-brand-600"
+      >
         Back to dashboard
       </button>
     </div>

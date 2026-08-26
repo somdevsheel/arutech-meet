@@ -1,27 +1,32 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocalParticipant } from "@livekit/components-react";
 import { Track } from "livekit-client";
 
 type State = "idle" | "recording" | "unsupported";
 
-/** A genuinely separate code path from the server-side LiveKit Egress
- * recording above — this runs entirely in the browser and never touches the
- * API. It captures exactly what this participant currently sees: every
- * `<video>` element inside the meeting's video grid, redrawn onto a canvas
- * every frame (`data-video-grid-root` in `meeting-room.tsx`), mixed with
- * every remote participant's audio (LiveKit's `RoomAudioRenderer` renders
- * those as hidden `<audio>` elements in the same subtree) plus this
- * participant's own microphone — reusing the already-published local mic
- * track's `MediaStreamTrack` rather than opening the device a second time.
- * The result downloads directly as a `.webm` file the moment recording
- * stops; nothing is ever uploaded anywhere. Useful as a fallback when
- * server-side recording isn't desired or available (no host/Egress
- * dependency — any participant can use it), at the cost of only capturing
- * this one participant's local view/mix rather than a clean per-participant
- * composite. */
-export function LocalRecordingControl() {
+interface LocalRecordingValue {
+  state: State;
+  elapsed: number;
+  start: () => void;
+  stop: () => void;
+}
+
+const LocalRecordingContext = createContext<LocalRecordingValue | null>(null);
+
+/** Owns the actual `MediaRecorder`/`AudioContext`/capture-loop lifecycle for
+ * local (device-only) recording — see the longer explanation on
+ * `LocalRecordingControl` below for what this captures and why. Deliberately
+ * mounted once, directly inside `<LiveKitRoom>` in `meeting-room.tsx`,
+ * *outside* the right-side panel's `{panel === "..." && ...}` conditional
+ * rendering: that panel (and `LocalRecordingControl`, which used to own this
+ * same state directly) unmounts every time the user switches tabs — Chat,
+ * Participants, etc. — or closes the panel entirely. This provider survives
+ * all of that, so switching away from the Record tab mid-recording no longer
+ * silently stops it; only an explicit "Stop" click or leaving the meeting
+ * (this component unmounting along with the rest of `<LiveKitRoom>`) does. */
+export function LocalRecordingProvider({ children }: { children: ReactNode }) {
   const { localParticipant } = useLocalParticipant();
   const [state, setState] = useState<State>("idle");
   const [elapsed, setElapsed] = useState(0);
@@ -40,7 +45,11 @@ export function LocalRecordingControl() {
   const elapsedTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (typeof HTMLCanvasElement === "undefined" || !HTMLCanvasElement.prototype.captureStream || typeof MediaRecorder === "undefined") {
+    if (
+      typeof HTMLCanvasElement === "undefined" ||
+      !HTMLCanvasElement.prototype.captureStream ||
+      typeof MediaRecorder === "undefined"
+    ) {
       setState("unsupported");
     }
     return () => {
@@ -127,7 +136,8 @@ export function LocalRecordingControl() {
     // catch newly-joined participants' audio without requiring a restart.
     audioRescanTimerRef.current = setInterval(() => connectAudioElements(audioCtx, dest), 3000);
 
-    const micTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
+    const micTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.track
+      ?.mediaStreamTrack;
     if (micTrack) {
       const micStream = new MediaStream([micTrack]);
       // Own mic connects only to `dest` (the recording), never to
@@ -138,11 +148,16 @@ export function LocalRecordingControl() {
 
     drawFrame();
     const canvasStream = canvas.captureStream(30);
-    const mixedStream = new MediaStream([...canvasStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    const mixedStream = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...dest.stream.getAudioTracks(),
+    ]);
 
-    const mimeType = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"].find((t) =>
-      MediaRecorder.isTypeSupported(t),
-    );
+    const mimeType = [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+    ].find((t) => MediaRecorder.isTypeSupported(t));
     const recorder = new MediaRecorder(mixedStream, mimeType ? { mimeType } : undefined);
     chunksRef.current = [];
     recorder.ondataavailable = (e) => {
@@ -189,12 +204,47 @@ export function LocalRecordingControl() {
     setState("idle");
   }
 
+  return (
+    <LocalRecordingContext.Provider value={{ state, elapsed, start, stop }}>
+      {children}
+    </LocalRecordingContext.Provider>
+  );
+}
+
+/** A genuinely separate code path from the server-side LiveKit Egress
+ * recording above — this runs entirely in the browser and never touches the
+ * API. It captures exactly what this participant currently sees: every
+ * `<video>` element inside the meeting's video grid, redrawn onto a canvas
+ * every frame (`data-video-grid-root` in `meeting-room.tsx`), mixed with
+ * every remote participant's audio (LiveKit's `RoomAudioRenderer` renders
+ * those as hidden `<audio>` elements in the same subtree) plus this
+ * participant's own microphone — reusing the already-published local mic
+ * track's `MediaStreamTrack` rather than opening the device a second time.
+ * The result downloads directly as a `.webm` file the moment recording
+ * stops; nothing is ever uploaded anywhere. Useful as a fallback when
+ * server-side recording isn't desired or available (no host/Egress
+ * dependency — any participant can use it), at the cost of only capturing
+ * this one participant's local view/mix rather than a clean per-participant
+ * composite.
+ *
+ * Purely presentational — the actual recorder lives in `LocalRecordingProvider`
+ * above, which stays mounted for the whole meeting regardless of which panel
+ * tab is open. This component only renders while the Record tab itself is
+ * open, so it must never own any recording state directly. */
+export function LocalRecordingControl() {
+  const ctx = useContext(LocalRecordingContext);
+  if (!ctx) {
+    throw new Error("LocalRecordingControl must be rendered inside a LocalRecordingProvider");
+  }
+  const { state, elapsed, start, stop } = ctx;
+
   const timeLabel = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
 
   if (state === "unsupported") {
     return (
       <p className="text-[11px] text-ink-muted">
-        Local recording isn&apos;t supported in this browser (needs Canvas.captureStream and MediaRecorder).
+        Local recording isn&apos;t supported in this browser (needs Canvas.captureStream and
+        MediaRecorder).
       </p>
     );
   }
@@ -202,8 +252,8 @@ export function LocalRecordingControl() {
   return (
     <div className="rounded-lg border border-surface-border bg-surface-raised p-3">
       <p className="mb-2 text-[11px] text-ink-muted">
-        Records this device&apos;s own view (everyone visible + all audio) straight to a file on your computer.
-        Nothing is uploaded — no host needed.
+        Records this device&apos;s own view (everyone visible + all audio) straight to a file on
+        your computer. Nothing is uploaded — no host needed.
       </p>
       {state === "recording" ? (
         <button

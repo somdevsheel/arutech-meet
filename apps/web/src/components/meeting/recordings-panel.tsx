@@ -126,7 +126,9 @@ export function RecordingsPanel({
   }
 
   async function play(recordingId: string) {
-    const { url } = await apiFetch<{ url: string }>(`/meetings/${meetingId}/recordings/${recordingId}/download`);
+    const { url } = await apiFetch<{ url: string }>(
+      `/meetings/${meetingId}/recordings/${recordingId}/download`,
+    );
     setPlaybackUrl(url);
   }
 
@@ -186,7 +188,9 @@ export function RecordingsPanel({
       </div>
 
       <div className="space-y-2">
-        {recordings.length === 0 && <p className="text-xs text-ink-muted">No recordings for this meeting yet.</p>}
+        {recordings.length === 0 && (
+          <p className="text-xs text-ink-muted">No recordings for this meeting yet.</p>
+        )}
         {recordings.map((r) => {
           const transcript = transcripts.find((t) => t.recordingId === r.id);
           const expanded = expandedRecordingId === r.id;
@@ -198,10 +202,14 @@ export function RecordingsPanel({
                 >
                   {STATUS_LABEL[r.status]}
                 </span>
-                <span className="text-[11px] text-ink-muted">{new Date(r.startedAt).toLocaleString()}</span>
+                <span className="text-[11px] text-ink-muted">
+                  {new Date(r.startedAt).toLocaleString()}
+                </span>
               </div>
               {r.durationSeconds !== null && (
-                <p className="mt-1 text-[11px] text-ink-muted">{Math.round(r.durationSeconds / 60)} min</p>
+                <p className="mt-1 text-[11px] text-ink-muted">
+                  {Math.round(r.durationSeconds / 60)} min
+                </p>
               )}
               {r.status === "READY" && (
                 <div className="mt-2 flex flex-wrap gap-3 text-xs">
@@ -219,7 +227,10 @@ export function RecordingsPanel({
                     </button>
                   )}
                   {transcript && (
-                    <button onClick={() => setExpandedRecordingId(expanded ? null : r.id)} className="text-brand-300">
+                    <button
+                      onClick={() => setExpandedRecordingId(expanded ? null : r.id)}
+                      className="text-brand-300"
+                    >
                       {transcript.status === "READY"
                         ? expanded
                           ? "Hide transcript"
@@ -251,7 +262,9 @@ export function RecordingsPanel({
                         {transcript.summary.actionItems.map((item, i) => (
                           <li key={i}>
                             {item.text}
-                            {item.owner ? <span className="text-ink-muted"> — {item.owner}</span> : null}
+                            {item.owner ? (
+                              <span className="text-ink-muted"> — {item.owner}</span>
+                            ) : null}
                           </li>
                         ))}
                       </ul>
@@ -268,7 +281,10 @@ export function RecordingsPanel({
       </div>
 
       {playbackUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6" onClick={() => setPlaybackUrl(null)}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+          onClick={() => setPlaybackUrl(null)}
+        >
           <video
             src={playbackUrl}
             controls
