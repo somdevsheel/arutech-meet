@@ -154,6 +154,12 @@ enum ChatRoomType {
   CLASS
   DIRECT
   GROUP
+  TEAM
+}
+
+enum TeamRole {
+  LEAD
+  MEMBER
 }
 
 enum CallType {
@@ -226,6 +232,7 @@ enum NotificationType {
   WAITING_ROOM
   ASSIGNMENT
   STUDY_MATERIAL
+  ORG_INVITE
   SYSTEM
 }
 
@@ -285,6 +292,9 @@ model User {
   ownedMeetings        Meeting[]                @relation("MeetingOwner")
   meetingParticipants  MeetingParticipant[]
   sentInvites          MeetingInvite[]          @relation("InviteSender")
+  sentOrgInvites       OrganizationInvite[]     @relation("OrgInviteSender")
+  createdTeams         Team[]                   @relation("TeamCreator")
+  teamMemberships      TeamMember[]
   meetingEvents        MeetingEvent[]
   startedRecordings    MeetingRecording[]
   chatMemberships      ChatMember[]
@@ -315,6 +325,9 @@ model User {
   favoritedByUsers      ContactFavorite[]        @relation("FavoritedContact")
   contactGroups         ContactGroup[]
   contactGroupMemberships ContactGroupMember[]
+  reportsFiled          Report[]                 @relation("ReportsFiled")
+  reportsAgainst        Report[]                 @relation("ReportsAgainst")
+  reportsResolved       Report[]                 @relation("ReportsResolved")
   personalSubscription Subscription?            @relation("PersonalSubscription")
   auditLogs            AuditLog[]
 
@@ -383,6 +396,7 @@ model Organization {
   slug                    String           @unique
   logoUrl                 String?          @map("logo_url")
   brandColor              String?          @map("brand_color")
+  joinPageMessage         String?          @map("join_page_message")
   ownerUserId             String           @map("owner_user_id")
   plan                    SubscriptionPlan @default(FREE)
   storageLimitBytes       BigInt           @default(10737418240) @map("storage_limit_bytes") // 10 GiB default
@@ -399,6 +413,9 @@ model Organization {
   files        FileAsset[]
   subscription Subscription? @relation("OrgSubscription")
   auditLogs    AuditLog[]
+  featureFlags FeatureFlag[]
+  invites      OrganizationInvite[]
+  teams        Team[]
 
   @@index([ownerUserId])
   @@map("organizations")
@@ -420,6 +437,87 @@ model Membership {
   @@unique([orgId, userId])
   @@index([userId])
   @@map("memberships")
+}
+
+/// A real invite-by-email flow, distinct from `addMember` (which requires
+/// already knowing the target's account id and adds them immediately, no
+/// acceptance step). Works whether or not the invited email has an account
+/// yet: `MailService` sends a real email either way, with a link carrying
+/// this row's `token`. The same link works for both cases — the web
+/// accept-invite page sends an unauthenticated visitor through
+/// register/login first (pre-filling the invited email), then calls
+/// `OrganizationsService.acceptInvite(token, userId)`, which only succeeds
+/// if the now-authenticated account's email matches this row's `email`
+/// exactly — not a separate registration-time redemption path. A `PENDING`
+/// invite re-invited before it expires refreshes in place (new token,
+/// resent email) rather than erroring, matching how most real products
+/// treat "invite someone already invited."
+model OrganizationInvite {
+  id              String       @id @default(uuid())
+  orgId           String       @map("org_id")
+  email           String
+  role            OrgRole      @default(MEMBER)
+  token           String       @unique
+  status          InviteStatus @default(PENDING)
+  invitedByUserId String       @map("invited_by_user_id")
+  expiresAt       DateTime     @map("expires_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("OrgInviteSender", fields: [invitedByUserId], references: [id])
+
+  @@index([orgId])
+  @@index([email])
+  @@map("organization_invites")
+}
+
+/// A sub-group within an Organization — the same relationship shape
+/// `ChatRoom`/`Meeting` already have to a `Class` (Stage 6), extended here.
+/// Distinct from Team *Chat* (`ChatRoom.type: GROUP`, Stage 23), which is a
+/// personal, informal chat group not tied to any organization — same naming
+/// collision this codebase already called out once for `ContactGroup` vs.
+/// Team Chat `GROUP`, and resolved the same way: kept as two unrelated
+/// models on purpose rather than conflated because they share a word.
+/// A Team's chat room is a real `ChatRoom` (type `TEAM`) — messages, edit,
+/// delete, forward, voice messages, typing, and file attachments all work
+/// on it for free through the exact same `ChatService`/`ChatMember`
+/// infrastructure every other room type already uses (`requireMember` only
+/// ever checks `ChatMember` existence, never `room.type`); "Start a
+/// meeting" reuses the identical client-side pattern Stage 23 already
+/// shipped for Team Chat groups (create a real `Meeting`, post the join
+/// link as a chat message) rather than new backend surface.
+model Team {
+  id              String    @id @default(uuid())
+  orgId           String    @map("org_id")
+  name            String
+  description     String?
+  createdByUserId String    @map("created_by_user_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("TeamCreator", fields: [createdByUserId], references: [id])
+  members      TeamMember[]
+  chatRoom     ChatRoom?
+
+  @@index([orgId])
+  @@map("teams")
+}
+
+model TeamMember {
+  id       String   @id @default(uuid())
+  teamId   String   @map("team_id")
+  userId   String   @map("user_id")
+  role     TeamRole @default(MEMBER)
+  joinedAt DateTime @default(now()) @map("joined_at")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@map("team_members")
 }
 
 model Subscription {
@@ -494,6 +592,7 @@ model Meeting {
   breakoutRooms BreakoutRoom[]
   files         FileAsset[]
   notes         Note[]
+  reports       Report[]
 
   @@index([ownerId, isPersonalRoom])
   @@index([ownerId])
@@ -514,6 +613,12 @@ model MeetingSettings {
   allowParticipantsUnmuteSelf Boolean          @default(true) @map("allow_participants_unmute_self")
   lockAfterStart              Boolean          @default(false) @map("lock_after_start")
   maxParticipants             Int              @default(100) @map("max_participants")
+  // Empty = no restriction. Lowercase bare domains ("acme.com", no "@"),
+  // checked against the joiner's own account email at join time — see
+  // MeetingsService.join. The meeting owner is always exempt (it's their
+  // own meeting); a guest (no account email at all) is always refused once
+  // this is non-empty, since there's nothing to check against.
+  allowedEmailDomains          String[]         @default([]) @map("allowed_email_domains")
 
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
@@ -577,6 +682,53 @@ model MeetingEvent {
   @@index([meetingId, type])
   @@index([meetingId, createdAt])
   @@map("meeting_events")
+}
+
+enum ReportReason {
+  HARASSMENT
+  SPAM
+  INAPPROPRIATE_CONTENT
+  IMPERSONATION
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+/// A complaint a participant raises about someone else's behavior — distinct
+/// from AuditLog, which records actions actually TAKEN (by a moderator/admin),
+/// never complaints raised. Reachable from any live meeting a real
+/// participant (reporter) was actually in; reviewed from a real admin queue
+/// (`/admin/reports`), not silently dropped. `reportedUserId` is null for a
+/// reported guest (no account to reference) — `reportedGuestName` carries
+/// their display name instead, a denormalized snapshot for the same reason
+/// ChatMessage.forwardedFromSenderName is one (nothing to look up once the
+/// meeting ends).
+model Report {
+  id                String       @id @default(uuid())
+  meetingId         String?      @map("meeting_id")
+  reporterUserId    String       @map("reporter_user_id")
+  reportedUserId    String?      @map("reported_user_id")
+  reportedGuestName String?      @map("reported_guest_name")
+  reason            ReportReason
+  details           String?
+  status            ReportStatus @default(OPEN)
+  resolvedByUserId  String?      @map("resolved_by_user_id")
+  resolvedAt        DateTime?    @map("resolved_at")
+  resolutionNote    String?      @map("resolution_note")
+  createdAt         DateTime     @default(now()) @map("created_at")
+
+  meeting      Meeting? @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+  reporter     User     @relation("ReportsFiled", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  reportedUser User?    @relation("ReportsAgainst", fields: [reportedUserId], references: [id], onDelete: SetNull)
+  resolvedBy   User?    @relation("ReportsResolved", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([meetingId])
+  @@map("reports")
 }
 
 model MeetingRecording {
@@ -669,9 +821,10 @@ model ChatRoom {
   type        ChatRoomType
   meetingId   String?      @unique @map("meeting_id")
   classId     String?      @unique @map("class_id")
-  // Only meaningful for GROUP rooms ("Team Chat") — MEETING/CLASS rooms are
-  // named from their Meeting/Class, DIRECT rooms are named client-side from
-  // the other member(s).
+  teamId      String?      @unique @map("team_id")
+  // Only meaningful for GROUP rooms ("Team Chat") — MEETING/CLASS/TEAM rooms
+  // are named from their Meeting/Class/Team, DIRECT rooms are named
+  // client-side from the other member(s).
   name        String?
   // GROUP rooms only, same convention as User.avatarUrl/Organization.logoUrl
   // (a plain URL, no presigned-upload pipeline of its own — none of those
@@ -683,6 +836,7 @@ model ChatRoom {
 
   meeting   Meeting?      @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   class     Class?        @relation(fields: [classId], references: [id], onDelete: Cascade)
+  team      Team?         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   createdBy User?         @relation("ChatRoomCreator", fields: [createdById], references: [id], onDelete: SetNull)
   members   ChatMember[]
   messages  ChatMessage[]
@@ -1369,4 +1523,39 @@ model Note {
 
   @@index([userId, updatedAt])
   @@map("notes")
+}
+
+// ------------------------------------------------------------------------------
+// Feature flags
+// ------------------------------------------------------------------------------
+
+/// A `key` (e.g. "WHITEBOARD") can have at most one GLOBAL row (organizationId
+/// null — the default for everyone) and at most one row per organization (an
+/// override). Postgres's own unique-constraint semantics treat NULL as
+/// distinct from every other NULL, so `@@unique([key, organizationId])` alone
+/// would NOT stop two global rows for the same key from ever existing — the
+/// real constraint enforcing "at most one global row per key" is a partial
+/// unique index added by hand in this model's migration (see that
+/// migration's .sql — Prisma's schema DSL can't express a partial index).
+/// See FeatureFlagService.isEnabled for the precedence (org override, if any,
+/// else the global row, else default-enabled for a key that was never
+/// explicitly configured — this system must never silently turn off a
+/// feature nobody has touched).
+model FeatureFlag {
+  id             String   @id @default(uuid())
+  key            String
+  enabled        Boolean  @default(true)
+  organizationId String?  @map("organization_id")
+  description    String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Real uniqueness is enforced by two partial unique indexes added by hand
+  // in this model's own migration.sql (Prisma's schema DSL can't express a
+  // partial index) — see this model's doc comment. This plain @@index is for
+  // query speed only, not uniqueness.
+  @@index([key])
+  @@map("feature_flags")
 }

@@ -1,4 +1,4 @@
-import { Inject, Logger, UseFilters } from "@nestjs/common";
+import { ForbiddenException, Inject, Logger, UseFilters } from "@nestjs/common";
 import {
   ConnectedSocket,
   MessageBody,
@@ -16,10 +16,13 @@ import {
   WS_EVENTS,
   REACTION_EMOJIS,
   CHAT_REACTION_EMOJIS,
+  SETTABLE_PRESENCE_STATUSES,
   type ParticipantPresencePayload,
   type ReactionEmoji,
   type ReactionPayload,
   type ChatReactionEmoji,
+  type SettablePresenceStatus,
+  type UserPresenceStatus,
 } from "@arutech/types";
 import { sendChatMessageSchema, sendRoomChatMessageSchema, whiteboardOpSchema } from "@arutech/validation";
 import type { Env } from "@arutech/config";
@@ -31,6 +34,8 @@ import { MetricsService } from "../observability/metrics.service";
 import { roomBroadcastChannel } from "./realtime-broadcast.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { FeatureFlagsService } from "../feature-flags/feature-flags.service";
+import { PresenceService } from "../presence/presence.service";
 
 interface SocketData {
   userId: string;
@@ -80,6 +85,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly metrics: MetricsService,
     private readonly notifications: NotificationsService,
     private readonly prisma: PrismaService,
+    private readonly featureFlags: FeatureFlagsService,
+    private readonly presence: PresenceService,
     @Inject("REDIS") private readonly redis: Redis,
     @Inject("ENV") private readonly env: Env,
   ) {}
@@ -145,29 +152,44 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       // join step, the same way `meeting:{id}` rooms work for meeting events.
       await client.join(userRoom(payload.sub));
       this.metrics.websocketConnections.inc();
-      // "Online status" v1 (docs/roadmap.md) — a real timestamp, not live
-      // presence: bumped on connect, read back as "last seen X ago"/"online"
-      // (within a short window) wherever a contact/chat member is shown.
-      // Doesn't track ongoing activity within one long-lived connection, only
-      // the moment of connecting — a real, honest limitation of this simpler
-      // v1 versus a full presence system (Priority 5's own separate item).
+      // `User.lastSeenAt` — kept as the fallback "last seen X ago" shown once
+      // a user is genuinely OFFLINE (see PresenceService). Bumped again in
+      // handleDisconnect below so it reflects when they actually left, not
+      // just when they last connected.
       void this.prisma.client.user
         .update({ where: { id: payload.sub }, data: { lastSeenAt: new Date() } })
         .catch((err) => this.logger.warn(`Failed to bump lastSeenAt for ${payload.sub}: ${String(err)}`));
+
+      // Real presence (docs/roadmap.md's Presence stage) — a Redis-backed
+      // online/away/busy/DND status derived from actually-open sockets, not
+      // a recency timestamp. Only broadcast the ONLINE transition when this
+      // is genuinely this user's first connected socket (a second tab
+      // opening while already online is a no-op, not a fresh "just came
+      // online" event).
+      const cameOnline = await this.presence.connect(payload.sub, client.id);
+      if (cameOnline) await this.broadcastPresence(payload.sub, "ONLINE");
     } catch {
       client.emit(WS_EVENTS.ERROR, { message: "Invalid or expired token" });
       client.disconnect(true);
     }
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
+    const userId = (client.data as SocketData | undefined)?.userId;
     // Only decrement if this socket actually made it through auth (client.data
     // is only ever populated on the success path in handleConnection) — a
     // rejected/unauthenticated socket never incremented the gauge, so
     // unconditionally decrementing here would drift it negative over time
     // (e.g. under a stream of failed connection attempts).
-    if ((client.data as SocketData | undefined)?.userId) {
+    if (userId) {
       this.metrics.websocketConnections.dec();
+      const wentOffline = await this.presence.disconnect(userId, client.id);
+      if (wentOffline) {
+        void this.prisma.client.user
+          .update({ where: { id: userId }, data: { lastSeenAt: new Date() } })
+          .catch((err) => this.logger.warn(`Failed to bump lastSeenAt for ${userId}: ${String(err)}`));
+        await this.broadcastPresence(userId, "OFFLINE");
+      }
     }
     const meetingId = [...client.rooms].find((r) => r.startsWith("meeting:"))?.split(":")[1];
     if (meetingId) {
@@ -202,10 +224,20 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
     await client.join(meetingRoom(body.meetingId));
 
+    // A real display name — not the socket's own email, which every other
+    // participant would otherwise see broadcast into their Participants
+    // panel for anyone with a real account. Guests have no User row at all,
+    // so their own chosen name (already captured as `guestName` at join
+    // time) is the only real name available for them.
+    const displayName = participant.userId
+      ? ((await this.prisma.client.user.findUnique({ where: { id: participant.userId }, select: { displayName: true } }))
+          ?.displayName ?? client.data.email)
+      : (participant.guestName ?? "Guest");
+
     const presence: ParticipantPresencePayload = {
       participantId: participant.id,
       userId: participant.userId,
-      displayName: client.data.email,
+      displayName,
       role: participant.role,
       micEnabled: true,
       cameraEnabled: true,
@@ -421,10 +453,57 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     const { userId } = client.data as SocketData;
     const dto = whiteboardOpSchema.parse(body);
     await this.permissions.requireCapability(dto.meetingId, userId, "whiteboard.edit");
+    if (!(await this.featureFlags.isEnabledForMeeting("WHITEBOARD", dto.meetingId))) {
+      throw new ForbiddenException("Whiteboard is disabled for this meeting");
+    }
 
     client.to(meetingRoom(dto.meetingId)).emit(WS_EVENTS.WHITEBOARD_OP, {
       ...dto,
       fromUserId: userId,
     });
+  }
+
+  // ── Presence (online/away/busy/DND) ─────────────────────────────────────
+
+  /** Explicit status change — the only client-initiated presence event; ONLINE
+   * transitions/OFFLINE are always server-derived from connect/disconnect
+   * above, never something a client claims directly. No-ops (silently) if the
+   * caller has no connected socket recorded, which shouldn't be reachable
+   * from an authenticated socket that's sending this at all, but matches
+   * PresenceService.setStatus's own defensive check rather than trusting the
+   * gateway's view of "connected" is always in sync with Redis's. */
+  @SubscribeMessage(WS_EVENTS.PRESENCE_SET_STATUS)
+  async onPresenceSetStatus(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { status: SettablePresenceStatus },
+  ) {
+    if (!SETTABLE_PRESENCE_STATUSES.includes(body.status)) return;
+    const { userId } = client.data as SocketData;
+    const applied = await this.presence.setStatus(userId, body.status);
+    if (applied) await this.broadcastPresence(userId, body.status);
+  }
+
+  /** Keeps this user's presence TTL alive during a long-lived connection with
+   * otherwise no other socket traffic — see PresenceService's class doc
+   * comment for why a TTL exists here at all (a crashed gateway process, not
+   * just a crashed tab). The client emits this on a fixed interval; no reply,
+   * no broadcast (status hasn't changed). */
+  @SubscribeMessage(WS_EVENTS.PRESENCE_HEARTBEAT)
+  async onPresenceHeartbeat(@ConnectedSocket() client: Socket) {
+    const { userId } = client.data as SocketData;
+    await this.presence.heartbeat(userId);
+  }
+
+  /** Fans a presence change out to every chat room this user belongs to
+   * (any type — MEETING/CLASS/TEAM/GROUP/DIRECT), the same reach limitation
+   * `ROOM_UPDATED` already has: only reaches clients that currently have that
+   * room open (joined its `chatroom:{id}` channel via ROOM_JOIN). Contacts
+   * page presence is read via polling `GET /presence` instead — see
+   * docs/roadmap.md for why that's a deliberate v1 split, not an oversight. */
+  private async broadcastPresence(userId: string, status: UserPresenceStatus) {
+    const roomIds = await this.chat.getRoomIdsForUser(userId);
+    for (const roomId of roomIds) {
+      this.server.to(chatRoomChannel(roomId)).emit(WS_EVENTS.PRESENCE_UPDATED, { userId, status });
+    }
   }
 }

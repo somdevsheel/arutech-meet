@@ -5,6 +5,7 @@ import { LiveKitService } from "../livekit/livekit.service";
 import { PermissionService } from "./permission.service";
 import { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service";
 import { AuditLogService } from "../audit/audit-log.service";
+import { ContactsService } from "../contacts/contacts.service";
 
 @Injectable()
 export class ParticipantsService {
@@ -14,6 +15,7 @@ export class ParticipantsService {
     private readonly permissions: PermissionService,
     private readonly broadcast: RealtimeBroadcastService,
     private readonly auditLog: AuditLogService,
+    private readonly contacts: ContactsService,
   ) {}
 
   async listWaitingRoom(meetingId: string, callerUserId: string) {
@@ -111,6 +113,38 @@ export class ParticipantsService {
       targetType: "meeting_participant",
       targetId: participantId,
       metadata: { meetingId, removedUserId: participant.userId },
+    });
+    await this.broadcast.publish(meetingId, WS_EVENTS.MODERATION_REMOVE, { participantId });
+  }
+
+  /** Remove, plus a real BlockedUser row — reusing the exact same table/
+   * semantics Priority 3's Contacts block already has (see ContactsService),
+   * not a separate "meeting ban" concept. That means blocking here also
+   * blocks the target's DMs/calls with the caller from this point on, a
+   * real and intentional side effect: "I never want to hear from this
+   * person again", the same way blocking from Contacts already works. A
+   * guest (no `participant.userId`) can be removed the normal way but not
+   * "blocked" — BlockedUser needs two real accounts, and there's no
+   * account to attach the block to once the meeting ends. */
+  async block(meetingId: string, callerUserId: string, participantId: string) {
+    await this.permissions.requireOwnerOrCapability(meetingId, callerUserId, "participant.remove");
+    const { meeting, participant } = await this.getWithMeeting(meetingId, participantId);
+    if (!participant.userId) {
+      throw new BadRequestException("Guests can't be blocked — remove them instead");
+    }
+    await this.liveKit.removeParticipant(meeting.livekitRoomName, participant.livekitIdentity);
+    await this.prisma.client.meetingParticipant.update({
+      where: { id: participantId },
+      data: { status: "REMOVED", leftAt: new Date() },
+    });
+    await this.contacts.block(callerUserId, participant.userId);
+    await this.logEvent(meetingId, participantId, "MODERATION_BLOCK");
+    await this.auditLog.record({
+      actorUserId: callerUserId,
+      action: "participant.block",
+      targetType: "meeting_participant",
+      targetId: participantId,
+      metadata: { meetingId, blockedUserId: participant.userId },
     });
     await this.broadcast.publish(meetingId, WS_EVENTS.MODERATION_REMOVE, { participantId });
   }

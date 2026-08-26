@@ -85,6 +85,18 @@ export function QuizPanel({
   const [points, setPoints] = useState(1);
   const [creating, setCreating] = useState(false);
 
+  // Catch-up fetch — without this, only whoever already had this tab open
+  // at the exact moment a question was published (or a late joiner) ever
+  // saw it at all, since QUIZ_PUBLISHED is a one-shot broadcast with
+  // nothing to replay it. Found live: PollsPanel already does the
+  // equivalent `GET /polls` fetch on mount, this one just didn't. See
+  // docs/roadmap.md's Advanced analytics stage.
+  useEffect(() => {
+    apiFetch<Quiz | null>(`/meetings/${meetingId}/quizzes/active`).then((quiz) => {
+      if (quiz) setActiveQuiz(quiz);
+    });
+  }, [meetingId]);
+
   useEffect(() => {
     if (!socket) return;
     const onPublished = (quiz: Quiz) => {

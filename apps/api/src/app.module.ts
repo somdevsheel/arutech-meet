@@ -32,6 +32,9 @@ import { NotificationsModule } from "./notifications/notifications.module";
 import { SearchModule } from "./search/search.module";
 import { CalendarModule } from "./calendar/calendar.module";
 import { CaptionsModule } from "./captions/captions.module";
+import { TeamsModule } from "./teams/teams.module";
+import { PresenceModule } from "./presence/presence.module";
+import { ReportsModule } from "./reports/reports.module";
 import { ObservabilityLoggingModule } from "./observability/logging.module";
 import { ObservabilityModule } from "./observability/observability.module";
 
@@ -72,6 +75,9 @@ import { ObservabilityModule } from "./observability/observability.module";
     SearchModule,
     CalendarModule,
     CaptionsModule,
+    TeamsModule,
+    PresenceModule,
+    ReportsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

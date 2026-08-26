@@ -245,37 +245,78 @@ in `docs/api.md`).
 
 ## 31–33. Organizations, teams, custom branding
 
-🔶 `Organization`/`OrganizationMember` schema and role model exist (Stage 2) but there's no
-invite-by-email flow, no admin UI for managing an org's members/roles beyond what the system-admin
-dashboard shows read-only, and no per-org meeting/storage limits enforced. ❌ Teams (sub-groups within an
-org — Engineering/Sales/etc.) — no `Team` model at all. ❌ Custom branding (logo/color/login branding) — no
-`OrganizationBranding` model or theming hook.
+✅ **Organizations built (Stage 28)** — a real, member-facing `/organizations` UI (distinct from the
+system-admin dashboard's read-only view): create an org, a genuine invite-by-email flow (real SMTP send
+via a new `MailService`, verified live via MailHog — not just an endpoint that returns 200), member
+management (role changes, remove, self-service leave, all with sole-owner protection so an org can never
+end up with nobody able to manage it), and per-org meeting-concurrency/storage limits actually enforced
+server-side (not just stored on the `Organization` row — `MeetingsService.create` and
+`FilesService.presignMeetingUpload` both check them for real). See `docs/roadmap.md` Stage 28.
+
+✅ **Teams built (Stage 29)** — real `Team`/`TeamMember` models nested under `Organization` (sub-groups
+within an org — Engineering/Sales/etc. — `LEAD`/`MEMBER` roles, sole-lead protection matching Stage 28's
+sole-owner protection), each with its own real `ChatRoom`. Real-time chat (send/receive/edit/delete/
+attachments), member management, and "Start a meeting" all work with **zero new chat backend** — `Team`
+reuses the exact `ChatService`/`ChatMember` infrastructure Team Chat groups (§23–26) already use, since
+that service only ever checks room membership, never the room's `type`. `/organizations/:id` now lists an
+org's teams with inline create; `/teams/:id` is the team's own page (chat + member sidebar + Start a
+meeting). See `docs/roadmap.md` Stage 29. Not yet built: forwarding/voice-messages/typing-indicator in the
+team chat panel (v1 scope trim, same as Stage 23→24 — server-side already supports all three on this room
+type).
+
+✅ **Custom branding built (Stage 30)** — `Organization.logoUrl`/`brandColor` (existing since Stage 2) plus
+a new `joinPageMessage` field, a real owner/admin settings UI (`/organizations/:id`'s "Branding" section:
+logo URL, color picker + hex input, welcome message, live preview), and a real theming hook: the meeting
+join screen (`/meeting/:code`, guest-reachable) shows the org's logo/message and themes the PreJoin "Join
+meeting" button in the org's actual brand color via a scoped override of the same `--lk-*` custom
+properties `globals.css` already retheme's LiveKit's prefabs with. That verification pass caught a real,
+previously-invisible bug: the app's own LiveKit retheme had been silently losing a CSS specificity tie to
+the library's own default stylesheet since it was written, so the "brand blue" was never actually
+rendering anywhere until this stage's fix. See `docs/roadmap.md` Stage 30. Not yet built: a logo upload
+flow (plain URL only, same as `User.avatarUrl` today); branding applied anywhere beyond the join screen.
 
 ## 34. Global search
 
-🔶 `GET /search` (Stage 11) covers the caller's own meetings/notes/contacts. Not built: classes, chat
-messages, files, recordings, transcripts (Stage 8 added transcript search, but scoped per-meeting via
-`GET /meetings/:id/transcripts/search`, not surfaced in the global search endpoint), courses, assignments.
+✅ **Global search breadth built (Stage 31)** — `GET /search` (Stage 11: meetings/notes/contacts) now also
+covers chat messages, files, recordings, transcripts (Stage 8's per-meeting `GET /meetings/:id/transcripts/
+search` made cross-meeting and reachable from this one endpoint), courses, and classes/assignments — nine
+categories total, each independently scoped to the caller's real involvement (`ChatMember`, meeting
+ownership/participation, class teacher/student, course creator/enrollment), each resolving its own real
+navigation target. Verified live with three people that the scoping is real: a chat-room member sees a
+message/file from that room, a genuinely unrelated third person sees nothing across any category. See
+`docs/roadmap.md` Stage 31. Not yet built: ranked/fuzzy search (still ILIKE `contains`, same as before);
+a dedicated results page (topbar dropdown only, capped per category).
 
 ## 35–36. Meeting security, moderation
 
 ✅ Password, waiting room, lock, host approval, screen-share/chat/recording permission gating — all real,
-server-enforced (`docs/security.md`). ❌ Domain restrictions (allow-list of email domains that can join),
-report-participant, block-participant (distinct from remove — a remove doesn't prevent rejoining), and
-disable-reactions/disable-file-sharing as meeting-level settings are not built.
+server-enforced (`docs/security.md`).
+
+✅ **Report-participant, block-participant, and domain restrictions built (Stage 33)** —
+`POST /meetings/:meetingId/reports` (any real participant, reviewed at a real `/admin/reports` queue,
+distinct from the audit log); `ParticipantsService.block` (reuses Priority 3's `BlockedUser` — a real
+remove *plus* a real, directional block that gates the blocker's own future meetings, unlike a plain
+remove which never prevented rejoining); `MeetingSettings.allowedEmailDomains`, checked at join time next
+to the existing password check. Live verification of these three caught and fixed a real, pre-existing
+bug: the Participants panel had been showing every participant's raw email address as their display name
+to the whole meeting. See `docs/roadmap.md` Stage 33. Not yet built: disable-reactions/disable-file-sharing
+as meeting-level settings; domain restrictions on a non-personal meeting (only the personal-room settings
+UI was extended).
 
 ## 37. User presence
 
-🔶 **"Online status" v1 added (Stage 24)** — `User.lastSeenAt`, bumped on every WebSocket connect
-(`RealtimeGateway.handleConnection`), shown as "Online" (a 2-minute recency window) or "Last seen X ago"
-in Contacts and Team Chat (`apps/web/src/lib/format-last-seen.ts`). Deliberately *not* live presence: it's
-a recency timestamp, not a real-time online/away/busy/DND status derived from actual open sockets — two
-different users who are both truly online right now both just show "Online" from the same timestamp
-field, with no distinction, and there's no away/busy/DND concept at all. A full presence system (tracked
-socket membership per meeting/room, not just "seen recently", plus away/busy/DND) is still Priority 5's
-own, larger, not-yet-built item. What exists beyond this is still meeting-scoped only:
-`ParticipantPresencePayload` (mic/camera/hand-raised inside a meeting) and the Socket.IO connection
-itself.
+✅ **Real presence built (Stage 32)** — `PresenceService`, Redis-backed, derived from actually-open
+Socket.IO connections (a Set of connected socket ids per user) plus an explicit AWAY/BUSY/DND override,
+superseding Stage 24's recency-timestamp "online status v1" for the online/offline judgment itself (
+`User.lastSeenAt` remains the honest fallback once someone's genuinely offline). Pushed live
+(`PRESENCE_UPDATED`) to every Team Chat room a user belongs to; polled (`GET /presence`, every 20s) for
+Contacts, which has no persisted per-user channel to push into. A colored status dot + picker lives in the
+account menu on every authenticated page. Live verification caught and fixed a real bug: a
+definitively-OFFLINE user still read as "Online" for up to two minutes, from Stage 24's own recency
+fallback text being reused even once a real status was already known — see `docs/roadmap.md` Stage 32. Not
+yet built: per-member presence in a GROUP room's header (member count only); persisting an explicit status
+across a full reconnect (always resets to ONLINE). What exists beyond this remains meeting-scoped only:
+`ParticipantPresencePayload` (mic/camera/hand-raised inside a meeting).
 
 ## 38. Device management
 
@@ -312,8 +353,14 @@ stock `GridLayout` with custom rendering.
 
 ## 44. Analytics
 
-🔶 Admin dashboard stats (Stage 9) cover meeting/class/recording counts and system health — not
-"feature usage" or per-feature engagement analytics distinct from those aggregate counts.
+✅ **Feature-engagement analytics built (Stage 34)** — `/admin/analytics` reports adoption-rate-of-meetings
+for six concrete features (whiteboard, polls, quizzes, breakout rooms, recording, live captions), distinct
+from Stage 9's aggregate counts. Almost zero new data collection: five of the six are plain aggregates over
+tables that already existed; live captions (whose text never touches this database) got exactly one new
+`MeetingEvent` row per real start, reusing the same table Stage 33's moderation actions log into. Live
+verification caught and fixed a real, unrelated bug: `QuizPanel` had no catch-up fetch on mount at all, so
+a participant who reached the Quiz tab after a question was published could never see it. See
+`docs/roadmap.md` Stage 34. **Priority 5 is now fully closed out.**
 
 ## 45–46. Admin dashboard, audit logs
 
@@ -324,10 +371,16 @@ user suspend (documented gap already in `docs/roadmap.md` Stage 9).
 
 ## 47. Feature flags
 
-❌ Not built. No feature-flag table, service, or env-var-driven toggle system anywhere in the codebase.
-Everything shipped today is either fully on or fully absent — there's no way to, say, ship
-`LIVE_CAPTIONS` disabled by default and flip it per-organization. See roadmap doc for a minimal,
-real design (no new SaaS dependency needed).
+✅ **Built (Stage 27)** — a real `FeatureFlag` table (`key`, `enabled`, optional `organizationId` for a
+per-org override), `FeatureFlagsService.isEnabled`/`isEnabledForMeeting`, and a real admin UI
+(`/admin/feature-flags`) to toggle them — no new SaaS dependency, per the roadmap item's own scoping. A
+key with no row at all defaults to **enabled**, on purpose: everything already shipping before this system
+existed was unconditionally on, so introducing flags must never silently turn one off for a key nobody has
+configured. Three flags are actually wired to a real, server-enforced gate today (not just the admin UI):
+`WHITEBOARD`, `BREAKOUT_ROOMS`, `LIVE_CAPTIONS` — verified live to genuinely block/allow the underlying
+action, not just hide a button. See `docs/roadmap.md`'s Feature flags stage for the full design, including
+a real Postgres constraint subtlety it hit (NULL isn't unique-comparable to NULL, so "at most one global
+row per key" needed two partial unique indexes, not one plain composite `@@unique`).
 
 ## 48. Database
 

@@ -10,6 +10,13 @@ export const meetingSettingsSchema = z.object({
   allowParticipantsUnmuteSelf: z.boolean().default(true),
   lockAfterStart: z.boolean().default(false),
   maxParticipants: z.number().int().min(2).max(1000).default(100),
+  // Bare lowercase domains ("acme.com"), no leading "@". Empty = no
+  // restriction. Checked at join time against the joiner's own account
+  // email — see MeetingsService.join.
+  allowedEmailDomains: z
+    .array(z.string().trim().toLowerCase().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, "Enter a bare domain, e.g. acme.com"))
+    .max(20)
+    .default([]),
 });
 export type MeetingSettingsDto = z.infer<typeof meetingSettingsSchema>;
 

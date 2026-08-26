@@ -30,6 +30,7 @@ export class AdminStatsService {
       classesToday,
       recordingStorageAgg,
       totalRecordings,
+      openReports,
     ] = await Promise.all([
       this.prisma.client.user.count({ where: { deletedAt: null } }),
       this.prisma.client.session.count({
@@ -48,6 +49,7 @@ export class AdminStatsService {
         _sum: { sizeBytes: true },
       }),
       this.prisma.client.meetingRecording.count({ where: { deletedAt: null } }),
+      this.prisma.client.report.count({ where: { status: "OPEN" } }),
     ]);
 
     return {
@@ -58,6 +60,7 @@ export class AdminStatsService {
       activeMeetings,
       classesToday,
       totalRecordings,
+      openReports,
       recordingStorageBytes: (recordingStorageAgg._sum.sizeBytes ?? 0n).toString(),
       notes: {
         activeSessions:

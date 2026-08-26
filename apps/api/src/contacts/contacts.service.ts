@@ -152,6 +152,18 @@ export class ContactsService {
     return Boolean(block);
   }
 
+  /** Directional, unlike `isBlocked` above — used by MeetingsService.join to
+   * ask specifically "has this meeting's owner blocked this joiner", not
+   * "is there a block between them in either direction" (a joiner having
+   * blocked the owner shouldn't itself refuse the owner's own meeting; only
+   * the owner's own block does that). */
+  async hasBlocked(blockerUserId: string, blockedUserId: string): Promise<boolean> {
+    const block = await this.prisma.client.blockedUser.findUnique({
+      where: { blockerUserId_blockedUserId: { blockerUserId, blockedUserId } },
+    });
+    return Boolean(block);
+  }
+
   // ── Favorites ──────────────────────────────────────────────────────────
 
   async favorite(userId: string, targetUserId: string): Promise<void> {

@@ -64,6 +64,15 @@ export class ParticipantsController {
     return this.participantsService.remove(meetingId, user.id, participantId);
   }
 
+  @Post(":participantId/block")
+  block(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("meetingId") meetingId: string,
+    @Param("participantId") participantId: string,
+  ) {
+    return this.participantsService.block(meetingId, user.id, participantId);
+  }
+
   @Post(":participantId/promote-co-host")
   promote(
     @CurrentUser() user: AuthenticatedUser,

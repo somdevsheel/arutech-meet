@@ -3,12 +3,26 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { WS_EVENTS, type SettablePresenceStatus } from "@arutech/types";
 import type { AuthUser } from "@/lib/auth-store";
 import { useNotifications } from "@/hooks/use-notifications";
 import { apiFetch } from "@/lib/api-client";
+import { getSocket } from "@/lib/socket";
+import { PRESENCE_STATUS_META, usePresenceHeartbeat } from "@/lib/presence";
 import { CallOverlay } from "@/components/calls/call-overlay";
 
-export type ActiveNav = "home" | "calendar" | "classes" | "courses" | "chat" | "contacts" | "recordings" | "notes" | "apps" | "admin";
+export type ActiveNav =
+  | "home"
+  | "calendar"
+  | "classes"
+  | "courses"
+  | "chat"
+  | "contacts"
+  | "recordings"
+  | "organizations"
+  | "notes"
+  | "apps"
+  | "admin";
 
 export interface AppShellProps {
   user: AuthUser;
@@ -35,6 +49,13 @@ interface SearchResults {
   meetings: { id: string; code: string; title: string; status: string }[];
   contacts: { id: string; displayName: string; username: string; avatarUrl: string | null }[];
   notes: { id: string; title: string }[];
+  chatMessages: { id: string; body: string; senderName: string; roomLabel: string; href: string }[];
+  files: { id: string; originalName: string; contextLabel: string; href: string | null }[];
+  recordings: { id: string; meetingTitle: string; href: string }[];
+  transcriptSegments: { id: string; text: string; meetingTitle: string; href: string }[];
+  courses: { id: string; title: string; href: string }[];
+  assignments: { id: string; title: string; classTitle: string; href: string }[];
+  classes: { id: string; title: string; subject: string | null; href: string }[];
 }
 
 /** Shared authenticated-app chrome: a left nav sidebar + a top bar with real
@@ -49,6 +70,20 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
   const [searchOpen, setSearchOpen] = useState(false);
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications(accessToken);
   const chatUnreadCount = notifications.filter((n) => n.type === "CHAT_MESSAGE" && !n.readAt).length;
+
+  // Real presence (docs/roadmap.md's Presence stage). `myStatus` is
+  // optimistic, local-only client state — this socket is the one setting it,
+  // so there's no server round trip needed to know what it currently is. A
+  // second tab wouldn't reflect a status set from a first tab without its own
+  // refetch, a deliberate v1 scope trim (see the roadmap).
+  const [myStatus, setMyStatus] = useState<SettablePresenceStatus>("ONLINE");
+  usePresenceHeartbeat(accessToken);
+  function setPresenceStatus(status: SettablePresenceStatus) {
+    if (!accessToken) return;
+    getSocket(accessToken).emit(WS_EVENTS.PRESENCE_SET_STATUS, { status });
+    setMyStatus(status);
+    setMenuOpen(false);
+  }
 
   useEffect(() => {
     const q = query.trim();
@@ -65,7 +100,17 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
   }, [query]);
 
   const hasResults =
-    results && (results.meetings.length > 0 || results.contacts.length > 0 || results.notes.length > 0);
+    results &&
+    (results.meetings.length > 0 ||
+      results.contacts.length > 0 ||
+      results.notes.length > 0 ||
+      results.chatMessages.length > 0 ||
+      results.files.length > 0 ||
+      results.recordings.length > 0 ||
+      results.transcriptSegments.length > 0 ||
+      results.courses.length > 0 ||
+      results.assignments.length > 0 ||
+      results.classes.length > 0);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -97,11 +142,14 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
             onChange={(e) => setQuery(e.target.value)}
             onFocus={() => setSearchOpen(true)}
             onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
-            placeholder="Search meetings, people, notes"
+            placeholder="Search meetings, people, chats, files…"
             className="h-9 w-full rounded-lg border border-surface-border2 bg-surface-field pl-9 pr-3 text-xs text-ink-2 outline-none placeholder:text-ink-muted2 focus:border-brand-500"
           />
           {searchOpen && query.trim().length >= 2 && (
-            <div className="absolute left-0 right-0 z-30 mt-1.5 max-h-96 overflow-y-auto rounded-lg border border-surface-border bg-surface-raised py-1.5 shadow-xl">
+            <div
+              data-testid="search-results"
+              className="absolute left-0 right-0 z-30 mt-1.5 max-h-96 overflow-y-auto rounded-lg border border-surface-border bg-surface-raised py-1.5 shadow-xl"
+            >
               {!results && <p className="px-3 py-2 text-xs text-ink-muted">Searching…</p>}
               {results && !hasResults && <p className="px-3 py-2 text-xs text-ink-muted">No results for &ldquo;{query}&rdquo;.</p>}
               {results && results.meetings.length > 0 && (
@@ -122,6 +170,60 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
                 <SearchGroup label="Notes">
                   {results.notes.map((n) => (
                     <SearchRow key={n.id} onClick={() => router.push("/notes")} title={n.title} />
+                  ))}
+                </SearchGroup>
+              )}
+              {results && results.chatMessages.length > 0 && (
+                <SearchGroup label="Chat messages">
+                  {results.chatMessages.map((m) => (
+                    <SearchRow key={m.id} onClick={() => router.push(m.href)} title={m.body} subtitle={`${m.senderName} · ${m.roomLabel}`} />
+                  ))}
+                </SearchGroup>
+              )}
+              {results && results.files.length > 0 && (
+                <SearchGroup label="Files">
+                  {results.files.map((f) => (
+                    <SearchRow
+                      key={f.id}
+                      onClick={() => f.href && router.push(f.href)}
+                      title={f.originalName}
+                      subtitle={f.contextLabel}
+                    />
+                  ))}
+                </SearchGroup>
+              )}
+              {results && results.recordings.length > 0 && (
+                <SearchGroup label="Recordings">
+                  {results.recordings.map((r) => (
+                    <SearchRow key={r.id} onClick={() => router.push(r.href)} title={r.meetingTitle} />
+                  ))}
+                </SearchGroup>
+              )}
+              {results && results.transcriptSegments.length > 0 && (
+                <SearchGroup label="Transcripts">
+                  {results.transcriptSegments.map((t) => (
+                    <SearchRow key={t.id} onClick={() => router.push(t.href)} title={t.text} subtitle={t.meetingTitle} />
+                  ))}
+                </SearchGroup>
+              )}
+              {results && results.courses.length > 0 && (
+                <SearchGroup label="Courses">
+                  {results.courses.map((c) => (
+                    <SearchRow key={c.id} onClick={() => router.push(c.href)} title={c.title} />
+                  ))}
+                </SearchGroup>
+              )}
+              {results && results.classes.length > 0 && (
+                <SearchGroup label="Classes">
+                  {results.classes.map((c) => (
+                    <SearchRow key={c.id} onClick={() => router.push(c.href)} title={c.title} subtitle={c.subject ?? undefined} />
+                  ))}
+                </SearchGroup>
+              )}
+              {results && results.assignments.length > 0 && (
+                <SearchGroup label="Assignments">
+                  {results.assignments.map((a) => (
+                    <SearchRow key={a.id} onClick={() => router.push(a.href)} title={a.title} subtitle={a.classTitle} />
                   ))}
                 </SearchGroup>
               )}
@@ -168,13 +270,15 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
                         onClick={() => {
                           if (!n.readAt) markRead(n.id);
                           setNotifOpen(false);
-                          const data = n.data as { meetingCode?: string; chatRoomId?: string } | null;
+                          const data = n.data as { meetingCode?: string; chatRoomId?: string; token?: string } | null;
                           if (n.type === "CALL_INCOMING" && data?.meetingCode) {
                             router.push(`/meeting/${data.meetingCode}`);
                           } else if (n.type === "RECORDING_READY") {
                             router.push("/recordings");
                           } else if (n.type === "CHAT_MESSAGE" && data?.chatRoomId) {
                             router.push(`/chat?room=${data.chatRoomId}`);
+                          } else if (n.type === "ORG_INVITE" && data?.token) {
+                            router.push(`/organizations/invites/${data.token}`);
                           }
                         }}
                         className={`block w-full border-b border-surface-border/60 px-3 py-2.5 text-left last:border-0 hover:bg-surface-field ${!n.readAt ? "bg-brand-tint3" : ""}`}
@@ -210,8 +314,14 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
               onClick={() => setMenuOpen((v) => !v)}
               className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 hover:bg-surface-field"
             >
-              <span className="grid h-8 w-8 flex-none place-items-center rounded-full bg-brand-500 text-xs font-semibold text-white">
-                {initialsOf(user.displayName)}
+              <span className="relative flex-none">
+                <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-500 text-xs font-semibold text-white">
+                  {initialsOf(user.displayName)}
+                </span>
+                <span
+                  aria-label={`Your status: ${PRESENCE_STATUS_META[myStatus].label}`}
+                  className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface-raised ${PRESENCE_STATUS_META[myStatus].dotClass}`}
+                />
               </span>
               <span className="hidden text-left sm:block">
                 <span className="block text-xs font-semibold leading-tight">{user.displayName}</span>
@@ -227,6 +337,19 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
                   <div className="border-b border-surface-border px-3 py-2">
                     <p className="truncate text-sm font-medium text-white">{user.displayName}</p>
                     <p className="truncate text-xs text-ink-muted">{user.email}</p>
+                  </div>
+                  <div aria-label="Set your status" className="border-b border-surface-border py-1">
+                    {(["ONLINE", "AWAY", "BUSY", "DND"] as const).map((status) => (
+                      <button
+                        key={status}
+                        onClick={() => setPresenceStatus(status)}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-3 hover:bg-surface-field hover:text-white"
+                      >
+                        <span className={`h-2 w-2 flex-none rounded-full ${PRESENCE_STATUS_META[status].dotClass}`} />
+                        {PRESENCE_STATUS_META[status].label}
+                        {myStatus === status && <span className="ml-auto text-[10px] text-ink-muted">✓</span>}
+                      </button>
+                    ))}
                   </div>
                   <Link
                     href="/settings"
@@ -279,6 +402,11 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
           <SidebarLink href="/recordings" label="Recordings" active={active === "recordings"}>
             <circle cx="12" cy="12" r="9" />
             <circle cx="12" cy="12" r="3.2" />
+          </SidebarLink>
+          <SidebarLink href="/organizations" label="Organizations" active={active === "organizations"}>
+            <path d="M5 21V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v16" />
+            <path d="M15 10h4a1 1 0 0 1 1 1v10" />
+            <path d="M9 9h.01M9 13h.01M9 17h.01M18 14h.01M18 18h.01" />
           </SidebarLink>
 
           <p className="px-3 pb-1.5 pt-4 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">

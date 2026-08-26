@@ -16,6 +16,7 @@ export function ClassroomPanel({
   onJoinBreakoutRoom,
   onReturnToMain,
   inBreakoutRoom,
+  featureFlags,
 }: {
   meetingId: string;
   socket: Socket | null;
@@ -23,17 +24,26 @@ export function ClassroomPanel({
   onJoinBreakoutRoom: (token: string, url: string, label: string) => void;
   onReturnToMain: () => void;
   inBreakoutRoom: boolean;
+  /** Real server state (FeatureFlagsService), not a client guess — hiding a
+   * disabled tab here is UX only, the actual gate is server-side in each of
+   * WhiteboardService/BreakoutRoomsService. */
+  featureFlags: { WHITEBOARD: boolean; BREAKOUT_ROOMS: boolean };
 }) {
-  const [tab, setTab] = useState<Tab>("whiteboard");
+  const tabs = (["whiteboard", "polls", "quiz", "breakout"] as Tab[]).filter(
+    (t) =>
+      (t !== "whiteboard" || featureFlags.WHITEBOARD) && (t !== "breakout" || featureFlags.BREAKOUT_ROOMS),
+  );
+  const [tab, setTab] = useState<Tab>(tabs[0] ?? "polls");
+  const activeTab = tabs.includes(tab) ? tab : (tabs[0] ?? "polls");
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex border-b border-surface-border text-xs">
-        {(["whiteboard", "polls", "quiz", "breakout"] as Tab[]).map((t) => (
+        {tabs.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 py-2 capitalize ${tab === t ? "border-b-2 border-brand-500 text-white" : "text-ink-muted"}`}
+            className={`flex-1 py-2 capitalize ${activeTab === t ? "border-b-2 border-brand-500 text-white" : "text-ink-muted"}`}
           >
             {t}
           </button>
@@ -41,12 +51,12 @@ export function ClassroomPanel({
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === "whiteboard" && (
+        {activeTab === "whiteboard" && (
           <WhiteboardCanvas meetingId={meetingId} socket={socket} canEdit={true} />
         )}
-        {tab === "polls" && <PollsPanel meetingId={meetingId} socket={socket} canCreate={isModerator} />}
-        {tab === "quiz" && <QuizPanel meetingId={meetingId} socket={socket} canCreate={isModerator} />}
-        {tab === "breakout" && (
+        {activeTab === "polls" && <PollsPanel meetingId={meetingId} socket={socket} canCreate={isModerator} />}
+        {activeTab === "quiz" && <QuizPanel meetingId={meetingId} socket={socket} canCreate={isModerator} />}
+        {activeTab === "breakout" && (
           <BreakoutPanel
             meetingId={meetingId}
             socket={socket}

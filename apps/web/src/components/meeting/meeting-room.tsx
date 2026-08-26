@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import { LiveKitRoom } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { WS_EVENTS, can, type ParticipantRole } from "@arutech/types";
+import { WS_EVENTS, can, type ParticipantRole, type ParticipantPresencePayload } from "@arutech/types";
 import { VideoGrid } from "./video-grid";
 import { MeetingToolbar, type PanelKind } from "./meeting-toolbar";
 import { ChatPanel } from "./chat-panel";
 import { ParticipantsPanel } from "./participants-panel";
+import { ReportParticipantModal } from "./report-participant-modal";
 import { WaitingRoomPanel } from "./waiting-room-panel";
 import { ClassroomPanel } from "./classroom/classroom-panel";
 import { RecordingsPanel } from "./recordings-panel";
@@ -64,9 +65,17 @@ export function MeetingRoom({
   const [captionsActive, setCaptionsActive] = useState(false);
   const [captionsPending, setCaptionsPending] = useState(false);
   const [captionsHidden, setCaptionsHidden] = useState(false);
+  // Which of the three feature-flag-gated features are actually usable for
+  // this meeting — real server state (FeatureFlagsService), not a client
+  // guess. Controls hidden here still 403 if somehow clicked anyway; this
+  // only avoids showing one that would. Defaults to everything enabled
+  // while loading, matching the server's own "unconfigured = on" default.
+  const [featureFlags, setFeatureFlags] = useState({ WHITEBOARD: true, BREAKOUT_ROOMS: true, LIVE_CAPTIONS: true });
   const [conn, setConn] = useState<ActiveConnection>({ token, url: livekitUrl, label: null });
   const [elapsed, setElapsed] = useState(0);
   const [seenChatCount, setSeenChatCount] = useState(0);
+  const [reportingParticipant, setReportingParticipant] = useState<ParticipantPresencePayload | null>(null);
+  const [reportSent, setReportSent] = useState(false);
   const isModerator = MODERATOR_ROLES.has(role);
   // Narrower than isModerator on purpose — CO_HOST is a moderator role but
   // doesn't hold `meeting.end` in the permissions matrix (only OWNER/HOST/
@@ -74,7 +83,13 @@ export function MeetingRoom({
   // (see MeetingsController's POST /:id/end) — this only decides whether to
   // render the button, not whether the action is allowed.
   const canEndMeeting = can(role as ParticipantRole, "meeting.end");
-  const canManageCaptions = can(role as ParticipantRole, "captions.manage");
+  // Not gated by featureFlags.LIVE_CAPTIONS here on purpose: this only
+  // decides whether the *start* control shows. If captions are somehow
+  // already running (started before an admin flipped the flag off
+  // mid-meeting), captionsActive alone still lets every participant see the
+  // real, live hide/show toggle below — the flag only blocks starting a new
+  // session, never hides a genuinely active one.
+  const canManageCaptions = can(role as ParticipantRole, "captions.manage") && featureFlags.LIVE_CAPTIONS;
 
   async function endMeeting() {
     try {
@@ -173,6 +188,13 @@ export function MeetingRoom({
     apiFetch<{ active: boolean }>(`/meetings/${meetingId}/captions/status`)
       .then((r) => setCaptionsActive(r.active))
       .catch(() => {});
+  }, [meetingId]);
+
+  useEffect(() => {
+    apiFetch<typeof featureFlags>(`/meetings/${meetingId}/feature-flags`)
+      .then(setFeatureFlags)
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingId]);
 
   useEffect(() => {
@@ -330,11 +352,14 @@ export function MeetingRoom({
                 <ParticipantsPanel
                   participants={participants}
                   isModerator={isModerator}
+                  currentParticipantId={participantId}
                   onMute={(id) => moderate("mute", id)}
                   onDisableCamera={(id) => moderate("disable-camera", id)}
                   onRemove={(id) => moderate("remove", id)}
+                  onBlock={(id) => moderate("block", id)}
                   onPromote={(id) => moderate("promote-co-host", id)}
                   onLowerHand={(targetUserId) => lowerHandFor(targetUserId)}
+                  onReport={(p) => setReportingParticipant(p)}
                 />
               )}
               {panel === "chat" && (
@@ -359,6 +384,7 @@ export function MeetingRoom({
                   onJoinBreakoutRoom={joinBreakoutRoom}
                   onReturnToMain={returnToMain}
                   inBreakoutRoom={Boolean(conn.label)}
+                  featureFlags={featureFlags}
                 />
               )}
               {panel === "recordings" && (
@@ -388,6 +414,24 @@ export function MeetingRoom({
         onToggleHand={toggleHand}
         onReact={sendReaction}
       />
+
+      {reportingParticipant && (
+        <ReportParticipantModal
+          meetingId={meetingId}
+          participant={reportingParticipant}
+          onClose={() => setReportingParticipant(null)}
+          onSubmitted={() => {
+            setReportingParticipant(null);
+            setReportSent(true);
+            setTimeout(() => setReportSent(false), 4000);
+          }}
+        />
+      )}
+      {reportSent && (
+        <div className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-surface-raised px-4 py-2.5 text-sm text-white shadow-xl">
+          Report submitted — an admin will review it.
+        </div>
+      )}
     </LiveKitRoom>
   );
 }

@@ -2,11 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { UserPresenceStatus } from "@arutech/types";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { useCallStore } from "@/lib/call-store";
 import { AppShell } from "@/components/layout/app-shell";
-import { formatLastSeen, isOnline } from "@/lib/format-last-seen";
+import { formatLastSeen, formatLastSeenPhrase } from "@/lib/format-last-seen";
+import { PRESENCE_STATUS_META } from "@/lib/presence";
+
+const PRESENCE_POLL_MS = 20_000;
 
 interface Contact {
   id: string;
@@ -81,6 +85,7 @@ export default function ContactsPage() {
   const [groupPickerFor, setGroupPickerFor] = useState<string | null>(null);
   const [callHistory, setCallHistory] = useState<CallHistoryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [presenceByUserId, setPresenceByUserId] = useState<Record<string, UserPresenceStatus>>({});
   const startCall = useCallStore((s) => s.startCall);
   const callPhase = useCallStore((s) => s.phase);
 
@@ -118,6 +123,30 @@ export default function ContactsPage() {
       apiFetch<CallHistoryEntry[]>("/calls/history").then(setCallHistory).catch(() => {});
     }
   }, [callPhase]);
+
+  // Real presence (docs/roadmap.md's Presence stage) — polled, not pushed:
+  // unlike Team Chat rooms, there's no persisted "contact" relationship to
+  // broadcast a presence change into (Contacts is entirely derived from
+  // meeting history, see ContactsService), so there's no natural channel to
+  // push into. A short poll while this page is open is the deliberate v1
+  // trade-off — a real per-contact status, refreshed every 20s, not a
+  // recency timestamp pretending to be live.
+  useEffect(() => {
+    if (!contacts || contacts.length === 0) return;
+    const ids = contacts.map((c) => c.id).join(",");
+    let cancelled = false;
+    function poll() {
+      apiFetch<Record<string, UserPresenceStatus>>(`/presence?userIds=${encodeURIComponent(ids)}`)
+        .then((statuses) => !cancelled && setPresenceByUserId(statuses))
+        .catch(() => {});
+    }
+    poll();
+    const interval = setInterval(poll, PRESENCE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [contacts]);
 
   async function call(contact: Contact, type: "AUDIO" | "VIDEO") {
     await startCall({ id: contact.id, displayName: contact.displayName, avatarUrl: contact.avatarUrl }, type);
@@ -303,7 +332,9 @@ export default function ContactsPage() {
         )}
 
         <ul className="flex flex-col gap-2">
-          {contacts?.map((c) => (
+          {contacts?.map((c) => {
+            const presenceStatus = presenceByUserId[c.id];
+            return (
             <li
               key={c.id}
               className="flex items-center gap-3 rounded-lg border border-surface-border bg-surface-raised px-4 py-3"
@@ -320,14 +351,22 @@ export default function ContactsPage() {
                 <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-500 text-xs font-semibold text-white">
                   {initialsOf(c.displayName)}
                 </span>
-                {isOnline(c.lastSeenAt) && (
-                  <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-success" />
+                {presenceStatus && presenceStatus !== "OFFLINE" && (
+                  <span
+                    title={PRESENCE_STATUS_META[presenceStatus].label}
+                    className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface ${PRESENCE_STATUS_META[presenceStatus].dotClass}`}
+                  />
                 )}
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-white">{c.displayName}</p>
                 <p className="truncate text-xs text-ink-muted">
-                  @{c.username} · {c.meetingsTogether} meeting{c.meetingsTogether === 1 ? "" : "s"} together · {formatLastSeen(c.lastSeenAt)}
+                  @{c.username} · {c.meetingsTogether} meeting{c.meetingsTogether === 1 ? "" : "s"} together ·{" "}
+                  {presenceStatus && presenceStatus !== "OFFLINE"
+                    ? PRESENCE_STATUS_META[presenceStatus].label
+                    : presenceStatus === "OFFLINE"
+                      ? formatLastSeenPhrase(c.lastSeenAt)
+                      : formatLastSeen(c.lastSeenAt)}
                 </p>
                 {c.groupIds.length > 0 && (
                   <p className="mt-0.5 truncate text-[11px] text-ink-muted2">
@@ -398,7 +437,8 @@ export default function ContactsPage() {
                 Block
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
 
         {callHistory && callHistory.length > 0 && (

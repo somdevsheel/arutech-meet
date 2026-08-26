@@ -2,6 +2,7 @@ import { Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { AdminStatsService } from "./admin-stats.service";
 import { AdminUsersService } from "./admin-users.service";
+import { AdminAnalyticsService } from "./admin-analytics.service";
 import { SystemAdminGuard } from "../common/guards/system-admin.guard";
 import { CurrentUser } from "../common/decorators/current-user.decorator";
 import type { AuthenticatedUser } from "../common/types/authenticated-user";
@@ -13,6 +14,7 @@ export class AdminController {
   constructor(
     private readonly stats: AdminStatsService,
     private readonly users: AdminUsersService,
+    private readonly analytics: AdminAnalyticsService,
   ) {}
 
   @Get("stats")
@@ -23,6 +25,11 @@ export class AdminController {
   @Get("system-health")
   getSystemHealth() {
     return this.stats.getSystemHealth();
+  }
+
+  @Get("analytics")
+  getAnalytics(@Query("days") days = "30") {
+    return this.analytics.getFeatureEngagement(Number(days));
   }
 
   @Get("users")

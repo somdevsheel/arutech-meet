@@ -115,38 +115,82 @@ Stage 15 shipped it and was corrected alongside this item.
 
 ## Priority 5 — Organizations, teams, custom branding, global search, advanced analytics, admin tools
 
-1. **Feature flags**: the brief's own list (`AI_TRANSCRIPTION`, `WHITEBOARD`, `BREAKOUT_ROOMS`, etc.) maps
-   cleanly onto a small `FeatureFlag` table (`key`, `enabled`, optional `organizationId` for per-org
-   overrides) + a `FeatureFlagService.isEnabled(key, orgId?)` guard, checked server-side wherever a gated
-   action starts (mirrors how `PermissionService` is already consulted everywhere — same shape of problem).
-   No new SaaS dependency needed for a first version; a hosted flag service (LaunchDarkly-style) is a valid
-   later swap once flag volume justifies it, kept behind the same interface.
-2. **Organizations**: invite-by-email flow, a real member-management UI (today only the system admin
-   dashboard can see orgs, read-only), per-org meeting/storage limits actually enforced (not just stored).
-3. **Teams**: new `Team`/`TeamMember` models nested under `Organization`, with their own chat/meetings/
-   files — same relationship shape `ChatRoom`/`Meeting` already have to a `Class`, extended to a `Team`.
-4. **Custom branding**: `OrganizationBranding` (logo URL, brand color, login-page copy) + a theming layer
-   that overrides the CSS custom properties this app already uses for its own design tokens (see
-   `globals.css`'s `--lk-*` variables for the exact mechanism already in place for LiveKit's own
-   components — the same technique applies to the app's own brand tokens).
-5. **Global search breadth**: extend `SearchService` to also query chat messages, files, recordings,
-   transcripts (per-meeting transcript search already exists — Stage 8 — this is making it
-   cross-meeting and reachable from the one global `/search` endpoint), courses, assignments — each is an
-   additive `OR` branch in a query that's already structured for this, not a rearchitecture.
-6. **Presence** (online/away/busy/DND): the one piece several other gaps depend on (contacts online status,
-   "who's actually online right now" in Team Chat). A `Redis`-backed presence set (already the documented
-   use for "presence" per this repo's own architecture doc) keyed by `userId`, updated on
-   connect/disconnect/explicit-status-change, TTL'd so a crashed tab doesn't strand someone "online"
-   forever — this is exactly the kind of ephemeral, fast-changing state Redis is already used for elsewhere
-   in this codebase (rate limiting, distributed locks).
-7. **Moderation**: report-participant (a new lightweight `Report` model + admin queue, distinct from the
-   existing audit log, which records actions taken, not complaints raised), block-participant (reuses
-   Priority 3's `BlockedUser`, extended to also apply inside a live meeting), domain restrictions
-   (an allow-list field on `MeetingSettings`, checked at join time next to the existing password check).
-8. **Advanced analytics**: per-feature engagement, distinct from the admin dashboard's existing aggregate
-   counts — needs deciding what "feature usage" means concretely (e.g. whiteboard-opened count,
-   poll-response-rate) before building anything, to avoid collecting data nobody ends up using, per the
-   brief's own "do not collect unnecessary personal data" instruction.
+1. ~~Feature flags~~ — done, Stage 27. Exactly the design this item floated: a `FeatureFlag` table (`key`,
+   `enabled`, optional `organizationId` override), `FeatureFlagsService.isEnabled`/`isEnabledForMeeting`
+   checked server-side wherever a gated action starts (mirrors `PermissionService`), no new SaaS
+   dependency. Wired to a real gate for `WHITEBOARD`, `BREAKOUT_ROOMS`, and `LIVE_CAPTIONS` (not the
+   brief's `AI_TRANSCRIPTION` example specifically, though that's a straightforward follow-up — any
+   service can start checking a key at any time without a schema change). A real admin UI
+   (`/admin/feature-flags`) to toggle global/per-org state, verified live to actually block the underlying
+   action (a direct API call, not just a hidden button) and correctly default an unconfigured key to
+   enabled. See `docs/roadmap.md` Stage 27.
+2. ~~Organizations~~ — done, Stage 28. A real invite-by-email flow with genuine SMTP delivery (a new
+   `MailService`, `nodemailer` + the `SMTP_*` env vars that had existed unused since before this session),
+   a real member-facing management UI (distinct from the system admin dashboard's read-only view) with
+   role changes/removal/self-service-leave all protected against ever leaving an org with zero owners, and
+   per-org meeting-concurrency/storage limits actually enforced at the point of the real action
+   (`MeetingsService.create`, `FilesService.presignMeetingUpload`) rather than just sitting on the
+   `Organization` row unread.
+3. ~~Teams~~ — done, Stage 29. New `Team`/`TeamMember` models nested under `Organization` (`LEAD`/`MEMBER`
+   roles, sole-lead protection mirroring Stage 28's sole-owner protection), each with its own `ChatRoom` —
+   same relationship shape `ChatRoom`/`Meeting` already have to a `Class`. Real send/receive/edit/delete/
+   attachments/"Start a meeting" all worked with **zero new chat backend**, confirmed live, because
+   `ChatService`'s room-scoped methods only ever check `ChatMember` existence, never room `type` — the
+   entire design bet of this stage. Two real bugs found and fixed live: a member sidebar that hid a
+   member's role badge whenever the LEAD-only management buttons showed (badge and buttons were wrongly
+   mutually exclusive), and a missing dedupe-by-id guard on the team chat panel's socket listener (already
+   present in the pre-existing `chat/page.tsx` listener, just not carried over) that let React Strict
+   Mode's dev-only double effect produce a duplicated message. See `docs/roadmap.md` Stage 29.
+4. ~~Custom branding~~ — done, Stage 30. Extended `Organization` directly (`logoUrl`/`brandColor` already
+   existed unread since Stage 2; added `joinPageMessage`) rather than a separate `OrganizationBranding`
+   table — same "extend the row" call Stage 28 made for per-org limits. The theming layer is exactly the
+   mechanism this item predicted: a per-org `brandColor` overrides the same `--lk-*` custom properties
+   `globals.css` already retheme's LiveKit's prefabs with, applied as a scoped inline-style override on the
+   meeting join screen. Verifying that reuse surfaced a real, previously-invisible bug: the app's own
+   `--lk-*` retheme had been silently losing a CSS specificity tie to LiveKit's own default stylesheet since
+   it was written (both declare `[data-lk-theme="default"]` with equal specificity; source order favored the
+   library), so the "brand blue" everyone assumed was live had actually never been rendering anywhere — fixed
+   with a specificity bump, not worked around in the test. "Login-page copy" was read as the meeting join
+   screen's welcome message (`joinPageMessage`) since this app has no per-org login page to brand.
+5. ~~Global search breadth~~ — done, Stage 31. `SearchService` now also queries chat messages, files,
+   recordings, transcripts (Stage 8's per-meeting transcript search made cross-meeting and reachable from
+   the one global `/search` endpoint), courses, and classes/assignments — six additive query branches, each
+   reusing a visibility rule this codebase already defined elsewhere (`ChatMember` for chat/files,
+   `RecordingsService.listMine`'s meeting-involvement clause for recordings/transcripts,
+   `CoursesService.listMine`'s definition for courses, `ClassTeacher`/`ClassStudent` for classes/
+   assignments) rather than inventing new ones. Each result resolves its own real navigation target
+   server-side. Verified live with three people that scoping is real, not just "search returns rows":
+   a room member sees a chat message/file, an unrelated third person sees nothing at all.
+6. ~~Presence~~ — done, Stage 32. `PresenceService`, Redis-backed exactly as this item predicted (`RedisModule`'s
+   own doc comment already named "presence" as a use case) — a Set of connected socket ids per user
+   (multi-tab correct) plus an explicit AWAY/BUSY/DND override, both TTL'd and heartbeat-refreshed so a
+   crashed gateway process (not just a crashed tab) can't strand someone "online" forever. Pushed live
+   (`PRESENCE_UPDATED`) to every Team Chat room a user belongs to; polled for Contacts, which has no
+   persisted per-user channel to push into (it's entirely derived from meeting co-participation). Live
+   verification caught and fixed a real bug: a definitively-OFFLINE user still read as "Online" for up to
+   two minutes, because the old recency-based fallback text was reused even once a real, certain status was
+   already known.
+7. ~~Moderation~~ — done, Stage 33. Report-participant: a real `Report` model + a real admin review queue
+   (`/admin/reports`), distinct from the audit log (actions taken, not complaints raised). Block-participant:
+   `ParticipantsService.block` reuses Priority 3's `BlockedUser` exactly (removal + a real block, with the
+   real side effect of also blocking DMs/calls from that point on), checked directionally at join time so
+   only the *meeting owner's* own block gates their own future meetings. Domain restrictions:
+   `MeetingSettings.allowedEmailDomains`, checked right after the existing password check, owner always
+   exempt, guests refused outright once set. Live verification of these three also caught and fixed a real,
+   pre-existing bug unrelated to any of them: the Participants panel had been broadcasting every
+   participant's raw email address as their display name to the whole meeting since presence was first
+   written.
+8. ~~Advanced analytics~~ — done, Stage 34. Six concrete features (whiteboard, polls, quizzes, breakout
+   rooms, recording, live captions), each reporting real adoption-rate-of-meetings and a feature-appropriate
+   volume figure — decided deliberately, per this item's own instruction, before writing any code. Almost
+   zero new data collection: five of the six are plain aggregates over tables that already existed for
+   their own real reason; live captions (whose text deliberately never touches this database) got exactly
+   one new `MeetingEvent` row per real start, reusing the same table Stage 33's moderation actions already
+   log into rather than a new tracking surface. Live-verifying it caught and fixed a real, unrelated bug:
+   `QuizPanel` had no catch-up fetch at all, so a participant who joined the Quiz tab after a question was
+   published could never see it.
+
+**Priority 5 is now fully closed out** — all eight items done.
 
 ## What this roadmap deliberately does not include
 

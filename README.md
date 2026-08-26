@@ -187,3 +187,8 @@ the frontend), and an explicit statement of what the current transport encryptio
 Proprietary — © Arutech Consultancy Services LLP.
 Email: demo@arutech.dev
 Password: DemoPass123!
+
+
+git add .
+git commit -m "add new features"
+git push origin main

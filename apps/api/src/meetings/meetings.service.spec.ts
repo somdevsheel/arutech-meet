@@ -4,34 +4,107 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { LiveKitService } from "../livekit/livekit.service";
 import type { PermissionService } from "./permission.service";
 import type { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service";
+import type { OrganizationsService } from "../organizations/organizations.service";
+import type { ContactsService } from "../contacts/contacts.service";
 
 const MEETING = {
   id: "meeting-1",
+  code: "abc-def-ghi",
+  ownerId: "owner-1",
+  status: "LIVE",
+  passwordHash: null,
   livekitRoomName: "room-1",
   deletedAt: null,
-  settings: {},
+  // waitingRoomEnabled: true keeps a successful non-owner join in WAITING
+  // status, which skips LiveKit token issuance entirely — lets these tests
+  // exercise the real domain/block checks without mocking the whole LiveKit
+  // client just to reach a status these tests don't care about.
+  settings: { waitingRoomEnabled: true, lockAfterStart: false, allowedEmailDomains: [] as string[] },
 };
 
-function makeService() {
+function makeService(overrides?: {
+  meeting?: Partial<Omit<typeof MEETING, "settings">> & { settings?: Partial<typeof MEETING.settings> };
+  hasBlocked?: boolean;
+}) {
+  const meeting = { ...MEETING, ...overrides?.meeting, settings: { ...MEETING.settings, ...overrides?.meeting?.settings } };
   const prisma = {
     client: {
       meeting: {
-        findUnique: jest.fn().mockResolvedValue(MEETING),
-        update: jest.fn().mockResolvedValue({ ...MEETING, status: "ENDED" }),
+        findUnique: jest.fn().mockResolvedValue(meeting),
+        update: jest.fn().mockResolvedValue({ ...meeting, status: "ENDED" }),
+        create: jest.fn().mockResolvedValue({ ...meeting, code: "abc-def-ghi" }),
       },
+      membership: {
+        findUnique: jest.fn().mockResolvedValue({ orgId: "org-1", userId: "user-1", role: "MEMBER" }),
+      },
+      meetingParticipant: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        // join()'s own create/update return is reused by issueToken's
+        // subsequent findUnique lookup (admitAndIssueToken -> issueToken) —
+        // both need `status: ADMITTED` for a real ("HOST") joiner to pass
+        // issueToken's own status check.
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "participant-1", ...data })),
+        update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "participant-1", ...data })),
+        findUnique: jest.fn().mockResolvedValue({
+          id: "participant-1",
+          meetingId: MEETING.id,
+          role: "HOST",
+          status: "ADMITTED",
+          livekitIdentity: "owner-1-abc",
+          guestName: null,
+          userId: MEETING.ownerId,
+        }),
+      },
+      classSession: { findUnique: jest.fn().mockResolvedValue(null) },
+      meetingEvent: { create: jest.fn().mockResolvedValue(undefined) },
     },
   } as unknown as PrismaService;
-  const liveKit = { endRoom: jest.fn().mockResolvedValue(undefined) } as unknown as LiveKitService;
+  const liveKit = {
+    endRoom: jest.fn().mockResolvedValue(undefined),
+    ensureRoom: jest.fn().mockResolvedValue(undefined),
+    createRoomToken: jest.fn().mockResolvedValue("token"),
+    getClientUrl: jest.fn().mockReturnValue("wss://livekit.test"),
+  } as unknown as LiveKitService;
   const permissions = {
     requireOwnerOrCapability: jest.fn().mockResolvedValue(undefined),
   } as unknown as PermissionService;
   const broadcast = { publish: jest.fn().mockResolvedValue(undefined) } as unknown as RealtimeBroadcastService;
+  const organizations = {
+    assertMeetingConcurrencyOk: jest.fn().mockResolvedValue(undefined),
+  } as unknown as OrganizationsService;
+  const contacts = {
+    hasBlocked: jest.fn().mockResolvedValue(overrides?.hasBlocked ?? false),
+  } as unknown as ContactsService;
 
-  const service = new MeetingsService(prisma, liveKit, permissions, broadcast);
-  return { service, prisma, liveKit, permissions, broadcast };
+  const service = new MeetingsService(prisma, liveKit, permissions, broadcast, organizations, contacts);
+  return { service, prisma, liveKit, permissions, broadcast, organizations, contacts };
 }
 
+const BASE_DTO = { title: "Test meeting", type: "INSTANT" as const, timezone: "UTC" };
+
 describe("MeetingsService", () => {
+  describe("create", () => {
+    it("checks the org's meeting-concurrency limit when creating a meeting under an org", async () => {
+      const { service, organizations } = makeService();
+      await service.create("user-1", { ...BASE_DTO, orgId: "org-1" });
+      expect(organizations.assertMeetingConcurrencyOk).toHaveBeenCalledWith("org-1");
+    });
+
+    it("never checks the limit for a personal (non-org) meeting", async () => {
+      const { service, organizations, prisma } = makeService();
+      (prisma.client.membership.findUnique as jest.Mock).mockResolvedValue(null);
+      await service.create("user-1", BASE_DTO);
+      expect(organizations.assertMeetingConcurrencyOk).not.toHaveBeenCalled();
+    });
+
+    it("propagates a concurrency-limit rejection instead of creating the meeting", async () => {
+      const { service, organizations, prisma } = makeService();
+      (organizations.assertMeetingConcurrencyOk as jest.Mock).mockRejectedValue(new Error("limit reached"));
+      await expect(service.create("user-1", { ...BASE_DTO, orgId: "org-1" })).rejects.toThrow("limit reached");
+      expect(prisma.client.meeting.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe("end", () => {
     it("requires the meeting.end capability", async () => {
       const { service, permissions } = makeService();
@@ -71,6 +144,63 @@ describe("MeetingsService", () => {
       expect(broadcast.publish).toHaveBeenCalledWith(MEETING.id, WS_EVENTS.MEETING_ENDED, {});
       expect(liveKit.endRoom).toHaveBeenCalledWith(MEETING.livekitRoomName);
       expect(calls).toEqual(["broadcast", "endRoom"]);
+    });
+  });
+
+  describe("join — domain restriction", () => {
+    it("refuses a non-owner joiner whose email domain isn't allow-listed", async () => {
+      const { service } = makeService({ meeting: { settings: { allowedEmailDomains: ["acme.com"] } } });
+      await expect(
+        service.join(MEETING.code, { userId: "user-2", email: "person@other.com" }, {}),
+      ).rejects.toThrow("restricted to specific email domains");
+    });
+
+    it("refuses a guest outright once any domain is allow-listed — nothing to check against", async () => {
+      const { service } = makeService({ meeting: { settings: { allowedEmailDomains: ["acme.com"] } } });
+      await expect(service.join(MEETING.code, { guestName: "Guest" }, {})).rejects.toThrow(
+        "restricted to specific email domains",
+      );
+    });
+
+    it("admits a non-owner joiner whose email domain is allow-listed", async () => {
+      const { service } = makeService({ meeting: { settings: { allowedEmailDomains: ["acme.com"] } } });
+      const result = await service.join(MEETING.code, { userId: "user-2", email: "person@acme.com" }, {});
+      expect(result.status).toBe("WAITING");
+    });
+
+    it("exempts the meeting owner from the domain restriction entirely", async () => {
+      const { service } = makeService({ meeting: { settings: { allowedEmailDomains: ["acme.com"] } } });
+      const result = await service.join(MEETING.code, { userId: MEETING.ownerId, email: "owner@elsewhere.com" }, {});
+      expect(result.status).toBe("ADMITTED"); // the host is never sent to the waiting room
+    });
+
+    it("does nothing when the allow-list is empty (the default)", async () => {
+      const { service } = makeService();
+      const result = await service.join(MEETING.code, { userId: "user-2", email: "anyone@anywhere.com" }, {});
+      expect(result.status).toBe("WAITING");
+    });
+  });
+
+  describe("join — block", () => {
+    it("refuses a joiner the meeting owner has blocked", async () => {
+      const { service, contacts } = makeService({ hasBlocked: true });
+      await expect(service.join(MEETING.code, { userId: "user-2", email: "a@b.com" }, {})).rejects.toThrow(
+        "not able to join this meeting",
+      );
+      expect(contacts.hasBlocked).toHaveBeenCalledWith(MEETING.ownerId, "user-2");
+    });
+
+    it("never checks (or refuses) the owner joining their own meeting", async () => {
+      const { service, contacts } = makeService({ hasBlocked: true });
+      const result = await service.join(MEETING.code, { userId: MEETING.ownerId, email: "owner@x.com" }, {});
+      expect(result.status).toBe("ADMITTED");
+      expect(contacts.hasBlocked).not.toHaveBeenCalled();
+    });
+
+    it("admits a joiner the owner hasn't blocked", async () => {
+      const { service } = makeService({ hasBlocked: false });
+      const result = await service.join(MEETING.code, { userId: "user-2", email: "a@b.com" }, {});
+      expect(result.status).toBe("WAITING");
     });
   });
 });

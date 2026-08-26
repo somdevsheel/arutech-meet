@@ -34,8 +34,22 @@ body {
    palette) to match this app's design tokens, via the same CSS custom
    properties LiveKit's own prefabs (ParticipantTile, GridLayout, PreJoin)
    already read — cheaper and more robust than re-implementing their track
-   rendering/layout logic just to change colors. */
-[data-lk-theme="default"] {
+   rendering/layout logic just to change colors.
+
+   The doubled attribute selector is deliberate, not a typo: the library's
+   own stylesheet declares this exact same `[data-lk-theme="default"]` block
+   with its own palette (`--lk-accent-bg: #1f8cf9`, LiveKit's blue, not this
+   app's brand blue). Both rules have equal specificity, so which one wins is
+   decided by source order — and `@livekit/components-styles` is imported at
+   the page level (see meeting/[code]/page.tsx), landing *after* this global
+   stylesheet in the document, so without this bump the library's own colors
+   silently won on every LiveKit surface (PreJoin, room UI) and this block
+   was a no-op. Repeating the attribute selector doubles this rule's
+   specificity (0-2-0 vs the library's 0-1-0) so it wins regardless of import
+   order — found via a real live-verification run of the per-org branding
+   theming layer below, which reuses this exact mechanism and would have
+   inherited the same silent-no-op bug otherwise. */
+[data-lk-theme="default"][data-lk-theme="default"] {
   --lk-bg: #1e1e24;
   --lk-bg2: #22222a;
   --lk-bg3: #2a2a33;

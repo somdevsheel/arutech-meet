@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { apiFetch } from "@/lib/api-client";
 
 interface Stats {
@@ -12,6 +13,7 @@ interface Stats {
   classesToday: number;
   totalRecordings: number;
   recordingStorageBytes: string;
+  openReports: number;
   notes: { activeSessions: string; omitted: string };
 }
 
@@ -46,6 +48,7 @@ export default function AdminDashboardPage() {
           label="Recording storage"
           value={stats ? formatBytes(Number(stats.recordingStorageBytes)) : undefined}
         />
+        <StatCard label="Open reports" value={stats?.openReports} highlight={Boolean(stats?.openReports)} href="/admin/reports" />
       </div>
 
       {stats && (
@@ -82,14 +85,16 @@ function StatCard({
   value,
   highlight,
   ok,
+  href,
 }: {
   label: string;
   value: string | number | undefined;
   highlight?: boolean;
   ok?: boolean;
+  href?: string;
 }) {
-  return (
-    <div className="rounded-xl border border-surface-border bg-surface-raised p-4">
+  const body = (
+    <>
       <p className="text-xs text-ink-muted">{label}</p>
       <p
         className={`mt-1 text-2xl font-semibold ${
@@ -98,7 +103,15 @@ function StatCard({
       >
         {value ?? "—"}
       </p>
-    </div>
+    </>
+  );
+  const className = "rounded-xl border border-surface-border bg-surface-raised p-4";
+  return href ? (
+    <Link href={href} className={`${className} transition hover:border-brand-500`}>
+      {body}
+    </Link>
+  ) : (
+    <div className={className}>{body}</div>
   );
 }
 

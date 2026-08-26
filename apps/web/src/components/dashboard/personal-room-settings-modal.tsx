@@ -8,6 +8,7 @@ interface PersonalRoomSettings {
   waitingRoomEnabled: boolean;
   allowChat: boolean;
   allowRecording: boolean;
+  allowedEmailDomains: string[];
 }
 
 /** Real settings, backed by the same PATCH /meetings/:id/settings every other
@@ -25,6 +26,7 @@ export function PersonalRoomSettingsModal({
   onSaved: (settings: PersonalRoomSettings) => void;
 }) {
   const [settings, setSettings] = useState(initial);
+  const [domainsText, setDomainsText] = useState(initial.allowedEmailDomains.join(", "));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,11 +34,16 @@ export function PersonalRoomSettingsModal({
     setSaving(true);
     setError(null);
     try {
+      const allowedEmailDomains = domainsText
+        .split(",")
+        .map((d) => d.trim().toLowerCase())
+        .filter(Boolean);
+      const next = { ...settings, allowedEmailDomains };
       await apiFetch(`/meetings/${meetingId}/settings`, {
         method: "PATCH",
-        body: JSON.stringify({ settings }),
+        body: JSON.stringify({ settings: next }),
       });
-      onSaved(settings);
+      onSaved(next);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to save settings");
     } finally {
@@ -65,6 +72,20 @@ export function PersonalRoomSettingsModal({
           checked={settings.allowRecording}
           onChange={(v) => setSettings((s) => ({ ...s, allowRecording: v }))}
         />
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-white">Restrict by email domain</span>
+          <span className="text-xs text-ink-muted">
+            Comma-separated domains (e.g. acme.com, partner.org). Empty = anyone can join. You&rsquo;re always
+            exempt from your own restriction.
+          </span>
+          <input
+            value={domainsText}
+            onChange={(e) => setDomainsText(e.target.value)}
+            placeholder="e.g. acme.com"
+            className="input"
+          />
+        </label>
 
         {error && <p className="text-sm text-danger">{error}</p>}
 

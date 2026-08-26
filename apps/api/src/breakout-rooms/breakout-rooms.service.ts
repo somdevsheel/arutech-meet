@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { LiveKitService } from "../livekit/livekit.service";
 import { PermissionService } from "../meetings/permission.service";
 import { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service";
+import { FeatureFlagsService } from "../feature-flags/feature-flags.service";
 
 const MODERATOR_ROLES: ParticipantRole[] = ["OWNER", "HOST", "CO_HOST", "TEACHER"];
 
@@ -15,11 +16,19 @@ export class BreakoutRoomsService {
     private readonly liveKit: LiveKitService,
     private readonly permissions: PermissionService,
     private readonly broadcast: RealtimeBroadcastService,
+    private readonly featureFlags: FeatureFlagsService,
   ) {}
 
   async create(meetingId: string, callerUserId: string, dto: CreateBreakoutRoomsDto) {
     await this.permissions.requireOwnerOrCapability(meetingId, callerUserId, "breakout.manage");
     const meeting = await this.prisma.client.meeting.findUniqueOrThrow({ where: { id: meetingId } });
+    // One of only three flags actually wired to a real gate — see
+    // docs/roadmap.md's Feature flags stage. Checked here (not e.g. only in
+    // the UI) so a disabled meeting/org genuinely can't start breakout
+    // rooms, not just have the button hidden.
+    if (!(await this.featureFlags.isEnabled("BREAKOUT_ROOMS", meeting.orgId))) {
+      throw new ForbiddenException("Breakout rooms are disabled for this meeting");
+    }
 
     const rooms = await this.prisma.client.$transaction(
       dto.names.map((name, i) =>

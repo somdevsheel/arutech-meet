@@ -3,9 +3,10 @@ import { FilesController } from "./files.controller";
 import { FilesService } from "./files.service";
 import { StorageModule } from "../storage/storage.module";
 import { PermissionModule } from "../meetings/permission.module";
+import { OrganizationsModule } from "../organizations/organizations.module";
 
 @Module({
-  imports: [StorageModule, PermissionModule],
+  imports: [StorageModule, PermissionModule, OrganizationsModule],
   controllers: [FilesController],
   providers: [FilesService],
   exports: [FilesService],

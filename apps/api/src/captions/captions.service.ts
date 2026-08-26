@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { WS_EVENTS } from "@arutech/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { LiveKitService } from "../livekit/livekit.service";
 import { PermissionService } from "../meetings/permission.service";
 import { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service";
+import { FeatureFlagsService } from "../feature-flags/feature-flags.service";
 
 /**
  * Live captions — host-triggered start/stop of the captions agent worker
@@ -24,6 +25,7 @@ export class CaptionsService {
     private readonly liveKit: LiveKitService,
     private readonly permissions: PermissionService,
     private readonly broadcast: RealtimeBroadcastService,
+    private readonly featureFlags: FeatureFlagsService,
   ) {}
 
   private async findRoomName(meetingId: string): Promise<string> {
@@ -37,9 +39,23 @@ export class CaptionsService {
 
   async start(meetingId: string, callerUserId: string) {
     await this.permissions.requireOwnerOrCapability(meetingId, callerUserId, "captions.manage");
+    // One of only three flags actually wired to a real gate — see
+    // docs/roadmap.md's Feature flags stage.
+    if (!(await this.featureFlags.isEnabledForMeeting("LIVE_CAPTIONS", meetingId))) {
+      throw new ForbiddenException("Live captions are disabled for this meeting");
+    }
     const roomName = await this.findRoomName(meetingId);
     await this.liveKit.startCaptions(roomName);
     await this.broadcast.publish(meetingId, WS_EVENTS.CAPTIONS_STARTED, {});
+    // The one durable record that captions were ever used in this meeting —
+    // the caption text itself never touches our database (see the class doc
+    // comment), but "was this feature used at all" is exactly what
+    // AdminAnalyticsService's feature-engagement stage needs, and this
+    // reuses the same MeetingEvent table moderation actions already log
+    // into rather than adding any new collection surface.
+    await this.prisma.client.meetingEvent.create({
+      data: { meetingId, userId: callerUserId, type: "CAPTIONS_STARTED" },
+    });
     return { active: true };
   }
 

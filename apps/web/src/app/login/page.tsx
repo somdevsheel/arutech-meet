@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { loginSchema } from "@arutech/validation";
 import { apiFetch, ApiError } from "@/lib/api-client";
@@ -9,6 +9,7 @@ import { useAuthStore } from "@/lib/auth-store";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const setSession = useAuthStore((s) => s.setSession);
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +33,7 @@ export default function LoginPage() {
         refreshToken: string;
       }>("/auth/login", { method: "POST", body: JSON.stringify(parsed.data), skipAuth: true });
       setSession(res.user, res.accessToken, res.refreshToken);
-      router.push("/dashboard");
+      router.push(searchParams.get("redirect") || "/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Login failed");
     } finally {

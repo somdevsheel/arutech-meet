@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { WS_EVENTS, type ChatMessagePayload } from "@arutech/types";
+import { WS_EVENTS, type ChatMessagePayload, type UserPresenceStatus, type UserPresenceUpdatedPayload } from "@arutech/types";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { getSocket } from "@/lib/socket";
@@ -11,7 +11,8 @@ import { NewRoomModal } from "@/components/chat/new-room-modal";
 import { GroupSettingsModal } from "@/components/chat/group-settings-modal";
 import { ChatAttachmentView } from "@/components/chat/chat-attachment-view";
 import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
-import { formatLastSeen, isOnline } from "@/lib/format-last-seen";
+import { formatLastSeen, formatLastSeenPhrase } from "@/lib/format-last-seen";
+import { PRESENCE_STATUS_META } from "@/lib/presence";
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const TYPING_STOP_DELAY_MS = 2500;
@@ -100,6 +101,7 @@ function TeamChatPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [typingUserIds, setTypingUserIds] = useState<Set<string>>(new Set());
+  const [presenceByUserId, setPresenceByUserId] = useState<Record<string, UserPresenceStatus>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingStopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wasTypingRef = useRef(false);
@@ -119,6 +121,35 @@ function TeamChatPage() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasHydrated, accessToken]);
+
+  // Real presence (docs/roadmap.md's Presence stage) — an initial bulk fetch
+  // for every member across every room in the list (covers rooms that aren't
+  // currently open, which never receive a live PRESENCE_UPDATED push — see
+  // that event's own doc comment on RealtimeGateway.broadcastPresence), then
+  // kept live for whichever room actually is open via the listener below.
+  useEffect(() => {
+    if (!rooms || rooms.length === 0) return;
+    const ids = [...new Set(rooms.flatMap((r) => r.members.map((m) => m.userId)).filter((id) => id !== user?.id))];
+    if (ids.length === 0) return;
+    apiFetch<Record<string, UserPresenceStatus>>(`/presence?userIds=${encodeURIComponent(ids.join(","))}`)
+      .then((statuses) => setPresenceByUserId((prev) => ({ ...prev, ...statuses })))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rooms]);
+
+  // Live presence updates — only ever arrive for a room this socket currently
+  // has open (ROOM_JOIN'd), same reach limitation ROOM_UPDATED has.
+  useEffect(() => {
+    if (!accessToken) return;
+    const socket = getSocket(accessToken);
+    const onPresenceUpdated = (payload: UserPresenceUpdatedPayload) => {
+      setPresenceByUserId((prev) => ({ ...prev, [payload.userId]: payload.status }));
+    };
+    socket.on(WS_EVENTS.PRESENCE_UPDATED, onPresenceUpdated);
+    return () => {
+      socket.off(WS_EVENTS.PRESENCE_UPDATED, onPresenceUpdated);
+    };
+  }, [accessToken]);
 
   // Join the selected room's realtime channel, load history, and mark it read.
   useEffect(() => {
@@ -371,6 +402,7 @@ function TeamChatPage() {
               const latest = room.messages[0];
               const unread = Boolean(latest && mine && mine.lastReadMessageId !== latest.id);
               const other = room.type === "DIRECT" ? room.members.find((m) => m.userId !== user.id) : null;
+              const otherPresence = other ? presenceByUserId[other.userId] : undefined;
               return (
                 <li key={room.id}>
                   <button
@@ -383,8 +415,11 @@ function TeamChatPage() {
                       <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-500 text-[10px] font-semibold text-white">
                         {initialsOf(roomTitle(room, user.id))}
                       </span>
-                      {other && isOnline(other.user.lastSeenAt) && (
-                        <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-success" />
+                      {otherPresence && otherPresence !== "OFFLINE" && (
+                        <span
+                          title={PRESENCE_STATUS_META[otherPresence].label}
+                          className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface ${PRESENCE_STATUS_META[otherPresence].dotClass}`}
+                        />
                       )}
                     </span>
                     <span className="min-w-0 flex-1">
@@ -414,7 +449,16 @@ function TeamChatPage() {
                   {selected.type === "GROUP" && (
                     <p className="text-xs text-ink-muted">{selected.members.length} members</p>
                   )}
-                  {otherMember && <p className="text-xs text-ink-muted">{formatLastSeen(otherMember.user.lastSeenAt)}</p>}
+                  {otherMember && (
+                    <p className="text-xs text-ink-muted">
+                      {(() => {
+                        const status = presenceByUserId[otherMember.userId];
+                        if (status && status !== "OFFLINE") return PRESENCE_STATUS_META[status].label;
+                        if (status === "OFFLINE") return formatLastSeenPhrase(otherMember.user.lastSeenAt);
+                        return formatLastSeen(otherMember.user.lastSeenAt);
+                      })()}
+                    </p>
+                  )}
                 </div>
                 {selected.type === "GROUP" && (
                   <div className="flex items-center gap-2">

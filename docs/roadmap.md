@@ -1185,3 +1185,606 @@ in this stage's code assumes exactly one).
 
 **Priority 4 is now fully closed out.**
 
+## Feature flags (Stage 27)
+
+First item of Priority 5. A minimal, real feature-flag system — no new SaaS dependency, exactly as the
+roadmap item itself scoped it.
+
+**Schema**: `FeatureFlag` (`key`, `enabled`, optional `organizationId`). A key resolves through at most two
+rows — an org-scoped override if one exists for the caller's org, else the global row, else **enabled by
+default**. That default isn't a convenience choice, it's a correctness requirement: every feature already
+shipping in this app was unconditionally on before this system existed, and introducing flags must never
+silently turn one off for a key nobody has ever touched. `FeatureFlagsService.isEnabled(key, orgId?)` /
+`isEnabledForMeeting(key, meetingId)` (resolves the org from the meeting itself, since every real call site
+needed exactly that) are the only two methods anything outside the admin controller calls.
+
+**A real Postgres constraint subtlety, caught before it became a real bug**: the natural schema is
+`@@unique([key, organizationId])`, but Postgres treats every `NULL` as distinct from every other `NULL` in
+a unique constraint — so that alone would silently allow *multiple* global rows for the same key (the case
+that matters most, since the global row is the default everyone gets). Fixed by hand-editing the generated
+migration to add two **partial** unique indexes instead (`WHERE organization_id IS NULL` /
+`WHERE organization_id IS NOT NULL`) — something Prisma's schema DSL can't express directly. Confirmed via
+`\d feature_flags` that both partial indexes exist exactly as intended. Since no compound-unique field
+exists in the Prisma schema anymore, `FeatureFlagsService`'s upsert is written by hand (`findFirst` then
+`create`-or-`update`-by-id) rather than `prisma.featureFlag.upsert()`, which needs a unique `where` target
+that no longer exists — an acceptable non-atomic window for a low-traffic, admin-only table.
+
+**Three flags actually wired to a real, server-enforced gate** (not every feature in the app — deliberately
+scoped to a representative set spanning meeting and classroom features, per the roadmap item's own
+"maps cleanly" framing rather than an exhaustive sweep of every controller):
+
+- `WHITEBOARD` — checked in `WhiteboardService.getOrCreate`, the one real choke point every whiteboard
+  interaction (open the panel, save a page, add a page) already goes through, **and** separately in the
+  WS `whiteboard:op` handler in `RealtimeGateway` — live stroke sync bypasses `WhiteboardService` entirely
+  (it's ephemeral, never persisted per-op), so gating only the REST side would have left live drawing
+  reachable even with the flag off. Found by reading the gateway's own doc comment on that handler, not
+  by trial and error.
+- `BREAKOUT_ROOMS` — checked in `BreakoutRoomsService.create`, which already fetched the `meeting` row
+  for its `orgId` anyway.
+- `LIVE_CAPTIONS` — checked in `CaptionsService.start`, tying directly into last stage's feature.
+
+**Admin UI**: `/admin/feature-flags`, new nav item. Lists every known key (the three wired ones, always
+shown even with zero rows yet, plus any custom key an admin has created) with a one-click global
+enable/disable toggle and per-organization overrides (add/toggle/remove, org picker sourced from the
+existing `GET /admin/organizations`). A free-text field lets an admin create any other key too — it just
+has no effect until some service actually calls `isEnabled` with it, stated plainly in the page's own copy
+rather than implying every key does something.
+
+**Client-side hiding, not the security boundary**: `GET /meetings/:id/feature-flags` resolves all three
+known keys for one meeting in a single call (one `orgId` lookup shared across all three checks) — the
+meeting UI uses this to hide the Whiteboard tab, the Breakout Rooms tab, and the Captions toolbar control
+when disabled, so a participant never sees a button that would just 403. The real gate stays entirely
+server-side regardless; hiding the button is purely so a disabled feature doesn't look broken.
+
+13 new unit tests: 7 on `FeatureFlagsService` itself (default-enabled precedence, org-override-beats-global,
+create-vs-update upsert paths, `isEnabledForMeeting`'s org resolution), 3 new flag-gating tests on
+`WhiteboardService`'s first-ever spec file, 2 on `BreakoutRoomsService`'s first-ever spec file, and 1 more
+on `CaptionsService` (which already had 3 from Stage 26). Full API suite now 172 tests across 23 suites,
+typecheck/lint clean on `apps/api` and `apps/web`.
+
+**Verified live** (`.run-driver/drive-feature-flags.js`, screenshots in `.run-driver/screenshots/
+feature-flags/`) with a promoted admin and two real meeting participants: before disabling, the Whiteboard
+tab is visible and a direct API call to it succeeds (200). The admin's real toggle click flips it to
+"Disabled globally". A direct API call immediately afterward — not just checking the UI — now returns a
+genuine 403, proving server-side enforcement rather than a client-side illusion. A participant who joins
+*after* the flag was disabled never sees the Whiteboard tab at all, while unrelated tabs (Breakout) stay
+untouched. Re-enabling flips the API call back to 200. A key that was never configured at all (BREAKOUT_
+ROOMS, untouched this whole run) correctly defaults to enabled, confirmed by successfully creating real
+breakout rooms through it. Zero unexpected console errors (the one logged entry is the browser's own
+network log of the deliberately-triggered 403 fetch, not a bug).
+
+**A real environment gap hit and worked around**: this session's environment has no seeded system-admin
+account (`admin@arutech.dev` from `seed.ts` was never run against this particular database). Registered a
+fresh user through the real UI and promoted it to `ADMIN` via a direct `UPDATE users SET system_role =
+'ADMIN'` — the same class of documented, honest DB-patch workaround used earlier for the LiveKit webhook
+gap, not a shortcut around anything this stage itself needed to prove. Also had to log the freshly-promoted
+user out and back in before their session reflected the new role: `AdminLayout`'s client-side redirect
+reads the Zustand-persisted `user` object from login time, which doesn't update just because the database
+row changed underneath it — a real, if minor, staleness behavior worth knowing about (a promoted admin's
+existing browser session won't see admin nav until they next log in), not something this stage needed to
+fix since `SystemAdminGuard` re-checks the database on every request regardless.
+
+**Not yet built**: `AI_TRANSCRIPTION` as an actually-wired key (the brief's own named example — Stage 8's
+and Stage 26's services could each start checking a key at any time, no schema change needed, just wasn't
+in this stage's chosen representative set), and a hosted flag service (LaunchDarkly-style) as a later swap
+behind the same `FeatureFlagsService` interface once flag volume ever justifies it — explicitly noted as a
+non-goal for this pass by the roadmap item itself.
+
+## Organizations (Stage 28)
+
+Second item of Priority 5. `Organization`/`Membership` already existed (Stage 2) with a minimal service —
+create, list mine, add a member by known user id — but no invite flow, no member-management UI outside the
+read-only system-admin dashboard, and the `storageLimitBytes`/`meetingConcurrencyLimit` fields on
+`Organization` had sat unread since they were added. This stage builds the real version of all three.
+
+**A real mail service, not a stub** — the most consequential discovery of this stage. `nodemailer` was
+already a declared dependency in `apps/api/package.json`, and `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/
+`SMTP_PASSWORD`/`SMTP_FROM`/`SMTP_SECURE` had all existed in `packages/config/src/env.ts` since before this
+session — configured, validated, and never once used by any service. The same "real scaffolding waiting to
+be wired up" shape this codebase has had before (`FileAsset`, `MeetingInvite`, `ChatRoom.photoUrl`). New
+`MailService` (`apps/api/src/mail`) wraps `nodemailer.createTransport` over those exact env vars — no new
+config surface invented, just finally read. Local dev already had a real inbox to send to: the
+`docker-compose.yml` `mailhog` service. This meant "invite by email" could be, and was, verified against a
+**genuine SMTP send** — read back through MailHog's own API in the live-verification driver — not merely
+"the endpoint returned 200."
+
+**`OrganizationInvite`**: a real invite-acceptance flow, distinct from the pre-existing `addMember` (which
+adds someone immediately, no consent step, and requires already knowing their account id). Works whether
+or not the invited email has an account yet — the email always contains the same accept link
+(`/organizations/invites/:token`); an unauthenticated visitor is routed through register/login first
+(`redirect=` query param, added to both pages this stage — a small, generically useful addition, not
+invite-specific plumbing) and lands right back on the same accept page. `acceptInvite` only ever succeeds
+if the now-authenticated account's email matches the invite's email **exactly** — a valid token alone
+isn't sufficient, precisely so a forwarded or leaked invite link can't be redeemed by someone it wasn't
+sent to. Re-inviting an already-`PENDING` email refreshes the row in place (new token, resent email) rather
+than erroring, matching how most real products treat "invite someone twice."
+
+Schema additions were otherwise straightforward: `OrganizationInvite` itself, and a new `ORG_INVITE`
+`NotificationType` value (its own small migration) for notifying an invited email that already has an
+account. `OrganizationInvite` deliberately has **no** unique constraint on `(orgId, email)` — Stage 27's
+`FeatureFlag` table needed one (with the partial-index fix that stage found), but multiple past invites to
+the same address over time (declined, expired, re-invited later) are legitimate history here, not a
+conflict to prevent — the lesson from Stage 27 was applying the right constraint, not applying *a*
+constraint everywhere invite-shaped data shows up.
+
+**Real member management**: role changes are **owner-only**, not owner-or-admin — an admin promoting
+another admin (or itself to owner) is exactly the privilege-escalation loop that restriction closes.
+Removing a member, changing a member's role away from `OWNER`, and a member leaving on their own are all
+independently protected against ever leaving an org with zero owners (`assertNotSoleOwnerRemoval`,
+checked by counting `OWNER` memberships, not just checking the target's own role) — verified live by
+confirming the sole owner's own `/leave` call genuinely 403s.
+
+**Per-org limits, actually enforced at the point of the real action, not a separate checked-then-forgotten
+call**: `MeetingsService.create` calls `OrganizationsService.assertMeetingConcurrencyOk(orgId)` whenever a
+meeting is explicitly created under an org, counting genuinely `LIVE` meetings (not merely scheduled/
+waiting) against `meetingConcurrencyLimit`. `FilesService.presignMeetingUpload` calls `assertStorageOk`
+before minting a presigned URL, summing the org's `FileAsset.sizeBytes` — which meant fixing a real, related
+gap found in the process: `FileAsset.orgId` had existed in the schema but was **never populated** by that
+upload path, so any storage aggregate over it would always have read zero usage no matter how much was
+actually uploaded. Now set from the meeting's own `orgId` at presign time. Deliberately scoped to the one
+upload path with a size known up front (`FileAsset`), not server-side recordings — a recording's final size
+isn't known until Egress finishes, and starting one is already host-gated; blocking it on a size estimate
+would be different, larger work than this pass covers.
+
+**Real UI**: `/organizations` (list + create) and `/organizations/:id` (roster, invite-by-email form with
+its pending-invites list, role dropdowns, remove/leave) — genuinely member-facing, not the read-only
+system-admin view. `/organizations/invites/:token` is the accept-invite page the email link actually opens.
+
+19 new `OrganizationsService` unit tests (invite precedence and refresh, accept-invite email matching/
+expiry/already-responded, sole-owner protection across all three removal paths, owner-only role changes,
+both limit checks) plus 3 new `MeetingsService.create` tests for the concurrency check. Full API suite now
+194 tests across 24 suites, typecheck/lint clean on `apps/api` and `apps/web`.
+
+**Verified live** (`.run-driver/drive-organizations.js`, screenshots in `.run-driver/screenshots/
+organizations/`) with two real people end to end: A creates a real org through the real UI, invites B (who
+has no account at all) by email. The email genuinely arrives — confirmed by querying MailHog's own message
+API directly, not trusting the app's own "sent" message — and the real accept token is extracted from the
+real delivered email body (a quoted-printable soft-line-break gotcha in that extraction was itself a real
+bug caught and fixed mid-drive, not a hypothetical). B follows that exact link, registers with the
+pre-filled email, and lands back on the same accept page automatically; accepting creates a real
+membership, visible to A after a refresh with no stale state. A promotes B to admin via the real dropdown,
+confirmed by reloading and reading the control back. The sole-owner's own `/leave` call is confirmed
+rejected (403) via a direct fetch, not just inferred from the UI. Both limits were flipped live via direct
+SQL (this environment has no settings UI for them yet — a real, stated gap, not silently worked around) and
+confirmed via real API calls on both sides of the threshold: blocked over the concurrency limit, allowed
+under it; blocked over the storage limit (after correctly requiring the caller to actually be a meeting
+participant first — creating a meeting doesn't join it), allowed under it. A finally removes B for real,
+confirmed gone from the roster. The three console errors logged are exactly the three deliberately-
+triggered negative-path fetches (the two limit rejections and the sole-owner-leave rejection), not bugs.
+
+**Not yet built**: a settings UI to change an org's own `meetingConcurrencyLimit`/`storageLimitBytes` (only
+adjustable via direct DB access today — this stage proved the *enforcement* works, not that an owner can
+self-serve new limits, which would need its own billing-adjacent conversation this project's brief keeps
+explicitly out of scope); the "New meeting"/"Schedule meeting" UI still doesn't expose picking which org a
+meeting belongs to, so `orgId` in practice is only ever set via direct API use today, not the current
+click-through flow — the limits are for real regardless, just not yet reachable from that specific screen.
+
+## Teams (Stage 29)
+
+Third item of Priority 5. A `Team` is an org-scoped sub-group with its own membership and its own real-time
+chat room — the same relationship shape `ChatRoom`/`Meeting` already have to a `Class` (one dedicated chat
+room per parent object, created alongside it, never shared). Deliberately distinct from a Team *Chat*
+`GROUP` room (Stage 23): a Team is a persistent org sub-unit with roles (`LEAD`/`MEMBER`) and its own
+membership lifecycle (join/leave/remove, sole-lead protection), not an ad-hoc multi-person conversation
+someone assembled by hand.
+
+**Almost no new chat backend, by design** — the entire point of confirming `ChatService`'s authorization
+shape before writing a line of `Team` code. Every room-scoped method (`requireMember`, `roomHistory`,
+`persistRoomMessage`, attachment presign/download, `markRoomRead`, edit/delete) only ever checks for a
+`ChatMember` row against a given `chatRoomId` — never the room's `type`. `Team.create` creates its
+`ChatRoom` with `type: TEAM` and seeds the creator's own `ChatMember` row in the same nested Prisma write;
+`Team.join`/`leave`/`removeMember` keep a `TeamMember` row and its paired `ChatMember` row in sync inside a
+`$transaction`. Once that sync holds, real send/receive/edit/delete/attachments/read-receipts all work on a
+Team room with zero new endpoints — confirmed live, not just by reading the code. "Start a meeting" is the
+identical client-side pattern Stage 23 shipped for Team Chat groups, reused verbatim: `POST /meetings` then
+a `ROOM_MESSAGE` socket emit with the join link — no new backend endpoint for it either.
+
+**Sole-lead protection**, the same shape as Stage 28's sole-owner protection: before demoting a `LEAD` to
+`MEMBER`, removing a `LEAD`, or letting a `LEAD` leave on their own, `assertNotSoleLeadRemoval` counts the
+team's other `LEAD` rows and 403s if the action would leave zero — verified live via direct fetches on both
+sides of the boundary (demoting one of two leads: 200; demoting the resulting sole lead: 403; that same
+sole lead leaving: 403).
+
+**New frontend**: a "Teams" section on `/organizations/:id` (list as cards with member counts, inline
+create form) and a new `/teams/:id` detail page — header (LEAD-only inline rename, member count, "Start a
+meeting", join/leave, LEAD-only delete), a `TeamChatPanel` (deliberately v1-scoped exactly the way Stage
+23 shipped group chat before Stage 24 layered on edit/forward/voice/typing — send/receive/edit/delete work
+now, forward/voice/typing don't yet, though nothing server-side blocks adding them since it's the same
+`ChatService` infrastructure), and a member sidebar with LEAD-only role/removal controls.
+
+**Two real bugs found and fixed during live verification, not worked around**:
+1. The member sidebar originally rendered a member's role badge *or* the LEAD-only management buttons,
+   never both — so a LEAD looking at another member's row had no way to see that member's actual role
+   except by inferring it from a button's current label. Caught because it broke a live assertion (checking
+   for literal "LEAD" text in a promoted member's row from a LEAD's own view). Fixed by making the role
+   badge always render, with the management buttons appended alongside it rather than replacing it — a
+   real UI fix, not a test workaround.
+2. `TeamChatPanel`'s socket message listener appended every incoming `ROOM_MESSAGE` unconditionally,
+   without deduping by message id. React Strict Mode's dev-only double-effect-invocation surfaced this as
+   a live "duplicate key" console warning (and a duplicated message bubble) during the drive. The
+   already-shipped `chat/page.tsx` room listener has exactly this guard
+   (`prev.some((m) => m.id === payload.id) ? prev : [...prev, payload]`) — this panel simply didn't carry
+   it over when written. Added the same guard; the duplicate-key warning and duplicate bubble are gone on
+   re-run.
+
+16 new `TeamsService` unit tests (create's org-membership requirement and nested-write shape, join/leave
+including the already-a-member conflict and sole-lead leave protection, member removal/role-change LEAD
+requirement and sole-lead protection, update/delete LEAD requirement and soft-delete). Full API suite now
+210 tests across 25 suites, typecheck/lint clean on `apps/api` and `apps/web`.
+
+**Verified live** (`.run-driver/drive-teams.js`, screenshots in `.run-driver/screenshots/teams/`) with two
+real people end to end: A registers, creates a real org, creates a real team through the real UI and is
+shown as `LEAD`. B registers, is added to the org (Stage 28's already-verified flow, not re-tested here),
+visits the team before joining and sees the chat panel genuinely locked behind a "Join this team" prompt.
+B joins for real (`TeamMember` + `ChatMember` both created); A reloads and the two exchange live messages
+over the actual socket room, each side receiving the other's message with no manual refresh. A promotes B
+to `LEAD` via the real sidebar control, confirmed by reload. A clicks "Start a meeting" and is navigated to
+a genuinely newly-created `/meeting/:code`; B sees that exact join link appear live in the team chat with
+no action of their own. Sole-lead protection is confirmed on both sides of the boundary via direct fetches
+(200/403/403, as above). Finally B — now the team's sole lead after A's earlier demotion — removes A from
+the team for real; a `DELETE` request genuinely returns 200 and A no longer appears in the roster on
+re-render, while A's earlier chat messages correctly remain in history unaltered (removing someone from a
+team doesn't retroactively edit the room's message log — the first version of this assertion was itself a
+false positive, from a page-wide `text=` selector matching A's name as it still appeared as a chat message
+sender, not as a member row; fixed by giving the member `<ul>` a real `aria-label` and scoping every
+member-row locator in the driver to it). The four console entries logged across both pages are exactly the
+two deliberately-triggered negative-path 403 fetches (on B's side) and two `NotFoundError: Requested device
+not found` entries (on A's side, from headless Chrome having no camera when "Start a meeting" navigates
+into the meeting room) — not bugs.
+
+**Not yet built**: forwarding, voice messages, and a typing indicator in `TeamChatPanel` (server-side
+already supports all three on this room type — v1 UI scope trim only, the same shape as Stage 23→24); any
+UI for reordering/archiving teams; and — same as Organizations — no click-through flow yet sets a Team's
+`orgId` context when starting a meeting other than through the Team page itself.
+
+## Custom branding (Stage 30)
+
+Fourth item of Priority 5. `Organization.logoUrl`/`brandColor` had existed in the schema since Stage 2,
+unread by anything — this stage is what finally reads them, plus one small schema addition
+(`Organization.joinPageMessage`, a short welcome line) and a real theming layer, not just a settings form
+that writes to columns nobody looks at.
+
+**Deliberately extends `Organization` directly, not a new `OrganizationBranding` table** — the same call
+Stage 28 already made for the per-org limits (`storageLimitBytes`/`meetingConcurrencyLimit` live as flat
+columns, not a satellite settings model), and it matches how `logoUrl`/`brandColor` were already shaped.
+`PATCH /organizations/:id/branding` is owner/admin (`requireManager`, the same bar as `addMember`) — this
+is ordinary org configuration, not the privilege-escalation-sensitive kind of change Stage 28's
+owner-only `updateMemberRole` guards against.
+
+**Reused, not reinvented, the LiveKit retheme mechanism this app already had** — `globals.css` has
+retheme'd `@livekit/components-styles`' default palette via `--lk-*` custom properties since early in this
+project. A per-org brand color is applied as an inline-style override of that exact same
+`--lk-accent-bg`/`--lk-control-active-bg` pair, scoped to the one `[data-lk-theme="default"]` wrapper
+around the meeting join screen's `<PreJoin>` — when an org has a `brandColor`, its actual "Join meeting"
+button (and every other themed PreJoin control) renders in that color; when it doesn't, the wrapper is
+untouched and the app's own default applies.
+
+**A real, previously-invisible bug found and fixed live, not papered over in the test** — verifying that
+"the app's own default applies" turned up that it didn't: the unbranded join button rendered LiveKit's own
+stock blue (`#1f8cf9`) instead of this app's intended brand blue (`#3b6fe0`). Cause: `globals.css`'s
+`[data-lk-theme="default"]` retheme block and `@livekit/components-styles`' own `[data-lk-theme="default"]`
+block have identical specificity, so the tiebreaker is source order — and the library's stylesheet, imported
+at the page level (`import "@livekit/components-styles"` in `meeting/[code]/page.tsx`), lands after
+`globals.css` in the document and silently won on every LiveKit surface, not just this new one. This app's
+entire retheme of LiveKit's prefabs had been a no-op since it was written, just never caught because
+LiveKit's blue and this app's brand blue are both "a blue" at a glance in a screenshot. Fixed by doubling
+the attribute selector (`[data-lk-theme="default"][data-lk-theme="default"]`, a standard specificity-bump
+trick) so the app's retheme wins regardless of import order — verified by asserting the exact computed
+`background-color` on the real button, not just eyeballing a screenshot.
+
+**Real UI**: a "Branding" section on `/organizations/:id` (owner/admin only) — logo URL, a native color
+picker paired with a hex text input (both write the same state), a join-page message textarea, a live
+preview swatch, save/persist feedback. The meeting join screen (`/meeting/:code`, reachable by guests with
+no auth) renders the org's logo above the title and its message below it when the meeting's org has any
+branding set.
+
+4 new `OrganizationsService.updateBranding` unit tests (owner/admin requirement, partial-field writes,
+explicit-null clears a field). Full API suite now 214 tests across 25 suites, typecheck/lint clean on
+`apps/api` and `apps/web`.
+
+**Verified live** (`.run-driver/drive-org-branding.js`, screenshots in `.run-driver/screenshots/
+org-branding/`): A creates a real org, sets a real logo (an inline data-URI, to keep the drive independent
+of outbound network access), brand color, and join message through the real settings UI, saves, and the
+values survive a reload (genuinely persisted, not just component state). B — added as a plain `MEMBER` —
+never sees the Branding section in the UI, and a direct `PATCH .../branding` from B is confirmed 403. A
+creates a real org-scoped meeting (no click-through org picker in "New meeting" yet — same accepted gap
+Stage 28/29 already documented, so this used a direct API call like those stages did) and a genuinely
+unauthenticated guest browser context opens its join screen: the real logo and message render, and the
+"Join meeting" button's actual computed `background-color` matches the org's brand color exactly (not
+merely "a hex string is stored somewhere"). As a negative case, A's own personal (non-org) instant meeting,
+started through the real "New meeting" dashboard button, shows no logo and its join button's computed
+color is confirmed to be the app's own default accent — proving the override is genuinely scoped to
+branded meetings only. The five console entries logged across A/B/guest are exactly the expected
+`NotFoundError: Requested device not found` (headless Chrome previewing camera/mic on PreJoin screens, ×4)
+and the one deliberately-triggered negative-path 403 (on B's side) — not bugs.
+
+**Not yet built**: an image-upload flow for the logo (today it's a plain URL, same convention as
+`User.avatarUrl`/`ChatRoom.photoUrl` — no presigned-upload pipeline for any of the three yet); applying org
+branding anywhere beyond the meeting join screen (e.g. an org-scoped dashboard header) — the join screen was
+chosen as the one surface where an external, often-guest audience actually benefits from seeing it, matching
+how real products (Zoom, Meet) brand the join experience specifically; and the roadmap's original phrasing
+of this item as "login-page copy" — this app has no per-org login page to brand (auth is one shared
+`/login` regardless of org), so that was read as "the join screen's welcome copy," the closest real
+equivalent, and implemented as `joinPageMessage`.
+
+## Global search breadth (Stage 31)
+
+Fifth item of Priority 5. `GET /search` (Stage 11) covered three categories — meetings, contacts, notes —
+scoped to the caller. This stage adds six more: chat messages, files, recordings, transcripts, courses,
+and classes/assignments. Each is a genuinely additive `Promise.all` branch, not a rearchitecture — exactly
+as the roadmap predicted — and each reuses a visibility rule this codebase had already defined for that
+model elsewhere, rather than inventing a new one: chat messages via `ChatMember` (the same type-agnostic
+membership check `ChatService` uses everywhere, so a MEETING/CLASS/TEAM/GROUP/DIRECT room's messages are
+all searchable the same way); files via uploader/meeting-participant/chat-member/class-teacher-or-student
+involvement; recordings and transcripts via the exact meeting-involvement clause
+`RecordingsService.listMine` already used for its "Recent recordings" home-page card; courses via
+`CoursesService.listMine`'s existing definition; classes/assignments via `ClassTeacher`/`ClassStudent`.
+Never a cross-user search — verified live, not assumed.
+
+**Each new result category resolves its own real navigation target server-side** (a `href` field), rather
+than pushing per-type routing logic onto the client: a chat-message or file result opens the exact room it
+came from (`/meeting/:code`, `/classes/:id`, `/teams/:id`, or `/chat?room=:id`, resolved from the room's
+real `type`); a recording opens `/recordings`; a transcript segment and a course/class/assignment each open
+their real owning page.
+
+**Recordings/transcripts were seeded via direct SQL for verification, not produced by a real recording** —
+LiveKit Egress remains the documented, permanently-accepted gap this environment has had since Stage 7/26
+(no egress container wired to actually record). Rather than skip these two categories, real `MeetingRecording`/
+`MeetingTranscript`/`TranscriptSegment` rows were inserted directly against a real meeting a real user
+owns, proving the search query, scoping, and href-resolution logic against rows shaped exactly like ones a
+working Egress would eventually produce — the same honesty convention this project has used for every other
+Egress-dependent gap, stated plainly rather than silently worked around.
+
+13 new `SearchService` unit tests (scoping conditions for chat messages/files/recordings/courses/classes,
+href-resolution priority for files with multiple possible contexts, href resolution per chat-room type).
+Full API suite now 227 tests across 26 suites, typecheck/lint clean on `apps/api` and `apps/web`.
+
+**Verified live** (`.run-driver/drive-global-search.js`, screenshots in `.run-driver/screenshots/
+global-search/`) with three real people: A sends a real chat message and uploads a real file attachment in
+a real GROUP room with B, creates a real course/class/assignment, and starts a real meeting (its
+recording/transcript fixtures seeded as described above). Searching from A's own session surfaces all seven
+new categories correctly labeled and linked — confirmed by clicking an actual chat-message result and
+landing back in the real room, and an actual course result and landing on the real course page. B — a real
+member of the chat room and nothing else — sees the chat message and file (real `ChatMember`-based access)
+but genuinely does not see A's course, class, or recording (no relationship to any of them). C — related to
+none of it — searches the same query and sees literally "No results", the dropdown's own real empty state,
+not a UI that just happens to render nothing. Zero console errors on any of the three pages across the
+entire run.
+
+**Not yet built**: full-text ranking (every new category is the same ILIKE `contains` approach the original
+three categories and Stage 8's per-meeting transcript search already used — ranked/fuzzy search would be a
+follow-up, not something this pass changed); a dedicated `/search` results page (results only ever render in
+the topbar dropdown, capped at 6-8 per category — there's no "see all results" page to page through more).
+
+## Presence (Stage 32)
+
+Sixth item of Priority 5. Stage 24's "online status v1" was a recency timestamp
+(`User.lastSeenAt`, bumped on WebSocket connect, read back as "Online" within a 2-minute window or "Last
+seen X ago") — real, but not live: two people who were both genuinely online right now looked identical to
+someone who'd merely connected within the last two minutes, and there was no away/busy/DND concept at all.
+This stage replaces the *online/offline* judgment with a real one and adds the three explicit statuses,
+without touching `lastSeenAt` itself (still the honest fallback once someone's genuinely offline).
+
+**`PresenceService`, Redis-backed, exactly where this repo's own `RedisModule` doc comment already said
+presence would live.** Two keys per user: `presence:sockets:{userId}`, a Set of that user's currently
+connected Socket.IO socket ids (multi-tab/multi-device correct by construction — a second tab closing
+doesn't make the first tab's connection stop counting), and `presence:status:{userId}`, an explicit
+AWAY/BUSY/DND override that only ever exists alongside a non-empty sockets set. Both carry a 120s TTL,
+refreshed on every connect/heartbeat/status-change — not belt-and-suspenders over
+`RealtimeGateway.handleDisconnect` firing (Socket.IO's own ping/pong keepalive already makes that fairly
+reliable even for a crashed tab), but what actually protects against the case that matters more: the
+*gateway process itself* crashing mid-connection, where `handleDisconnect` never runs at all and nothing
+else would ever clear these keys. The client emits a `PRESENCE_HEARTBEAT` every 45s (mounted once, in
+`AppShell`) purely to keep that TTL alive.
+
+**Two channels for reading it back, deliberately different, both real**: a real-time push
+(`PRESENCE_UPDATED`) to every `chatroom:{id}` a user belongs to whenever their status changes — the exact
+"who's actually online right now in Team Chat" case this item named — and a bulk `GET /presence?userIds=`
+REST endpoint, polled every 20s by the Contacts page. The split isn't arbitrary: a chat room is a real,
+persisted channel to push into (the same `chatroom:{id}` reach `ROOM_UPDATED` already has — only clients
+with that room open receive it), but "Contacts" has no persisted per-user relationship at all (it's
+entirely derived from meeting co-participation, see `ContactsService`) — there's no channel to push a
+presence change *into* for someone who merely shares meeting history with you, so polling while the page is
+open is the honest v1 answer there, not an oversight.
+
+**A full disconnect clears any explicit status** — reconnecting after a genuine offline period always
+starts fresh at ONLINE rather than resuming whatever AWAY/BUSY/DND was set before going offline. A
+deliberate v1 scope call (real products like Slack persist DND across reconnects with more machinery this
+pass didn't build), stated plainly rather than silently different from expectation.
+
+**A real bug found live, not papered over in the test**: verifying the OFFLINE transition showed a
+definitively-offline user still reading as "Online" in the UI for up to two more minutes. Root cause: the
+frontend's fallback text for "no live presence status" (`formatLastSeen`, Stage 24's own recency guess) was
+being reused even in the branch where a real, certain OFFLINE status *was* already known — and
+`handleDisconnect` bumps `lastSeenAt` to "now" the moment someone disconnects, so that old heuristic's own
+2-minute "Online" window re-triggered immediately on the freshly-bumped timestamp. Fixed by splitting
+`format-last-seen.ts` into `formatLastSeenPhrase` (always "Last seen X ago" — used whenever a real presence
+status, even OFFLINE, is known) and `formatLastSeen` (the old recency guess, now correctly scoped to only
+the narrow window before any real presence data has loaded at all).
+
+**Real UI**: a colored status dot on the account-menu avatar (green/yellow/red/purple for
+Online/Away/Busy/DND) with a picker to set it explicitly, in `AppShell` so it's on every authenticated page;
+the same colored dot + label wherever presence was already shown (Contacts list, a DIRECT Team Chat room's
+sidebar dot and header). GROUP rooms still only show a member *count* in the header, never per-member
+presence — a deliberate v1 scope trim, not something this pass touched.
+
+13 new `PresenceService` unit tests (connect/disconnect socket-set semantics, multi-tab correctness, TTL
+heartbeat, explicit status set/clear, bulk lookup) against a minimal in-memory fake Redis client (no new
+test dependency). Full API suite now 240 tests across 27 suites, typecheck/lint clean on `apps/api` and
+`apps/web`.
+
+**Verified live** (`.run-driver/drive-presence.js`, screenshots in `.run-driver/screenshots/presence/`) with
+three real people. Team Chat push path: the moment B (already connected from registering) opens a DIRECT
+room with A, A sees B's real ONLINE dot with zero reload; B sets Busy then Do Not Disturb via the real
+account-menu UI and A sees both live; B's entire browser context is closed (a genuine crashed-tab-equivalent
+disconnect, not a clean `socket.disconnect()`) and A sees B go OFFLINE live, correctly falling back to "Last
+seen just now" — confirming the bug fix above, not just the happy path. Contacts poll path: A and C
+genuinely join a real instant meeting together (fake media devices, real PreJoin click-through) to establish
+a real co-participation record — since this sandboxed LiveKit `--dev` instance has no webhook configured
+(the same documented, accepted gap Stage 26/31 already have), the resulting `MeetingParticipant` rows were
+promoted from `ADMITTED` to `JOINED` via direct SQL to simulate what a working webhook would have done,
+exactly as Stage 31 did for recordings/transcripts; C then shows up as Online on A's real Contacts page,
+sets their own status to Away via the real UI, and A's page picks it up on its next real poll cycle — no
+reload. Zero console errors across all three pages for the entire run.
+
+Two bugs were caught and fixed mid-drive that turned out to be test artifacts, not product bugs, and are
+recorded here because ruling that out took real diagnosis, not an assumption: a standalone `socket.io-client`
+diagnostic (`socket.io.engine.close()`) initially seemed to show a user staying "online" forever after a
+"disconnect" — turned out to be the client's own automatic reconnection racing back in with a new socket id,
+correctly keeping the user online (a genuine network blip *should* look like nothing happened) — confirmed
+by a second diagnostic using a real, full browser-context closure instead, which transitioned to OFFLINE
+within seconds as expected. The meeting-join step failing for C also traced to real, correct app behavior
+(the default `waitingRoomEnabled: true` meant C, not the host, needed manual admission) rather than a bug —
+fixed by creating that one test meeting with `waitingRoomEnabled: false`.
+
+**Not yet built**: per-member presence in a GROUP room's header (count only, as noted above); persisting an
+explicit status across a full reconnect; a settings toggle for the heartbeat interval or presence TTL
+(fixed constants for now, matching how most of this app's other tunables are handled at this stage).
+
+## Moderation (Stage 33)
+
+Seventh item of Priority 5. Three real, independent pieces: report-participant, block-participant extended
+into a live meeting, and domain restrictions — each landing on infrastructure this codebase already had,
+not a rearchitecture.
+
+**Report-participant**: a new `Report` model + a real admin review queue (`/admin/reports`), explicitly
+distinct from `AuditLog` (which records actions a moderator/admin actually *took*, never complaints
+*raised* — see the schema's own doc comment on `Report`). `POST /meetings/:meetingId/reports` — reachable
+by *any* real participant of that meeting, not just moderators, reusing `PermissionService.getParticipant`
+for "were you actually there" rather than inventing a second check; deliberately not filtered to only
+currently-ADMITTED status either, since reporting the person who got you removed is exactly a real use
+case. `reportedUserId` xor `reportedGuestName` (never neither, never both) — a guest with no account still
+gets a real, denormalized name snapshot on the report, the same pattern `ChatMessage.forwardedFromSenderName`
+already established for "nothing to look up once the meeting ends." The admin queue (`GET`/`PATCH
+/admin/reports`) is a genuinely new admin section, not folded into the existing content/audit views —
+own controller, own nav item, and a real "Open reports" stat card on the admin dashboard linking straight
+to it.
+
+**Block-participant, extended into a live meeting**: reuses Priority 3's `BlockedUser` table and semantics
+exactly — a new `ParticipantsService.block` does everything `remove` already does (LiveKit removal, status
+`REMOVED`, audit log) plus a real `BlockedUser` row from the acting moderator to the target, via
+`ContactsService.block`. That's a deliberate, real side effect, not an oversight: blocking someone out of a
+meeting also blocks their DMs/calls with you from that point on, the same as blocking from Contacts already
+does — "I never want to hear from this person again" is one action, not two. Guests can be removed the
+normal way but not blocked (`BlockedUser` needs two real accounts; nothing to attach a block to once the
+meeting ends). The join-time gate this powers is directional, not the existing symmetric `isBlocked` check
+(`ContactsService.hasBlocked`, new) — specifically "has *this meeting's owner* blocked this joiner", so a
+co-host's block doesn't retroactively wall someone out of the *owner's* other meetings, only the blocker's
+own.
+
+**Domain restrictions**: `MeetingSettings.allowedEmailDomains` (a bare-domain string array, empty = no
+restriction), checked at join time right after the password check. The owner is always exempt; a guest is
+refused outright once the list is non-empty (no account email to check against at all). Real settings UI:
+the one place this app already had live settings-editing (`PersonalRoomSettingsModal`, PATCHing the same
+`/meetings/:id/settings` every meeting uses) gained a comma-separated domain input — not a new settings
+surface invented for this stage.
+
+**A real, pre-existing bug found and fixed live, unrelated to any of the above three features but caught
+by driving them**: the Participants panel was showing every participant's raw *email address* as their
+display name, to everyone else in the meeting — `RealtimeGateway.onJoinMeeting` built each
+`ParticipantPresencePayload` from `client.data.email` (the JWT's own email claim) rather than the
+participant's real display name. Live-driving the Report flow (which needed to click a specific named row)
+is what surfaced it — the panel read `modA981287@arutech.dev`, not `Mod A`. Fixed by resolving the real
+`User.displayName` (or `guestName` for a guest, who has no `User` row at all) at the moment presence is
+broadcast, with the email kept only as a last-resort fallback for the practically-impossible case of a
+mid-session deleted account. A real privacy leak this codebase has had since presence was first written,
+not something these three moderation features introduced — worth fixing regardless of which stage happened
+to catch it.
+
+12 new backend unit tests (`ReportsService`: participant-check, create, admin listing/filtering, resolve
+with distinct resolve/dismiss audit actions — 8; `ParticipantsService.block`: capability requirement,
+real removal, real `BlockedUser` creation, audit action, guest refusal — 5) plus 8 new
+`MeetingsService.join` tests (domain allow/refuse, owner exemption, guest refusal, block allow/refuse,
+owner never checked against their own block). Full API suite now 261 tests across 29 suites, typecheck/lint
+clean on `apps/api` and `apps/web`.
+
+**Verified live** (`.run-driver/drive-moderation.js`, screenshots in `.run-driver/screenshots/moderation/`)
+with six real people. B reports A for Harassment with real details, from the real Participants panel, in a
+real meeting with real (fake-camera) video tracks; a freshly-promoted real admin opens `/admin/reports`,
+confirms the reporter/reported/reason/details/meeting all read back correctly, resolves it with a note, and
+confirms it moves out of the Open filter and shows the note under Resolved. A blocks C from the same real
+panel — confirmed by C's own page live-transitioning to the real "removed" screen, not just an API 200 — and
+then confirmed the block genuinely outlives that one meeting: a brand-new meeting created by A afterward
+refuses C's join with a real 403. Domain restrictions were set through the real personal-room settings UI,
+confirmed persisted after a reload, then verified from both sides of the boundary: D (a real
+`@restrict.dev` account) joins normally, E (a real but non-matching account) is refused with a real, visible
+error at the lobby and never reaches the in-meeting state, and a genuine unauthenticated guest is refused
+outright (403) via a direct join-as-guest call. The three console entries logged (on C's and E's pages) are
+exactly the three deliberately-triggered negative-path 403s above — not bugs.
+
+**Not yet built**: reporting/blocking from outside a live meeting (e.g. from Contacts or chat history — both
+are meeting-scoped triggers only, matching where this item's brief anchored them); a UI for setting domain
+restrictions on a non-personal (regular scheduled/instant) meeting — only `PersonalRoomSettingsModal` was
+extended, since it's the one settings-editing surface that already existed; per-report escalation/priority
+in the admin queue (every report is just OPEN/RESOLVED/DISMISSED, no severity field).
+
+## Advanced analytics (Stage 34)
+
+Eighth and final item of Priority 5. The roadmap's own brief for this item was explicit that it "needs
+deciding what 'feature usage' means concretely... before building anything, to avoid collecting data
+nobody ends up using" — so before writing a line of code, this stage picked a small, deliberate, named set
+of six features (whiteboard, polls, quizzes, breakout rooms, recording, live captions), each reporting a
+concrete, non-redundant signal genuinely distinct from the admin dashboard's existing aggregate counts
+(Stage 9): not "how many whiteboards exist" but "what fraction of meetings actually used one."
+
+**Almost zero new data collection — the whole point, not an incidental property.** Five of the six
+features already had a real table recording genuine usage the moment someone actually used them
+(`Whiteboard`, `Poll`/`PollResponse`, `Quiz`/`QuizAnswer`, `BreakoutRoom`, `MeetingRecording`) — every
+number `AdminAnalyticsService.getFeatureEngagement` reports for those five is a plain Prisma
+`count`/relation-filter aggregate over data that was already there for its own real reason, nothing new
+retained. Live captions was the one gap: the caption *text* deliberately never touches this database (see
+Stage 26's own architecture), so there was no durable record that captions were ever used at all — not
+even a boolean. Rather than add a tracking table, `CaptionsService.start` now writes exactly one row into
+the `MeetingEvent` table moderation actions (Stage 33) already log into (`type: "CAPTIONS_STARTED"`) — the
+smallest possible addition, reusing existing infrastructure designed for precisely this kind of lightweight
+signal, not a new collection surface.
+
+**A real, previously-uncaught bug found and fixed live, unrelated to analytics itself but caught while
+generating real quiz usage to verify it**: `QuizPanel` had no catch-up fetch on mount at all — unlike
+`PollsPanel`, which calls `GET /polls` on load, Quiz only ever populated from a live `QUIZ_PUBLISHED`
+socket event. A participant who wasn't already on the Quiz tab at the exact moment a question was
+published — or who simply joined the meeting afterward — had no way to ever see it; nothing to refetch. The
+existing `GET /quizzes` endpoint couldn't fill this gap either (a lightweight summary list — no `options`,
+no `status` — built for a different, history-view consumer, not for resuming an in-progress quiz). Fixed
+with a new `GET /meetings/:id/quizzes/active` (any participant, not just the teacher) returning the
+current OPEN quiz in the exact same sanitized shape (`isCorrect`/`correctAnswerText` stripped) the
+`QUIZ_PUBLISHED` broadcast already uses, so the client's existing handler could consume either one
+identically — plus the one-line `useEffect` in `QuizPanel` actually calling it, mirroring the pattern
+`PollsPanel` had already gotten right.
+
+**Real admin UI**: `/admin/analytics` — six cards, each an adoption-rate percentage with a progress bar,
+"N of M meetings," and a feature-appropriate volume line (polls/quizzes also show total responses/answers
+and an average per poll/quiz — the closest real analogue to the roadmap's own "poll-response-rate"
+example). A 7d/30d/90d window selector actually re-fetches, not a client-side filter over one fixed pull.
+A real "Open reports" stat card was also added to the main admin Dashboard back in Stage 33 and remains —
+this stage's own new surface is exclusively the six-feature engagement view.
+
+10 new backend unit tests (`AdminAnalyticsService`: window scoping, rate computation, divide-by-zero
+safety, avg-per-poll math, published-only filtering, captions-via-MeetingEvent — 6; `QuizzesService.getActive`:
+participancy requirement, null-when-nothing-open, sanitized shape — 3; plus 1 new `CaptionsService` test for
+the `MeetingEvent` write). Full API suite now 271 tests across 30 suites, typecheck/lint clean on
+`apps/api` and `apps/web`.
+
+**Verified live** (`.run-driver/drive-analytics.js`, screenshots in `.run-driver/screenshots/analytics/`)
+with two real people genuinely using all six features in one real meeting: A opens the Whiteboard tab (the
+real trigger for `WhiteboardService.getOrCreate`), publishes a real poll B actually votes on, publishes a
+real quiz question B actually answers (confirming the catch-up-fetch fix — B reached the Quiz tab after
+publish and still saw it), creates real breakout rooms with real auto-assignment, and starts live captions
+for real — genuinely dispatched to this environment's actual running transcription-agent worker, not
+mocked. Recording was seeded via direct SQL, the same documented, accepted Egress-not-configured-in-this-
+sandbox gap Stage 26/31 already established, not a new one. A freshly-promoted real admin then opens
+`/admin/analytics` and every one of the six cards reflects real, live numbers — checked as "did the rate
+and counts genuinely move," not pinned to exact values, since this shared dev database already had 257
+meetings and prior feature usage accumulated across this session's own earlier stages by the time this
+draft ran (a good sign the aggregates are reading real history, not a clean-room fixture). The window
+selector was confirmed to actually issue a new, successful request when switched. Zero console errors on
+either page for the entire run.
+
+**Priority 5 is now fully closed out** — all eight items done: Feature flags, Organizations, Teams, Custom
+branding, Global search breadth, Presence, Moderation, Advanced analytics.
+
+**Not yet built**: per-user (rather than per-meeting) engagement breakdowns — deliberately out of scope,
+since per-user granularity is exactly the kind of data this stage's own brief warned against collecting
+without a concrete reason; a trend view over time (only a point-in-time window total, no day-by-day
+chart); exporting the analytics data.
+

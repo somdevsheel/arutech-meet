@@ -117,6 +117,14 @@ export const WS_EVENTS = {
   CALL_REJECTED: "call:rejected",
   CALL_ENDED: "call:ended",
 
+  // User presence (online/away/busy/DND) — an app-wide status derived from
+  // real connected sockets + an explicit override, distinct from
+  // ParticipantPresencePayload below (meeting-scoped mic/camera/hand-raise).
+  // See docs/roadmap.md's Presence stage.
+  PRESENCE_SET_STATUS: "presence:set_status",
+  PRESENCE_HEARTBEAT: "presence:heartbeat",
+  PRESENCE_UPDATED: "presence:updated",
+
   // Errors
   ERROR: "error",
 } as const;
@@ -162,6 +170,21 @@ export interface ChatMessagePayload {
  * reactions; these attach permanently to a specific chat message). */
 export const CHAT_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"] as const;
 export type ChatReactionEmoji = (typeof CHAT_REACTION_EMOJIS)[number];
+
+/** `OFFLINE` is server-computed only — never something a client sets via
+ * PRESENCE_SET_STATUS (see SETTABLE_PRESENCE_STATUSES below); it's what
+ * `PresenceService.getStatus` returns once a user's last connected socket
+ * disconnects (or a crashed gateway process's TTL'd Redis keys expire). */
+export const USER_PRESENCE_STATUSES = ["ONLINE", "AWAY", "BUSY", "DND", "OFFLINE"] as const;
+export type UserPresenceStatus = (typeof USER_PRESENCE_STATUSES)[number];
+
+export const SETTABLE_PRESENCE_STATUSES = ["ONLINE", "AWAY", "BUSY", "DND"] as const;
+export type SettablePresenceStatus = (typeof SETTABLE_PRESENCE_STATUSES)[number];
+
+export interface UserPresenceUpdatedPayload {
+  userId: string;
+  status: UserPresenceStatus;
+}
 
 export interface ParticipantPresencePayload {
   participantId: string;

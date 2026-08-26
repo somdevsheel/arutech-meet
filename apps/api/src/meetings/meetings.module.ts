@@ -7,9 +7,20 @@ import { PermissionModule } from "./permission.module";
 import { LiveKitModule } from "../livekit/livekit.module";
 import { RealtimeBroadcastModule } from "../realtime/realtime-broadcast.module";
 import { AuditLogModule } from "../audit/audit-log.module";
+import { FeatureFlagsModule } from "../feature-flags/feature-flags.module";
+import { OrganizationsModule } from "../organizations/organizations.module";
+import { ContactsModule } from "../contacts/contacts.module";
 
 @Module({
-  imports: [PermissionModule, LiveKitModule, RealtimeBroadcastModule, AuditLogModule],
+  imports: [
+    PermissionModule,
+    LiveKitModule,
+    RealtimeBroadcastModule,
+    AuditLogModule,
+    FeatureFlagsModule,
+    OrganizationsModule,
+    ContactsModule,
+  ],
   controllers: [MeetingsController, ParticipantsController],
   providers: [MeetingsService, ParticipantsService],
   exports: [MeetingsService],

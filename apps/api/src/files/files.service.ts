@@ -4,6 +4,7 @@ import type { PresignUploadDto } from "@arutech/validation";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { PermissionService } from "../meetings/permission.service";
+import { OrganizationsService } from "../organizations/organizations.service";
 import { isAllowedMimeType, sanitizeFileName } from "./file-upload.util";
 
 /**
@@ -30,6 +31,7 @@ export class FilesService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly permissions: PermissionService,
+    private readonly organizations: OrganizationsService,
   ) {}
 
   async presignMeetingUpload(meetingId: string, callerUserId: string, dto: PresignUploadDto) {
@@ -37,6 +39,19 @@ export class FilesService {
 
     if (!isAllowedMimeType(dto.mimeType)) {
       throw new BadRequestException(`File type ${dto.mimeType} is not allowed`);
+    }
+
+    // `orgId` on FileAsset existed in the schema but was never actually
+    // populated by this path before — needed both to attribute usage to the
+    // right org at all, and specifically for the per-org storage limit
+    // below (an aggregate over FileAsset.orgId that would otherwise always
+    // see zero usage, no matter how much was actually uploaded).
+    const meeting = await this.prisma.client.meeting.findUniqueOrThrow({
+      where: { id: meetingId },
+      select: { orgId: true },
+    });
+    if (meeting.orgId) {
+      await this.organizations.assertStorageOk(meeting.orgId, dto.sizeBytes);
     }
 
     const safeName = sanitizeFileName(dto.fileName);
@@ -47,6 +62,7 @@ export class FilesService {
         uploaderUserId: callerUserId,
         scope: "MEETING",
         meetingId,
+        orgId: meeting.orgId,
         storageKey,
         originalName: safeName,
         mimeType: dto.mimeType,

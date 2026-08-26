@@ -69,6 +69,38 @@ export class QuizzesService {
     return quiz;
   }
 
+  /** The real catch-up path a participant's client needs on mount — without
+   * this, only whoever already had the Quiz tab open at the exact moment
+   * QUIZ_PUBLISHED fired ever sees the active question at all (a genuine,
+   * previously-uncaught gap: `list()` above exists but is a lightweight
+   * summary — no `options`, no `status` — meant for history views, not for
+   * resuming an in-progress quiz). Same sanitized shape `create`'s own
+   * QUIZ_PUBLISHED broadcast already uses (`isCorrect`/`correctAnswerText`
+   * stripped) so the client's existing `onPublished` handler can consume
+   * either one identically. Returns `null` when nothing is currently OPEN —
+   * a real, meaningful state, not an error. */
+  async getActive(meetingId: string, callerUserId: string) {
+    await this.permissions.getParticipant(meetingId, callerUserId);
+    const quiz = await this.prisma.client.quiz.findFirst({
+      where: { meetingId, status: "OPEN" },
+      include: { questions: { include: { options: true }, orderBy: { order: "asc" } } },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!quiz) return null;
+    return {
+      id: quiz.id,
+      title: quiz.title,
+      questions: quiz.questions.map((q) => ({
+        id: q.id,
+        type: q.type,
+        question: q.question,
+        points: q.points,
+        timerSeconds: q.timerSeconds,
+        options: q.options.map((o) => ({ id: o.id, text: o.text })),
+      })),
+    };
+  }
+
   async answer(
     meetingId: string,
     callerUserId: string,

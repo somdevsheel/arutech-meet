@@ -9,6 +9,8 @@ import {
   type UpdateMeetingDto,
 } from "@arutech/validation";
 import { MeetingsService } from "./meetings.service";
+import { PermissionService } from "./permission.service";
+import { FeatureFlagsService } from "../feature-flags/feature-flags.service";
 import { CurrentUser } from "../common/decorators/current-user.decorator";
 import { Public } from "../common/decorators/public.decorator";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe";
@@ -17,7 +19,22 @@ import type { AuthenticatedUser } from "../common/types/authenticated-user";
 @ApiTags("meetings")
 @Controller("meetings")
 export class MeetingsController {
-  constructor(private readonly meetingsService: MeetingsService) {}
+  constructor(
+    private readonly meetingsService: MeetingsService,
+    private readonly permissions: PermissionService,
+    private readonly featureFlags: FeatureFlagsService,
+  ) {}
+
+  /** What a participant needs to decide whether to show the Whiteboard tab,
+   * the Breakout Rooms button, and the Captions control at all — the real
+   * enforcement lives server-side in each feature's own service regardless
+   * of what this returns; this only avoids showing a control that would
+   * just 403 on click. See FeatureFlagsService.listKnownForMeeting. */
+  @Get(":id/feature-flags")
+  async getFeatureFlags(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    await this.permissions.getParticipant(id, user.id);
+    return this.featureFlags.listKnownForMeeting(id);
+  }
 
   @Post()
   create(
@@ -45,12 +62,20 @@ export class MeetingsController {
   @Get(":code")
   async findByCode(@Param("code") code: string) {
     const meeting = await this.meetingsService.findByCode(code);
+    const org = meeting.organization;
+    // Only surface a `branding` object when the org actually set something —
+    // an org that never touched its branding fields should render exactly
+    // like an unbranded personal meeting, not an empty-but-present object.
+    const hasBranding = Boolean(org && (org.logoUrl || org.brandColor || org.joinPageMessage));
     return {
       code: meeting.code,
       title: meeting.title,
       status: meeting.status,
       requiresPassword: Boolean(meeting.passwordHash),
       waitingRoomEnabled: meeting.settings?.waitingRoomEnabled ?? true,
+      branding: hasBranding
+        ? { orgName: org!.name, logoUrl: org!.logoUrl, brandColor: org!.brandColor, message: org!.joinPageMessage }
+        : null,
     };
   }
 
@@ -77,7 +102,7 @@ export class MeetingsController {
     @Param("code") code: string,
     @Body(new ZodValidationPipe(joinMeetingSchema)) dto: JoinMeetingDto,
   ) {
-    return this.meetingsService.join(code, { userId: user.id }, dto);
+    return this.meetingsService.join(code, { userId: user.id, email: user.email }, dto);
   }
 
   @Public()

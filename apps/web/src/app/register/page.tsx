@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { registerSchema } from "@arutech/validation";
 import { apiFetch, ApiError } from "@/lib/api-client";
@@ -9,8 +9,17 @@ import { useAuthStore } from "@/lib/auth-store";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const setSession = useAuthStore((s) => s.setSession);
-  const [form, setForm] = useState({ email: "", password: "", displayName: "", username: "" });
+  // Pre-filled from an org-invite link's ?email= — see
+  // organizations/invites/[token]/page.tsx, which sends an unauthenticated
+  // visitor here rather than duplicating a second signup form.
+  const [form, setForm] = useState({
+    email: searchParams.get("email") ?? "",
+    password: "",
+    displayName: "",
+    username: "",
+  });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -32,7 +41,7 @@ export default function RegisterPage() {
         refreshToken: string;
       }>("/auth/register", { method: "POST", body: JSON.stringify(parsed.data), skipAuth: true });
       setSession(res.user, res.accessToken, res.refreshToken);
-      router.push("/dashboard");
+      router.push(searchParams.get("redirect") || "/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Registration failed");
     } finally {

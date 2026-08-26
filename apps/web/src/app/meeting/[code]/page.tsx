@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { PreJoin, type LocalUserChoices } from "@livekit/components-react";
 import "@livekit/components-styles";
@@ -16,6 +16,7 @@ interface MeetingPreview {
   status: string;
   requiresPassword: boolean;
   waitingRoomEnabled: boolean;
+  branding: { orgName: string; logoUrl: string | null; brandColor: string | null; message: string | null } | null;
 }
 
 interface JoinResponse {
@@ -124,9 +125,16 @@ export default function MeetingPage() {
     return <CenteredMessage text="Waiting for the host to let you in…" spinner />;
   }
 
+  const branding = preview?.branding ?? null;
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6">
+      {branding?.logoUrl && (
+        // eslint-disable-next-line @next/next/no-img-element -- arbitrary org-supplied URL, not a static asset
+        <img src={branding.logoUrl} alt={`${branding.orgName} logo`} className="h-12 max-w-[220px] object-contain" />
+      )}
       <h1 className="text-xl font-semibold text-white">{preview?.title}</h1>
+      {branding?.message && <p className="max-w-md text-center text-sm text-ink-muted">{branding.message}</p>}
       {preview?.requiresPassword && (
         <input
           type="password"
@@ -138,6 +146,17 @@ export default function MeetingPage() {
       )}
       <div
         data-lk-theme="default"
+        // Real per-org theming: override the exact `--lk-*` custom properties
+        // globals.css already retheme's LiveKit's prefabs with (see that
+        // file's comment) — the org's brandColor becomes the PreJoin "Join
+        // meeting" button's actual rendered color, not just a stored hex
+        // nobody reads. Scoped to this one wrapper via inline style, so an
+        // unbranded meeting is untouched.
+        style={
+          branding?.brandColor
+            ? ({ "--lk-accent-bg": branding.brandColor, "--lk-control-active-bg": branding.brandColor } as CSSProperties)
+            : undefined
+        }
         className="w-full max-w-lg overflow-hidden rounded-xl border border-surface-border"
       >
         <PreJoin

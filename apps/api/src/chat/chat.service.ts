@@ -426,6 +426,19 @@ export class ChatService {
     return members.map((m) => m.userId);
   }
 
+  /** The reverse of the above — every room this user belongs to (any type:
+   * MEETING/CLASS/TEAM/GROUP/DIRECT). Used by RealtimeGateway to fan a
+   * presence-status change out to `chatroom:{id}` for each one, the same
+   * reach limitation ROOM_UPDATED already has (only reaches clients that
+   * currently have that room open). */
+  async getRoomIdsForUser(userId: string): Promise<string[]> {
+    const memberships = await this.prisma.client.chatMember.findMany({
+      where: { userId },
+      select: { chatRoomId: true },
+    });
+    return memberships.map((m) => m.chatRoomId);
+  }
+
   async persistRoomMessage(chatRoomId: string, senderId: string, dto: SendRoomChatMessageDto): Promise<ChatMessagePayload> {
     await this.requireMember(chatRoomId, senderId);
 

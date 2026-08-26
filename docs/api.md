@@ -24,10 +24,67 @@ Base path: `/api/v1` (health check lives outside the prefix, at `/health`).
 | GET | `/users/by-email/:email` (public-profile lookup — used by class enrollment UI) |
 | GET | `/users/:id` (public profile) |
 
+## Presence (`/presence`)
+
+`GET /presence?userIds=a,b,c` — bulk real-time status lookup (`Record<userId, "ONLINE"|"AWAY"|"BUSY"|
+"DND"|"OFFLINE">`), capped at 100 ids per call. Backed by `PresenceService` (Redis: a Set of a user's
+connected socket ids, plus an explicit status override, both TTL'd). Authenticated but not otherwise
+permission-checked — no more sensitive than `User.lastSeenAt`, already exposed the same way. Explicit
+status changes and the TTL heartbeat are WebSocket-only: `WS_EVENTS.PRESENCE_SET_STATUS` (client → server,
+`{ status: "ONLINE"|"AWAY"|"BUSY"|"DND" }`), `PRESENCE_HEARTBEAT` (client → server, no body, emitted every
+45s while connected), `PRESENCE_UPDATED` (server → clients, `{ userId, status }`, broadcast to every
+`chatroom:{id}` the user belongs to — same reach limitation `ROOM_UPDATED` has, only clients with that room
+open receive it). See `docs/roadmap.md` Stage 32.
+
 ## Organizations (`/organizations`)
 
-`POST /organizations`, `GET /organizations` (mine), `GET /organizations/:id`,
-`POST /organizations/:id/members`.
+Real, member-facing endpoints — distinct from the read-only `/admin/organizations` listing, which only a
+system admin can see. See `docs/roadmap.md` Stage 28.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/` | authenticated | creates an org; caller becomes its `OWNER` |
+| GET | `/` | authenticated | orgs the caller is a member of |
+| GET | `/:id` | member | |
+| GET | `/:id/members` | member | full roster (unlike `:id` alone, which only ever implied the caller's own membership) |
+| POST | `/:id/members` | owner/admin | body: `{ userId, role }` — adds someone **immediately**, no acceptance step; prefer `/:id/invites` for a real person |
+| DELETE | `/:id/members/:userId` | owner/admin | refused (403) if it would leave the org with zero owners |
+| PATCH | `/:id/members/:userId/role` | **owner only** | body: `{ role }` — an admin promoting another admin (or itself to owner) is exactly the privilege escalation this restricts to owners |
+| POST | `/:id/leave` | member (self) | same zero-owners protection as remove |
+| GET | `/:id/invites` | owner/admin | pending invites |
+| POST | `/:id/invites` | owner/admin | body: `{ email, role }` — a real invite-by-email flow: sends a genuine SMTP email (`MailService`) with an accept link, and pushes an in-app notification too if the email already has an account. Re-inviting an already-`PENDING` email refreshes it in place (new token, resent) rather than erroring |
+| DELETE | `/:id/invites/:inviteId` | owner/admin | revokes a pending invite |
+| GET | `/invites/:token/preview` | public | org name, inviter, target email, whether it's expired/already responded to — what the accept-invite page shows before committing to anything |
+| POST | `/invites/:token/accept` | authenticated | only succeeds if the caller's own account email matches the invite's email exactly — a token alone isn't sufficient, so a forwarded/leaked invite link can't be redeemed by anyone else |
+| PATCH | `/:id/branding` | owner/admin | body: `{ logoUrl?, brandColor?, joinPageMessage? }`, each independently nullable (`null` clears just that field, `undefined`/omitted leaves it alone). `brandColor` must be a 6-digit hex (`#rrggbb`). Surfaced on `GET /meetings/:code`'s public preview when the meeting belongs to this org — see `docs/roadmap.md` Stage 30 |
+
+Per-org limits are enforced where the actual action happens, not as a separate check: `POST /meetings`
+(with `orgId` set) calls `OrganizationsService.assertMeetingConcurrencyOk` — refused once the org's `LIVE`
+meeting count reaches `meetingConcurrencyLimit`; `POST /meetings/:meetingId/files/presign` calls
+`assertStorageOk` — refused if the upload would push the org's total `FileAsset` usage over
+`storageLimitBytes`. Both were previously only *stored* on the `Organization` row, never checked.
+
+## Teams (`/organizations/:orgId/teams`, `/teams`)
+
+Org-scoped sub-groups (`LEAD`/`MEMBER` roles), each with its own `ChatRoom` — chat/edit/delete/attachments
+all reuse `ChatService` unchanged, since it only ever checks `ChatMember` existence for a `chatRoomId`,
+never the room's `type`. See `docs/roadmap.md` Stage 29.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/organizations/:orgId/teams` | org member | body: `{ name, description? }` — creates the team, its `ChatRoom` (`type: TEAM`), and the caller's `TeamMember`+`ChatMember` rows as `LEAD`, all in one nested write |
+| GET | `/organizations/:orgId/teams` | org member | every team in the org, with a member count |
+| GET | `/teams/:id` | org member | any org member can view, whether or not they've joined the team itself |
+| PATCH | `/teams/:id` | team `LEAD` | body: `{ name?, description? }` |
+| DELETE | `/teams/:id` | team `LEAD` | soft-delete (`deletedAt`) |
+| GET | `/teams/:id/members` | org member | |
+| POST | `/teams/:id/join` | org member | self-serve; 409 if already a member; creates paired `TeamMember`+`ChatMember` rows in a `$transaction` |
+| POST | `/teams/:id/leave` | team member (self) | refused (403) if the caller is the team's sole `LEAD` |
+| DELETE | `/teams/:id/members/:userId` | team `LEAD` | refused (403) if `userId` is the team's sole `LEAD` |
+| PATCH | `/teams/:id/members/:userId/role` | team `LEAD` | body: `{ role: "LEAD" \| "MEMBER" }` — refused (403) if demoting the sole `LEAD` |
+
+No new "start a meeting" endpoint: identical client-side pattern to Team Chat (Stage 23) — `POST /meetings`
+then a `ROOM_MESSAGE` socket emit on the team's `chatRoom.id` with the join link.
 
 ## Meetings (`/meetings`)
 
@@ -35,11 +92,11 @@ Base path: `/api/v1` (health check lives outside the prefix, at `/health`).
 |---|---|---|---|
 | POST | `/meetings` | required | create instant/scheduled/recurring |
 | GET | `/meetings` | required | meetings I own or participate in |
-| GET | `/meetings/:code` | public | preview only (title, password-required flag) |
-| PATCH | `/meetings/:id/settings` | owner/`meeting.settings.update` | |
+| GET | `/meetings/:code` | public | preview only (title, password-required flag, and — Stage 30 — a `branding: { orgName, logoUrl, brandColor, message } \| null` object, present only when the meeting's org has actually set any of those fields) |
+| PATCH | `/meetings/:id/settings` | owner/`meeting.settings.update` | `settings.allowedEmailDomains` (Stage 33) is a bare-domain string array — empty means no restriction |
 | POST | `/meetings/:id/end` | owner/`meeting.end` | broadcasts `WS_EVENTS.MEETING_ENDED` to every still-connected participant, then ends the LiveKit room. Reachable from the meeting toolbar's host-only "End meeting" control (a second, confirming click — see `docs/roadmap.md`) |
-| POST | `/meetings/:code/join` | required | authenticated join |
-| POST | `/meetings/:code/join-as-guest` | public | guest join (name required) |
+| POST | `/meetings/:code/join` | required | authenticated join — 403 if `allowedEmailDomains` is set and the caller's own account email doesn't match (owner always exempt), or if the meeting owner has blocked the caller (Stage 33) |
+| POST | `/meetings/:code/join-as-guest` | public | guest join (name required) — 403 outright if `allowedEmailDomains` is set (no account email to check) |
 | POST | `/meetings/:id/participants/:participantId/token` | required | reissue a LiveKit token (self, or a moderator on someone else's behalf) |
 
 `join`/`join-as-guest` return `{ status: "WAITING" | "ADMITTED", livekitToken, livekitUrl, ... }` — a
@@ -50,6 +107,25 @@ token is present only when `ADMITTED`. See `docs/webrtc.md`.
 `GET /` (roster), `GET /waiting-room`, `POST /:id/admit`, `POST /:id/deny`, `POST /:id/mute`,
 `POST /:id/disable-camera`, `POST /:id/remove`, `POST /:id/promote-co-host`. All require the caller to
 hold the corresponding capability from `packages/types/src/permissions.ts` — see `docs/security.md`.
+
+`POST /:id/block` — same `participant.remove` capability as `/remove`; does everything remove does (real
+LiveKit removal, `status: REMOVED`, audit log) plus a real `BlockedUser` row from the caller to the target
+(`ContactsService.block`) — the same table/semantics Contacts' own block already uses, so it also blocks
+the target's DMs/calls with the caller from that point on. 400 for a guest target (`BlockedUser` needs two
+real accounts). See `docs/roadmap.md` Stage 33.
+
+## Reports (`/meetings/:meetingId/reports`, `/admin/reports`)
+
+A complaint a real participant raises about someone else's behavior in a meeting — distinct from the audit
+log (actions taken, not complaints raised) and from Block (immediate, no review step).
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/meetings/:meetingId/reports` | any real participant of that meeting, any status (including already-REMOVED — reporting the person who got you removed is a real use case) | body: `{ reportedUserId } \| { reportedGuestName }` (exactly one) `, reason, details? }` |
+| GET | `/admin/reports?status=&take=&skip=` | `systemRole: ADMIN` | `status` optional (`OPEN`\|`RESOLVED`\|`DISMISSED`); omitted returns all |
+| PATCH | `/admin/reports/:id` | `systemRole: ADMIN` | body: `{ status: "RESOLVED" \| "DISMISSED", resolutionNote? }` — stamps `resolvedByUserId`/`resolvedAt`, audit-logs `report.resolved`/`report.dismissed` |
+
+See `docs/roadmap.md` Stage 33.
 
 ## Chat (`/meetings/:meetingId/chat`)
 
@@ -224,7 +300,7 @@ These are meeting-scoped, not class-scoped — any meeting host can use them, no
 |---|---|
 | Whiteboard | `GET /whiteboard`, `POST /whiteboard/pages`, `POST /whiteboard/pages/save` — live stroke sync is WebSocket-only (`WS_EVENTS.WHITEBOARD_OP`), these are checkpoint/page-management only |
 | Polls | `GET /polls`, `POST /polls`, `POST /polls/:pollId/respond`, `POST /polls/:pollId/close` |
-| Quizzes | `GET /quizzes`, `POST /quizzes`, `POST /quizzes/:quizId/questions/:questionId/answer`, `POST /quizzes/:quizId/close` — correctness is withheld from the answer-key until a student answers or the quiz closes. Each question has a `type`: `MULTIPLE_CHOICE`, `TRUE_FALSE` (server-generates the two options), or `SHORT_ANSWER` (graded by case-insensitive, trimmed exact match against `correctAnswerText`, revealed only on close — see `docs/roadmap.md` Stage 20). Answer body is `{ selectedOptionId }` for the first two, `{ answerText }` for the third |
+| Quizzes | `GET /quizzes`, `GET /quizzes/active` (Stage 34 — the current OPEN quiz, sanitized, or `null`; the real catch-up path for a participant who wasn't watching at the moment it was published, since `GET /quizzes` is a lightweight summary with no `options`/`status`), `POST /quizzes`, `POST /quizzes/:quizId/questions/:questionId/answer`, `POST /quizzes/:quizId/close` — correctness is withheld from the answer-key until a student answers or the quiz closes. Each question has a `type`: `MULTIPLE_CHOICE`, `TRUE_FALSE` (server-generates the two options), or `SHORT_ANSWER` (graded by case-insensitive, trimmed exact match against `correctAnswerText`, revealed only on close — see `docs/roadmap.md` Stage 20). Answer body is `{ selectedOptionId }` for the first two, `{ answerText }` for the third |
 | Breakout rooms | `GET /breakout-rooms`, `POST /breakout-rooms` (create + auto-assign), `POST /breakout-rooms/assign`, `POST /breakout-rooms/:id/token` (LiveKit token for that room), `POST /breakout-rooms/broadcast`, `POST /breakout-rooms/close-all` |
 
 All of the above require the corresponding capability from `packages/types/src/permissions.ts`
@@ -248,6 +324,19 @@ token from a non-admin user gets a 403, not a 404. See `docs/security.md` and `d
 | POST | `/admin/users/:id/suspend` / `/admin/users/:id/activate` | suspend also revokes all of that user's active sessions immediately |
 | GET | `/admin/organizations` \| `/admin/meetings?status=` \| `/admin/classes` \| `/admin/recordings` | read-only listings |
 | GET | `/admin/audit-logs` | reads `audit_logs`, written by `AuditLogService` — see `docs/security.md` for which actions are logged |
+| GET | `/admin/feature-flags` | every `FeatureFlag` row (global + org overrides) plus `knownKeys` — the flag keys actually wired to a real gate today |
+| PUT | `/admin/feature-flags/:key` | body: `{ enabled, description? }` — sets/creates the *global* row for that key |
+| PUT | `/admin/feature-flags/:key/organizations/:orgId` | sets/creates an org-scoped override, which takes precedence over the global row for that org |
+| DELETE | `/admin/feature-flags/:key/organizations/:orgId` | removes the override; that org falls back to the global row |
+| GET | `/admin/analytics?days=30` | per-feature engagement (Stage 34) — six features (whiteboard, polls, quizzes, breakout rooms, recording, live captions), each an adoption rate (`meetingsUsed`/`totalMeetings` for meetings created in the window) plus a feature-appropriate volume figure. Every number is a plain aggregate over each feature's own existing table — no new per-user tracking |
+
+A key with no row at all is **enabled by default** — see `docs/roadmap.md`'s Feature flags stage for why.
+Only `WHITEBOARD`, `BREAKOUT_ROOMS`, and `LIVE_CAPTIONS` are wired to a real check today
+(`FeatureFlagsService.isEnabled`/`isEnabledForMeeting`, called from each feature's own service before it
+does anything) — any other key can still be created/toggled here, it just has no effect until some
+service checks it. `GET /meetings/:id/feature-flags` (participant-only, not admin) resolves the three known
+keys for one meeting in a single call — what the meeting UI uses to decide whether to show the Whiteboard
+tab, the Breakout Rooms button, and the Captions control at all.
 
 ## Notifications (`/notifications`)
 
@@ -323,6 +412,28 @@ each to the other participant(s)' personal `user:{id}` room — never a meeting 
 
 See `docs/roadmap.md` Stage 16, including a frontend bug this stage's live verification caught (a
 `null` submission response being indistinguishable on the wire from "hasn't loaded yet").
+
+## Global search (`/search`)
+
+`GET /search?q=` — backs the topbar search box; empty every category for queries under 2 chars. Nine
+categories, each scoped to the caller's real involvement, never a cross-user search:
+
+| Category | Scoped by |
+|---|---|
+| `meetings` | owner or participant |
+| `contacts` | co-participant of a meeting with the caller (same definition `ContactsService` uses) |
+| `notes` | caller's own |
+| `chatMessages` | real `ChatMember` of the room (any type — MEETING/CLASS/TEAM/GROUP/DIRECT) |
+| `files` | uploader, or reachable via a meeting/chat-room/class the caller is actually part of |
+| `recordings` | `READY` only, from a meeting the caller owned or attended (same clause `RecordingsService.listMine` uses) |
+| `transcriptSegments` | cross-meeting version of `GET /meetings/:id/transcripts/search`, same meeting-involvement scoping |
+| `courses` | same visibility `CoursesService.listMine` defines (creator, or teaches/is enrolled in a batch) |
+| `assignments` / `classes` | `ClassTeacher`/`ClassStudent`/owner |
+
+`chatMessages`/`files`/`recordings`/`transcriptSegments`/`courses`/`assignments`/`classes` each carry a
+resolved `href` pointing at their real owning page (a chat message's room-type is resolved server-side into
+`/meeting/:code`, `/classes/:id`, `/teams/:id`, or `/chat?room=:id` — the client never re-derives this). See
+`docs/roadmap.md` Stage 31.
 
 ## Not yet exposed as REST (schema exists; see docs/roadmap.md)
 

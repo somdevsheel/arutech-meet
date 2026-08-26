@@ -21,7 +21,12 @@ interface Meeting {
   createdAt: string;
   scheduledStart: string | null;
   scheduledEnd: string | null;
-  settings?: { waitingRoomEnabled: boolean; allowChat: boolean; allowRecording: boolean } | null;
+  settings?: {
+    waitingRoomEnabled: boolean;
+    allowChat: boolean;
+    allowRecording: boolean;
+    allowedEmailDomains: string[];
+  } | null;
 }
 
 function greeting(hour: number) {

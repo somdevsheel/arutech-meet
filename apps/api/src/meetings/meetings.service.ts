@@ -13,6 +13,8 @@ import { LiveKitService } from "../livekit/livekit.service";
 import { PermissionService } from "./permission.service";
 import { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service";
 import { generateLiveKitRoomName, generateMeetingCode } from "../common/lib/meeting-code";
+import { OrganizationsService } from "../organizations/organizations.service";
+import { ContactsService } from "../contacts/contacts.service";
 
 export interface JoinResult {
   participantId: string;
@@ -30,6 +32,8 @@ export class MeetingsService {
     private readonly liveKit: LiveKitService,
     private readonly permissions: PermissionService,
     private readonly broadcast: RealtimeBroadcastService,
+    private readonly organizations: OrganizationsService,
+    private readonly contacts: ContactsService,
   ) {}
 
   async create(userId: string, dto: CreateMeetingDto) {
@@ -40,6 +44,9 @@ export class MeetingsService {
       if (!membership) {
         throw new ForbiddenException("You are not a member of that organization");
       }
+      // Per-org concurrency limit, actually enforced (not just stored on
+      // the Organization row) — see OrganizationsService.assertMeetingConcurrencyOk.
+      await this.organizations.assertMeetingConcurrencyOk(dto.orgId);
     }
 
     const code = generateMeetingCode();
@@ -124,7 +131,10 @@ export class MeetingsService {
   async findByCode(code: string) {
     const meeting = await this.prisma.client.meeting.findUnique({
       where: { code },
-      include: { settings: true },
+      include: {
+        settings: true,
+        organization: { select: { name: true, logoUrl: true, brandColor: true, joinPageMessage: true } },
+      },
     });
     if (!meeting || meeting.deletedAt) throw new NotFoundException("Meeting not found");
     return meeting;
@@ -192,12 +202,12 @@ export class MeetingsService {
   /**
    * Resolves (or creates) this caller's MeetingParticipant row, decides whether they
    * land in the waiting room or are admitted immediately, and — only if admitted —
-   * mints a LiveKit token. Password and lock checks happen here, server-side, before
-   * any token is ever issued.
+   * mints a LiveKit token. Password, domain-restriction, block, and lock checks all
+   * happen here, server-side, before any token is ever issued.
    */
   async join(
     code: string,
-    caller: { userId?: string; guestName?: string },
+    caller: { userId?: string; email?: string; guestName?: string },
     dto: JoinMeetingDto,
   ): Promise<JoinResult> {
     const meeting = await this.findByCode(code);
@@ -212,11 +222,28 @@ export class MeetingsService {
       }
     }
 
+    const isOwner = caller.userId === meeting.ownerId;
+
+    // Domain restriction — the owner is always exempt (it's their own
+    // meeting). A guest has no account email to check at all, so once this
+    // is non-empty a guest is always refused rather than silently admitted.
+    if (!isOwner && meeting.settings.allowedEmailDomains.length > 0) {
+      const domain = caller.email?.split("@")[1]?.toLowerCase();
+      if (!domain || !meeting.settings.allowedEmailDomains.includes(domain)) {
+        throw new ForbiddenException("This meeting is restricted to specific email domains");
+      }
+    }
+
+    // Block — directional (see ContactsService.hasBlocked's own doc comment):
+    // only the meeting owner's own block gates their own meeting.
+    if (!isOwner && caller.userId && (await this.contacts.hasBlocked(meeting.ownerId, caller.userId))) {
+      throw new ForbiddenException("You are not able to join this meeting");
+    }
+
     if (!caller.userId && !dto.guestName && !caller.guestName) {
       throw new BadRequestException("Guests must provide a display name");
     }
 
-    const isOwner = caller.userId === meeting.ownerId;
     let role: ParticipantRole = isOwner ? "HOST" : caller.userId ? "PARTICIPANT" : "GUEST";
 
     // Class sessions assign TEACHER/STUDENT from the class roster instead of the

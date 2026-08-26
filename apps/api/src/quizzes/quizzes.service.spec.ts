@@ -24,6 +24,7 @@ function makeDeps(overrides?: { question?: unknown }) {
         ),
         update: jest.fn().mockResolvedValue({}),
         findUnique: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
       },
       quizQuestion: {
         findUnique: jest.fn().mockResolvedValue(overrides?.question ?? null),
@@ -194,5 +195,65 @@ describe("QuizzesService.answer — option-based grading (MULTIPLE_CHOICE/TRUE_F
     await expect(
       service.answer("meeting-1", "student-1", "quiz-1", "q-1", { answerText: "true" }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe("QuizzesService.getActive", () => {
+  it("requires plain participancy, not a manage capability — anyone in the meeting can catch up on the active quiz", async () => {
+    const deps = makeDeps();
+    const service = makeService(deps);
+    await service.getActive("meeting-1", "student-1");
+    expect(deps.permissions.getParticipant).toHaveBeenCalledWith("meeting-1", "student-1");
+  });
+
+  it("returns null when nothing is currently OPEN — a real state, not an error", async () => {
+    const deps = makeDeps();
+    const service = makeService(deps);
+    await expect(service.getActive("meeting-1", "student-1")).resolves.toBeNull();
+  });
+
+  it("returns the OPEN quiz with isCorrect stripped from every option — the same sanitized shape QUIZ_PUBLISHED already broadcasts", async () => {
+    const deps = makeDeps();
+    (deps.prisma.client.quiz.findFirst as jest.Mock).mockResolvedValue({
+      id: "quiz-1",
+      title: "Quick check",
+      questions: [
+        {
+          id: "q-1",
+          type: "MULTIPLE_CHOICE",
+          question: "2 + 2?",
+          points: 1,
+          timerSeconds: null,
+          options: [
+            { id: "opt-1", text: "4", isCorrect: true, order: 0 },
+            { id: "opt-2", text: "5", isCorrect: false, order: 1 },
+          ],
+        },
+      ],
+    });
+    const service = makeService(deps);
+
+    const result = await service.getActive("meeting-1", "student-1");
+
+    expect(result).toEqual({
+      id: "quiz-1",
+      title: "Quick check",
+      questions: [
+        {
+          id: "q-1",
+          type: "MULTIPLE_CHOICE",
+          question: "2 + 2?",
+          points: 1,
+          timerSeconds: null,
+          options: [
+            { id: "opt-1", text: "4" },
+            { id: "opt-2", text: "5" },
+          ],
+        },
+      ],
+    });
+    expect(deps.prisma.client.quiz.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { meetingId: "meeting-1", status: "OPEN" } }),
+    );
   });
 });
