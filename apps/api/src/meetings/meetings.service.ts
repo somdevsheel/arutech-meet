@@ -165,10 +165,35 @@ export class MeetingsService {
     await this.permissions.requireOwnerOrCapability(meetingId, userId, "meeting.settings.update");
     const meeting = await this.findById(meetingId);
 
+    // dto is `createMeetingSchema.partial()`, so it validates (and this
+    // endpoint used to silently accept, then discard) every field `create()`
+    // takes — including `password`, `timezone`, `recurrenceFrequency`, and
+    // `recurrenceUntil`, none of which were ever written here. Worst case
+    // was `password`: rotating a leaked meeting password returned 200 with
+    // the "updated" meeting, but the old passwordHash — and old password —
+    // silently kept working forever. Re-hash only when a new password was
+    // actually sent; omitted means "leave the current password as-is", same
+    // as every other field below (Prisma treats `undefined` as "don't touch
+    // this column", not "clear it" — there's no way to remove password
+    // protection entirely through this endpoint, same limitation as the
+    // fields already handled this way).
+    const passwordHash =
+      dto.password !== undefined ? await argon2.hash(dto.password) : undefined;
+
+    // `type` and `orgId` are deliberately still excluded here, not another
+    // oversight: `create()` performs org-membership and per-org concurrency
+    // checks before either is written, and changing `type` post-creation
+    // would need `status` (computed from `type` at creation) reconciled
+    // too. Neither of those belongs silently bolted onto a "settings" update
+    // — they'd need their own explicit endpoint if ever needed.
     return this.prisma.client.meeting.update({
       where: { id: meeting.id },
       data: {
         title: dto.title,
+        passwordHash,
+        timezone: dto.timezone,
+        recurrenceFrequency: dto.recurrenceFrequency,
+        recurrenceUntil: dto.recurrenceUntil ? new Date(dto.recurrenceUntil) : undefined,
         scheduledStart: dto.scheduledStart ? new Date(dto.scheduledStart) : undefined,
         scheduledEnd: dto.scheduledEnd ? new Date(dto.scheduledEnd) : undefined,
         settings: dto.settings

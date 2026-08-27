@@ -147,6 +147,65 @@ describe("MeetingsService", () => {
     });
   });
 
+  // Regression tests: this endpoint's dto validates every field
+  // createMeetingSchema does (it's `.partial()` of it), but the Prisma
+  // update used to only ever write title/scheduledStart/scheduledEnd/
+  // settings — password, timezone, and recurrence fields were silently
+  // discarded despite the endpoint returning 200. Worst case: rotating a
+  // leaked meeting password did nothing.
+  describe("updateSettings", () => {
+    it("re-hashes and writes a new password when one is provided", async () => {
+      const { service, prisma } = makeService();
+      await service.updateSettings(MEETING.id, "owner-1", { ...BASE_DTO, password: "newSecret1" });
+      const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
+      expect(data.passwordHash).toEqual(expect.any(String));
+      expect(data.passwordHash).not.toBe("newSecret1");
+    });
+
+    it("leaves the password untouched when none is provided", async () => {
+      const { service, prisma } = makeService();
+      await service.updateSettings(MEETING.id, "owner-1", BASE_DTO);
+      const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
+      expect(data.passwordHash).toBeUndefined();
+    });
+
+    it("writes timezone and recurrence fields through to the update", async () => {
+      const { service, prisma } = makeService();
+      await service.updateSettings(MEETING.id, "owner-1", {
+        ...BASE_DTO,
+        timezone: "Asia/Kolkata",
+        recurrenceFrequency: "WEEKLY",
+        recurrenceUntil: "2027-01-01T00:00:00.000Z",
+      });
+      const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
+      expect(data.timezone).toBe("Asia/Kolkata");
+      expect(data.recurrenceFrequency).toBe("WEEKLY");
+      expect(data.recurrenceUntil).toEqual(new Date("2027-01-01T00:00:00.000Z"));
+    });
+
+    it("requires the meeting.settings.update capability", async () => {
+      const { service, permissions } = makeService();
+      await service.updateSettings(MEETING.id, "user-1", BASE_DTO);
+      expect(permissions.requireOwnerOrCapability).toHaveBeenCalledWith(
+        MEETING.id,
+        "user-1",
+        "meeting.settings.update",
+      );
+    });
+
+    it("never writes type or orgId — those stay creation-time-only", async () => {
+      const { service, prisma } = makeService();
+      await service.updateSettings(MEETING.id, "owner-1", {
+        ...BASE_DTO,
+        type: "RECURRING",
+        orgId: "org-2",
+      });
+      const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("type");
+      expect(data).not.toHaveProperty("orgId");
+    });
+  });
+
   describe("join — domain restriction", () => {
     it("refuses a non-owner joiner whose email domain isn't allow-listed", async () => {
       const { service } = makeService({ meeting: { settings: { allowedEmailDomains: ["acme.com"] } } });
