@@ -641,7 +641,16 @@ model MeetingParticipant {
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  @@index([meetingId, userId])
+  // Was @@index — MeetingsService.join()'s existing-participant lookup
+  // (an unordered findFirst, no transaction) races itself: two overlapping
+  // joins from the same user (e.g. two tabs) can both miss the existing row
+  // and both create, leaving duplicate participant rows for one
+  // (meetingId, userId) pair. PermissionService.getParticipant's own
+  // `orderBy: createdAt desc` was already a tell that the author knew
+  // duplicates were reachable. Postgres treats every NULL userId as
+  // distinct under a unique index, so guest participants (userId always
+  // null) are unaffected.
+  @@unique([meetingId, userId])
   @@index([meetingId, status])
   @@map("meeting_participants")
 }

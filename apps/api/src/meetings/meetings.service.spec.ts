@@ -45,6 +45,11 @@ function makeService(overrides?: {
         // issueToken's own status check.
         create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "participant-1", ...data })),
         update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "participant-1", ...data })),
+        // join()'s upsert path for a real (non-guest) caller — these tests'
+        // findFirst mock always returns null (no pre-existing participant),
+        // so mimic create()'s shape here too: the mock doesn't model actual
+        // upsert conflict semantics, just returns what a fresh create would.
+        upsert: jest.fn().mockImplementation(({ create }) => Promise.resolve({ id: "participant-1", ...create })),
         findUnique: jest.fn().mockResolvedValue({
           id: "participant-1",
           meetingId: MEETING.id,
@@ -260,6 +265,40 @@ describe("MeetingsService", () => {
       const { service } = makeService({ hasBlocked: false });
       const result = await service.join(MEETING.code, { userId: "user-2", email: "a@b.com" }, {});
       expect(result.status).toBe("WAITING");
+    });
+  });
+
+  // Regression coverage: the write that resolves a real (non-guest) join
+  // used to be a separate findFirst-then-branch (update if found, create if
+  // not) with no transaction — two overlapping joins from the same user
+  // could both read "no existing row" and both create, leaving duplicate
+  // participant rows for one (meetingId, userId) pair. That pair is now a
+  // DB-level unique constraint (see the migration), and the write itself is
+  // a single atomic upsert.
+  describe("join — concurrency", () => {
+    it("upserts on the meetingId_userId unique key for a real (non-guest) joiner", async () => {
+      const { service, prisma } = makeService();
+      await service.join(MEETING.code, { userId: "user-2", email: "a@b.com" }, {});
+      expect(prisma.client.meetingParticipant.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { meetingId_userId: { meetingId: MEETING.id, userId: "user-2" } },
+        }),
+      );
+      expect(prisma.client.meetingParticipant.create).not.toHaveBeenCalled();
+    });
+
+    it("still uses a plain create for a guest — there's no meetingId_userId key to upsert on", async () => {
+      const { service, prisma } = makeService();
+      await service.join(MEETING.code, { guestName: "Guest" }, {});
+      expect(prisma.client.meetingParticipant.create).toHaveBeenCalled();
+      expect(prisma.client.meetingParticipant.upsert).not.toHaveBeenCalled();
+    });
+
+    it("upsert's update branch never touches role — a reconnecting co-host isn't silently reset", async () => {
+      const { service, prisma } = makeService();
+      await service.join(MEETING.code, { userId: "user-2", email: "a@b.com" }, {});
+      const call = (prisma.client.meetingParticipant.upsert as jest.Mock).mock.calls[0][0];
+      expect(call.update).not.toHaveProperty("role");
     });
   });
 });

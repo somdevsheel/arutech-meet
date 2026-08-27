@@ -316,10 +316,31 @@ export class MeetingsService {
 
     const livekitIdentity = existing?.livekitIdentity ?? `${caller.userId ?? "guest"}-${nanoid(8)}`;
 
-    const participant = existing
-      ? await this.prisma.client.meetingParticipant.update({
-          where: { id: existing.id },
-          data: { status, guestName: caller.guestName ?? dto.guestName },
+    // `existing` above is still just a read used to decide `role`/`status`
+    // (an existing co-host reconnecting shouldn't be demoted or sent back to
+    // the waiting room) — it does NOT make the write below race-free on its
+    // own. Two overlapping joins from the same user (two tabs, a double
+    // click) can both read no existing row and both reach this point still
+    // believing they should create. For a real (non-guest) user this is now
+    // a single atomic upsert keyed on the meetingId_userId unique
+    // constraint, so the loser of that race updates the winner's row
+    // instead of creating a duplicate one — Postgres, not a check-then-act
+    // race, decides who "wins". Guests have no equivalent "existing" concept
+    // to begin with (every guest join already created a fresh row) and
+    // their userId is always null, which a unique index treats as always
+    // distinct anyway, so they stay on a plain create.
+    const participant = caller.userId
+      ? await this.prisma.client.meetingParticipant.upsert({
+          where: { meetingId_userId: { meetingId: meeting.id, userId: caller.userId } },
+          update: { status, guestName: caller.guestName ?? dto.guestName },
+          create: {
+            meetingId: meeting.id,
+            userId: caller.userId,
+            guestName: caller.guestName ?? dto.guestName,
+            role,
+            status,
+            livekitIdentity,
+          },
         })
       : await this.prisma.client.meetingParticipant.create({
           data: {
