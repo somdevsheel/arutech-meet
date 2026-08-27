@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { ClassesService } from "../classes/classes.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { OrganizationsService } from "../organizations/organizations.service";
 import { isAllowedMimeType, sanitizeFileName } from "../files/file-upload.util";
 
 /**
@@ -23,6 +24,7 @@ export class AssignmentsService {
     private readonly storage: StorageService,
     private readonly classes: ClassesService,
     private readonly notifications: NotificationsService,
+    private readonly organizations: OrganizationsService,
   ) {}
 
   async create(classId: string, teacherId: string, dto: CreateAssignmentDto) {
@@ -214,6 +216,20 @@ export class AssignmentsService {
       throw new BadRequestException(`File type ${dto.mimeType} is not allowed`);
     }
 
+    // Same fix FilesService.presignMeetingUpload already got: attribute
+    // usage to the class's org (if any — a personal, non-org class has
+    // none) and actually enforce the org's storage limit against it. This
+    // path never got either treatment, so an org's storage limit silently
+    // never applied to classroom assignment attachments no matter how much
+    // was uploaded through it.
+    const klass = await this.prisma.client.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { orgId: true },
+    });
+    if (klass.orgId) {
+      await this.organizations.assertStorageOk(klass.orgId, dto.sizeBytes);
+    }
+
     const safeName = sanitizeFileName(dto.fileName);
     const storageKey = `class-uploads/${classId}/${Date.now()}-${randomUUID()}-${safeName}`;
 
@@ -222,6 +238,7 @@ export class AssignmentsService {
         uploaderUserId: callerUserId,
         scope: "CLASS",
         classId,
+        orgId: klass.orgId,
         storageKey,
         originalName: safeName,
         mimeType: dto.mimeType,

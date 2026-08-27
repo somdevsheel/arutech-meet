@@ -16,6 +16,7 @@ import { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service
 import { AuditLogService } from "../audit/audit-log.service";
 import { ContactsService } from "../contacts/contacts.service";
 import { StorageService } from "../storage/storage.service";
+import { OrganizationsService } from "../organizations/organizations.service";
 import { isAllowedMimeType, sanitizeFileName } from "../files/file-upload.util";
 
 const MEMBER_SELECT = {
@@ -59,6 +60,7 @@ export class ChatService {
     private readonly auditLog: AuditLogService,
     private readonly contacts: ContactsService,
     private readonly storage: StorageService,
+    private readonly organizations: OrganizationsService,
   ) {}
 
   /** Shapes a raw Prisma row (with MESSAGE_INCLUDE) into the wire format both
@@ -566,13 +568,32 @@ export class ChatService {
 
   /** Presigned upload for a Team Chat room attachment (file or voice
    * message) — the `CHAT` FileScope value existed unused before this stage;
-   * mirrors FilesService.presignMeetingUpload exactly, scoped to a
-   * `chatRoomId` instead of a `meetingId`. */
+   * mirrors FilesService.presignMeetingUpload, scoped to a `chatRoomId`
+   * instead of a `meetingId`, including the same org-storage-limit
+   * enforcement (this path didn't actually have that half of the mirror
+   * until now — see the orgId resolution below). */
   async presignRoomAttachment(chatRoomId: string, callerUserId: string, dto: PresignUploadDto) {
     await this.requireMember(chatRoomId, callerUserId);
 
     if (!isAllowedMimeType(dto.mimeType)) {
       throw new BadRequestException(`File type ${dto.mimeType} is not allowed`);
+    }
+
+    // A room's org (if any) comes from whichever of meeting/class/team it's
+    // linked to — DIRECT and GROUP rooms have none of the three, so orgId
+    // stays null and no limit applies, same as a personal (non-org) meeting
+    // or class today.
+    const room = await this.prisma.client.chatRoom.findUniqueOrThrow({
+      where: { id: chatRoomId },
+      select: {
+        meeting: { select: { orgId: true } },
+        class: { select: { orgId: true } },
+        team: { select: { orgId: true } },
+      },
+    });
+    const orgId = room.meeting?.orgId ?? room.class?.orgId ?? room.team?.orgId ?? null;
+    if (orgId) {
+      await this.organizations.assertStorageOk(orgId, dto.sizeBytes);
     }
 
     const safeName = sanitizeFileName(dto.fileName);
@@ -583,6 +604,7 @@ export class ChatService {
         uploaderUserId: callerUserId,
         scope: "CHAT",
         chatRoomId,
+        orgId,
         storageKey,
         originalName: safeName,
         mimeType: dto.mimeType,

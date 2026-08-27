@@ -7,6 +7,7 @@ import { RealtimeBroadcastModule } from "../realtime/realtime-broadcast.module";
 import { AuditLogModule } from "../audit/audit-log.module";
 import { ContactsModule } from "../contacts/contacts.module";
 import { StorageModule } from "../storage/storage.module";
+import { OrganizationsModule } from "../organizations/organizations.module";
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { StorageModule } from "../storage/storage.module";
     AuditLogModule,
     ContactsModule,
     StorageModule,
+    OrganizationsModule,
   ],
   controllers: [ChatController, ChatRoomsController],
   providers: [ChatService],

@@ -7,6 +7,7 @@ import type { RealtimeBroadcastService } from "../realtime/realtime-broadcast.se
 import type { AuditLogService } from "../audit/audit-log.service";
 import type { ContactsService } from "../contacts/contacts.service";
 import type { StorageService } from "../storage/storage.service";
+import type { OrganizationsService } from "../organizations/organizations.service";
 
 const ROOM = { id: "room-1", meetingId: "meeting-1", type: "MEETING" };
 const RAW_MESSAGE = {
@@ -36,6 +37,7 @@ function makeDeps(overrides?: {
   targetMembership?: unknown;
   adminCount?: number;
   file?: unknown;
+  roomOrgSource?: { meeting?: { orgId: string | null }; class?: { orgId: string | null }; team?: { orgId: string | null } };
 }) {
   const message = overrides?.message === null ? null : { ...RAW_MESSAGE, ...overrides?.message };
   const groupRoom = overrides?.groupRoom === undefined ? { id: "group-1", type: "GROUP" } : overrides.groupRoom;
@@ -49,6 +51,9 @@ function makeDeps(overrides?: {
         findFirst: jest.fn().mockResolvedValue(overrides?.existingRoom ?? null),
         create: jest.fn().mockResolvedValue({ id: "room-new", type: "DIRECT" }),
         update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "group-1", ...data })),
+        findUniqueOrThrow: jest.fn().mockResolvedValue(
+          overrides?.roomOrgSource ?? { meeting: { orgId: null }, class: { orgId: null }, team: { orgId: null } },
+        ),
       },
       chatMessage: {
         findUnique: jest.fn().mockResolvedValue(message),
@@ -104,8 +109,11 @@ function makeDeps(overrides?: {
     getSignedUploadUrl: jest.fn().mockResolvedValue("https://upload.example"),
     getSignedDownloadUrl: jest.fn().mockResolvedValue("https://download.example"),
   } as unknown as StorageService;
+  const organizations = {
+    assertStorageOk: jest.fn().mockResolvedValue(undefined),
+  } as unknown as OrganizationsService;
 
-  return { prisma, permissions, notifications, broadcast, auditLog, contacts, storage };
+  return { prisma, permissions, notifications, broadcast, auditLog, contacts, storage, organizations };
 }
 
 function makeService(deps: ReturnType<typeof makeDeps>) {
@@ -117,6 +125,7 @@ function makeService(deps: ReturnType<typeof makeDeps>) {
     deps.auditLog,
     deps.contacts,
     deps.storage,
+    deps.organizations,
   );
 }
 
@@ -495,6 +504,54 @@ describe("ChatService.presignRoomAttachment", () => {
       expect.objectContaining({ data: expect.objectContaining({ scope: "CHAT", chatRoomId: "room-1" }) }),
     );
     expect(result).toMatchObject({ fileId: "file-1" });
+  });
+
+  // Regression coverage: this path created FileAsset rows with no orgId and
+  // never checked any org's storage limit — a room's org (via its linked
+  // meeting/class/team) was silently never attributed or enforced no matter
+  // how much was uploaded through Team Chat — see git history.
+  it("checks the org's storage limit for a room linked to an org meeting", async () => {
+    const deps = makeDeps({ roomOrgSource: { meeting: { orgId: "org-1" } } });
+    const service = makeService(deps);
+
+    await service.presignRoomAttachment("room-1", "caller-1", {
+      fileName: "voice.webm",
+      mimeType: "audio/webm",
+      sizeBytes: 5000,
+    });
+
+    expect(deps.organizations.assertStorageOk).toHaveBeenCalledWith("org-1", 5000);
+    expect(deps.prisma.client.fileAsset.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ orgId: "org-1" }) }),
+    );
+  });
+
+  it("never checks the limit for a DIRECT/GROUP room with no org behind it", async () => {
+    const deps = makeDeps();
+    const service = makeService(deps);
+
+    await service.presignRoomAttachment("room-1", "caller-1", {
+      fileName: "voice.webm",
+      mimeType: "audio/webm",
+      sizeBytes: 5000,
+    });
+
+    expect(deps.organizations.assertStorageOk).not.toHaveBeenCalled();
+  });
+
+  it("propagates a storage-limit rejection instead of creating the file", async () => {
+    const deps = makeDeps({ roomOrgSource: { meeting: { orgId: "org-1" } } });
+    (deps.organizations.assertStorageOk as jest.Mock).mockRejectedValue(new ForbiddenException("limit reached"));
+    const service = makeService(deps);
+
+    await expect(
+      service.presignRoomAttachment("room-1", "caller-1", {
+        fileName: "voice.webm",
+        mimeType: "audio/webm",
+        sizeBytes: 5000,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(deps.prisma.client.fileAsset.create).not.toHaveBeenCalled();
   });
 });
 

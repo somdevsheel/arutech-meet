@@ -4,6 +4,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { StorageService } from "../storage/storage.service";
 import type { ClassesService } from "../classes/classes.service";
 import type { NotificationsService } from "../notifications/notifications.service";
+import type { OrganizationsService } from "../organizations/organizations.service";
 
 const ASSIGNMENT = {
   id: "assign-1",
@@ -18,9 +19,13 @@ function makeDeps(overrides?: {
   requireTeacherFails?: boolean;
   student?: { status: string } | null;
   existingSubmission?: unknown;
+  classOrgId?: string | null;
 }) {
   const prisma = {
     client: {
+      class: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ orgId: overrides?.classOrgId ?? null }),
+      },
       assignment: {
         create: jest.fn().mockResolvedValue(ASSIGNMENT),
         update: jest.fn().mockResolvedValue(ASSIGNMENT),
@@ -68,11 +73,21 @@ function makeDeps(overrides?: {
 
   const notifications = { create: jest.fn() } as unknown as NotificationsService;
 
-  return { prisma, storage, classes, notifications };
+  const organizations = {
+    assertStorageOk: jest.fn().mockResolvedValue(undefined),
+  } as unknown as OrganizationsService;
+
+  return { prisma, storage, classes, notifications, organizations };
 }
 
 function makeService(deps: ReturnType<typeof makeDeps>) {
-  return new AssignmentsService(deps.prisma, deps.storage, deps.classes, deps.notifications);
+  return new AssignmentsService(
+    deps.prisma,
+    deps.storage,
+    deps.classes,
+    deps.notifications,
+    deps.organizations,
+  );
 }
 
 describe("AssignmentsService.create", () => {
@@ -220,5 +235,55 @@ describe("AssignmentsService.getAttachmentDownloadUrl", () => {
     await expect(
       service.getAttachmentDownloadUrl("class-1", "assign-1", "student-1", "someone-elses-file"),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+// Regression coverage: this path created FileAsset rows with no orgId and
+// never checked the org's storage limit at all, so an org's quota silently
+// never applied to classroom assignment attachments no matter how much was
+// uploaded through it — see git history for the finding.
+describe("AssignmentsService.presignAttachment", () => {
+  it("checks the org's storage limit for a class that belongs to an org", async () => {
+    const deps = makeDeps({ classOrgId: "org-1" });
+    const service = makeService(deps);
+
+    await service.presignAttachment("class-1", "student-1", {
+      fileName: "notes.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1024,
+    });
+
+    expect(deps.organizations.assertStorageOk).toHaveBeenCalledWith("org-1", 1024);
+    expect(deps.prisma.client.fileAsset.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ orgId: "org-1" }) }),
+    );
+  });
+
+  it("never checks the limit for a personal (non-org) class", async () => {
+    const deps = makeDeps({ classOrgId: null });
+    const service = makeService(deps);
+
+    await service.presignAttachment("class-1", "student-1", {
+      fileName: "notes.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1024,
+    });
+
+    expect(deps.organizations.assertStorageOk).not.toHaveBeenCalled();
+  });
+
+  it("propagates a storage-limit rejection instead of creating the file", async () => {
+    const deps = makeDeps({ classOrgId: "org-1" });
+    (deps.organizations.assertStorageOk as jest.Mock).mockRejectedValue(new ForbiddenException("limit reached"));
+    const service = makeService(deps);
+
+    await expect(
+      service.presignAttachment("class-1", "student-1", {
+        fileName: "notes.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 1024,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(deps.prisma.client.fileAsset.create).not.toHaveBeenCalled();
   });
 });
