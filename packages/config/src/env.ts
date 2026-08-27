@@ -1,5 +1,22 @@
 import { z } from "zod";
 
+/** `z.coerce.boolean()` is just `Boolean(str)` — every non-empty string,
+ * including the literal "false", coerces to `true`. That's silently wrong
+ * for both boolean env vars this schema has (S3_FORCE_PATH_STYLE,
+ * SMTP_SECURE below): there was no way to actually set either to `false`
+ * via an env var, only to omit it and take the default. Matches strictly
+ * against the literal "true"/"false" strings this repo actually writes
+ * everywhere (every `.env*` file, docs/deployment-lightsail.md, the Helm
+ * chart) — anything else (a typo, "1", "yes") fails validation at boot
+ * instead of being silently misread as `true`, matching this module's own
+ * "fail fast" goal stated below rather than working around it. */
+function booleanEnvVar(defaultValue: boolean) {
+  return z
+    .enum(["true", "false"])
+    .default(defaultValue ? "true" : "false")
+    .transform((v) => v === "true");
+}
+
 /**
  * Validated process.env shape for backend services (apps/api, services/*).
  * Fail fast on boot rather than surfacing `undefined` deep in the request path.
@@ -36,7 +53,7 @@ export const envSchema = z.object({
   S3_BUCKET: z.string().min(1),
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
-  S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
+  S3_FORCE_PATH_STYLE: booleanEnvVar(true),
   S3_PUBLIC_URL: z.string().optional(),
 
   LIVEKIT_URL: z.string().min(1),
@@ -49,7 +66,7 @@ export const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().default("Arutech Meet <no-reply@arutech.dev>"),
-  SMTP_SECURE: z.coerce.boolean().default(false),
+  SMTP_SECURE: booleanEnvVar(false),
 
   AI_PROVIDER: z.string().default("openai"),
   OPENAI_API_KEY: z.string().optional(),
