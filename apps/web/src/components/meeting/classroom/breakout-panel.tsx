@@ -12,6 +12,24 @@ interface BreakoutRoom {
   assignments: { userId: string; user: { displayName: string } }[];
 }
 
+/** Scans a full room list (each with its `assignments`, as returned by
+ * GET .../breakout-rooms) for the room the given user is assigned to, if
+ * any. Used as the single source of truth for `assignedRoom` everywhere
+ * `rooms` is set from a fresh fetch, rather than relying on catching every
+ * individual event that could mean "you're now assigned" — which is
+ * exactly the class of bug this fixes: BREAKOUT_ROOMS_CREATED's own
+ * `assignments` payload (auto-assign) was previously read and discarded
+ * here, so non-moderator participants had no Join affordance whatsoever
+ * after a moderator's "Create & auto-assign" click. */
+function findAssignedRoom(
+  rooms: BreakoutRoom[],
+  userId: string | undefined,
+): { id: string; name: string } | null {
+  if (!userId) return null;
+  const room = rooms.find((r) => r.assignments.some((a) => a.userId === userId));
+  return room ? { id: room.id, name: room.name } : null;
+}
+
 export function BreakoutPanel({
   meetingId,
   socket,
@@ -34,14 +52,30 @@ export function BreakoutPanel({
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    apiFetch<BreakoutRoom[]>(`/meetings/${meetingId}/breakout-rooms`).then(setRooms);
-  }, [meetingId]);
+    // Also restores `assignedRoom` on mount/reload — a participant who was
+    // auto-assigned, then reloaded the page or reopened this panel, used to
+    // lose the "Join breakout room" prompt entirely until the next live
+    // event, since it was previously only ever set by catching an event,
+    // never derived from the actual current state.
+    apiFetch<BreakoutRoom[]>(`/meetings/${meetingId}/breakout-rooms`).then((data) => {
+      setRooms(data);
+      setAssignedRoom(findAssignedRoom(data, userId));
+    });
+  }, [meetingId, userId]);
 
   useEffect(() => {
     if (!socket) return;
-    const onCreated = (p: { rooms: { id: string; name: string }[] }) => {
-      apiFetch<BreakoutRoom[]>(`/meetings/${meetingId}/breakout-rooms`).then(setRooms);
-      void p;
+    const onCreated = () => {
+      // BREAKOUT_ROOMS_CREATED's own payload already carries `{ rooms,
+      // assignments }` for exactly this — this re-fetch (rather than
+      // reading the socket payload directly) is just to get each
+      // assignment's displayName for the moderator's room list, which the
+      // broadcast doesn't include. Either way, findAssignedRoom below is
+      // what actually notices "was I one of the people auto-assigned".
+      apiFetch<BreakoutRoom[]>(`/meetings/${meetingId}/breakout-rooms`).then((data) => {
+        setRooms(data);
+        setAssignedRoom(findAssignedRoom(data, userId));
+      });
     };
     const onAssigned = (p: { userId: string; breakoutRoomId: string; roomName: string }) => {
       if (p.userId === userId) setAssignedRoom({ id: p.breakoutRoomId, name: p.roomName });
@@ -71,6 +105,7 @@ export function BreakoutPanel({
       });
       const updated = await apiFetch<BreakoutRoom[]>(`/meetings/${meetingId}/breakout-rooms`);
       setRooms(updated);
+      setAssignedRoom(findAssignedRoom(updated, userId));
     } finally {
       setCreating(false);
     }
