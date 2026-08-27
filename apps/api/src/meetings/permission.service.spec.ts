@@ -22,6 +22,40 @@ describe("PermissionService", () => {
         NotFoundException,
       );
     });
+
+    it.each(["WAITING", "INVITED", "DENIED", "REMOVED", "LEFT"] as const)(
+      "throws ForbiddenException when the participant's status is %s",
+      async (status) => {
+        const prisma = makePrismaMock();
+        (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
+          id: "p1",
+          role: "PARTICIPANT",
+          status,
+        });
+        const service = new PermissionService(prisma);
+
+        await expect(service.getParticipant("meeting-1", "user-1")).rejects.toBeInstanceOf(
+          ForbiddenException,
+        );
+      },
+    );
+
+    it.each(["ADMITTED", "JOINED"] as const)(
+      "returns the participant when status is %s",
+      async (status) => {
+        const prisma = makePrismaMock();
+        (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
+          id: "p1",
+          role: "PARTICIPANT",
+          status,
+        });
+        const service = new PermissionService(prisma);
+
+        await expect(service.getParticipant("meeting-1", "user-1")).resolves.toMatchObject({
+          id: "p1",
+        });
+      },
+    );
   });
 
   describe("requireCapability", () => {
@@ -30,6 +64,7 @@ describe("PermissionService", () => {
       (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
         id: "p1",
         role: "PARTICIPANT",
+        status: "JOINED",
       });
       const service = new PermissionService(prisma);
 
@@ -43,6 +78,7 @@ describe("PermissionService", () => {
       (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
         id: "p1",
         role: "HOST",
+        status: "JOINED",
       });
       const service = new PermissionService(prisma);
 
@@ -70,6 +106,7 @@ describe("PermissionService", () => {
       (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
         id: "p1",
         role: "GUEST",
+        status: "JOINED",
       });
       const service = new PermissionService(prisma);
 

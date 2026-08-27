@@ -22,6 +22,18 @@ export class PermissionService {
     if (!participant) {
       throw new NotFoundException("You are not a participant of this meeting");
     }
+    // This is the one central authorization check every REST controller and
+    // the WS gateway both go through — but until now it only checked that a
+    // row existed, never its status. RealtimeGateway.onJoinMeeting and
+    // MeetingsService.issueToken each independently added the same
+    // ADMITTED/JOINED gate for their own narrower purpose; this was the
+    // place that should have had it from the start. Without it, someone
+    // denied at the waiting room, or removed mid-meeting, kept full REST
+    // access forever afterward — chat history, recording downloads,
+    // transcripts, whiteboard — since their (now-stale) row still existed.
+    if (participant.status !== "ADMITTED" && participant.status !== "JOINED") {
+      throw new ForbiddenException("Not currently an active participant of this meeting");
+    }
     return participant;
   }
 
