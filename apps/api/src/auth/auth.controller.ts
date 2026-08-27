@@ -42,6 +42,15 @@ export class AuthController {
     return this.authService.refresh(dto.refreshToken);
   }
 
+  // Missing @Public() here defeated the comment directly below it: the
+  // global JwtAuthGuard (registered as APP_GUARD) rejected the request with
+  // 401 before this handler ever ran whenever the access token had already
+  // expired — precisely the case this endpoint exists to handle. The real
+  // authentication for this route was always logoutBySessionToken's own
+  // refresh-token verification, never the access token; @Public() here just
+  // stops JwtAuthGuard from redundantly (and wrongly) gatekeeping ahead of
+  // it, matching how `refresh` above authenticates the exact same way.
+  @Public()
   @Post("logout")
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(@Body(new ZodValidationPipe(refreshSchema)) dto: RefreshDto) {
