@@ -36,8 +36,8 @@ export class ClassesController {
   }
 
   @Get(":id")
-  findOne(@Param("id") id: string) {
-    return this.classesService.findById(id);
+  findOne(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.classesService.findById(id, user.id);
   }
 
   @Patch(":id")

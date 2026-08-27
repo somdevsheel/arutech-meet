@@ -41,7 +41,16 @@ export class ClassesService {
     });
   }
 
-  async findById(classId: string) {
+  /** Unlike every other handler in this service, this one used to take no
+   * userId at all and returned the full teacher+student roster (names,
+   * avatars) to anyone who could guess or enumerate a class UUID — the only
+   * unauthenticated-in-practice read in the whole controller. Now requires
+   * the same membership `listSessions` already did — checked in-memory
+   * against the roster already fetched below rather than a second DB round
+   * trip via `requireMember`, and after the existence check (not before),
+   * so a genuinely missing class still 404s instead of reporting a
+   * confusing "not a member" for something that was never there. */
+  async findById(classId: string, userId: string) {
     const klass = await this.prisma.client.class.findUnique({
       where: { id: classId },
       include: {
@@ -51,6 +60,9 @@ export class ClassesService {
       },
     });
     if (!klass || klass.deletedAt) throw new NotFoundException("Class not found");
+    const isMember =
+      klass.teachers.some((t) => t.userId === userId) || klass.students.some((s) => s.userId === userId);
+    if (!isMember) throw new ForbiddenException("Not a member of this class");
     return klass;
   }
 
@@ -112,7 +124,7 @@ export class ClassesService {
    * MeetingsService.join() by looking up this link. */
   async createSession(classId: string, callerUserId: string, dto: CreateClassSessionDto) {
     await this.requireTeacher(classId, callerUserId);
-    const klass = await this.findById(classId);
+    const klass = await this.findById(classId, callerUserId);
 
     const code = generateMeetingCode();
     const meeting = await this.prisma.client.meeting.create({
