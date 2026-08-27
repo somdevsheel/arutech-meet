@@ -71,7 +71,9 @@ const OWNER_HOST_CAPS: Capability[] = [
   "captions.manage",
   "whiteboard.edit",
   "poll.create",
+  "poll.respond",
   "quiz.create",
+  "quiz.answer",
   "breakout.manage",
   "attendance.view",
   "attendance.export",
@@ -97,7 +99,9 @@ const CO_HOST_CAPS: Capability[] = [
   "captions.manage",
   "whiteboard.edit",
   "poll.create",
+  "poll.respond",
   "quiz.create",
+  "quiz.answer",
   "attendance.view",
   "transcript.generate",
 ];
@@ -110,7 +114,16 @@ const PARTICIPANT_STUDENT_CAPS: Capability[] = [
   "quiz.answer",
 ];
 
-const GUEST_CAPS: Capability[] = ["chat.send"];
+// Everyone actually in the meeting — including a role that can only
+// poll.create/quiz.create, or a GUEST who can only chat.send below — should
+// be able to answer a poll or quiz someone else is running: `poll.respond`/
+// `quiz.answer` is not "author-only" like `poll.create`/`quiz.create` is,
+// it's "anyone present". Previously missing from OWNER_HOST_CAPS/CO_HOST_CAPS
+// (above) and GUEST_CAPS (below) — an unintentional omission (nothing in
+// permissions-matrix.spec.ts asserted the exclusion), not a deliberate
+// design decision, so a host running their own poll, a promoted co-host,
+// and guests all got a silent 403 on Submit with no client-side handling.
+const GUEST_CAPS: Capability[] = ["chat.send", "poll.respond", "quiz.answer"];
 
 /** Role → capability set. Screen share for PARTICIPANT/STUDENT is granted only when
  * the meeting's `screenShareScope` setting is `ALL_PARTICIPANTS` — that check is

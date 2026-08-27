@@ -10,8 +10,34 @@ describe("centralized capability matrix (@arutech/types)", () => {
     expect(can("STUDENT", "meeting.end")).toBe(false);
   });
 
-  it("never grants a guest more than the minimal chat capability", () => {
-    expect(ROLE_CAPABILITIES.GUEST).toEqual(["chat.send"]);
+  // poll.respond/quiz.answer are deliberately granted to every role
+  // (including GUEST): unlike poll.create/quiz.create, they're not an
+  // author-only action — anyone actually in the meeting should be able to
+  // answer a poll/quiz someone else is running. Everything else stays
+  // withheld, preserving "guest has no elevated capability" as the actual
+  // intent this test guards, not the literal old array.
+  it("grants a guest only chat + the ability to answer polls/quizzes, nothing elevated", () => {
+    expect(ROLE_CAPABILITIES.GUEST).toEqual(
+      expect.arrayContaining(["chat.send", "poll.respond", "quiz.answer"]),
+    );
+    expect(ROLE_CAPABILITIES.GUEST).toHaveLength(3);
+    for (const capability of [
+      "meeting.end",
+      "participant.remove",
+      "poll.create",
+      "quiz.create",
+      "recording.start",
+      "chat.delete_any_message",
+    ] as const) {
+      expect(can("GUEST", capability)).toBe(false);
+    }
+  });
+
+  it("lets every meeting role answer a poll or quiz, including hosts, co-hosts, and guests", () => {
+    for (const role of PARTICIPANT_ROLES) {
+      expect(can(role, "poll.respond")).toBe(true);
+      expect(can(role, "quiz.answer")).toBe(true);
+    }
   });
 
   it("defines a capability set for every participant role", () => {
