@@ -1,8 +1,6 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { useLocalParticipant } from "@livekit/components-react";
-import { Track } from "livekit-client";
 
 type State = "idle" | "recording" | "unsupported";
 
@@ -17,17 +15,19 @@ const LocalRecordingContext = createContext<LocalRecordingValue | null>(null);
 
 /** Owns the actual `MediaRecorder`/`AudioContext`/capture-loop lifecycle for
  * local (device-only) recording — see the longer explanation on
- * `LocalRecordingControl` below for what this captures and why. Deliberately
- * mounted once, directly inside `<LiveKitRoom>` in `meeting-room.tsx`,
- * *outside* the right-side panel's `{panel === "..." && ...}` conditional
- * rendering: that panel (and `LocalRecordingControl`, which used to own this
- * same state directly) unmounts every time the user switches tabs — Chat,
- * Participants, etc. — or closes the panel entirely. This provider survives
- * all of that, so switching away from the Record tab mid-recording no longer
- * silently stops it; only an explicit "Stop" click or leaving the meeting
- * (this component unmounting along with the rest of `<LiveKitRoom>`) does. */
+ * `LocalRecordingControl` below for what this captures and why. Mounted once
+ * directly in `meeting-room.tsx`, *outside* `<LiveKitRoom>` itself (not just
+ * outside the panel-switch conditional inside it) — see the mic-capture
+ * comment in `start()` below for why that placement specifically matters:
+ * `<LiveKitRoom key={conn.label ?? "main"}>` deliberately force-remounts
+ * whenever a participant joins or leaves a breakout room (see that key's own
+ * comment in meeting-room.tsx), which used to take this provider down with
+ * it — a recording in progress would silently stop and force-download a
+ * partial file the instant someone joined a breakout room, with no warning
+ * and no way to opt out. Being outside that remount boundary entirely means
+ * neither that nor any other panel-switch inside the room can touch it;
+ * only an explicit "Stop" click or leaving the meeting does. */
 export function LocalRecordingProvider({ children }: { children: ReactNode }) {
-  const { localParticipant } = useLocalParticipant();
   const [state, setState] = useState<State>("idle");
   const [elapsed, setElapsed] = useState(0);
 
@@ -36,6 +36,7 @@ export function LocalRecordingProvider({ children }: { children: ReactNode }) {
   const rafRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
   const wrappedAudioEls = useRef<WeakSet<HTMLMediaElement>>(new WeakSet());
   // Periodically re-scans for newly-joined participants' `<audio>` elements
   // (a fresh join mid-recording wouldn't otherwise get mixed in) — separate
@@ -136,14 +137,31 @@ export function LocalRecordingProvider({ children }: { children: ReactNode }) {
     // catch newly-joined participants' audio without requiring a restart.
     audioRescanTimerRef.current = setInterval(() => connectAudioElements(audioCtx, dest), 3000);
 
-    const micTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.track
-      ?.mediaStreamTrack;
-    if (micTrack) {
-      const micStream = new MediaStream([micTrack]);
+    // A deliberately independent getUserMedia call, not a reuse of LiveKit's
+    // own published mic track (which is how this used to work, and is one
+    // reason opening the device a second time was worth avoiding — see git
+    // history). LiveKit's track lives and dies with whichever Room is
+    // currently connected, which is exactly what this provider now has to
+    // survive (breakout-room joins force a full disconnect/reconnect). This
+    // stream is entirely ours: same physical microphone, but its lifecycle
+    // is independent, so a room switch underneath it has nothing to disrupt.
+    // Browsers handle multiple simultaneous consumers of the same input
+    // device fine, and since the browser already granted mic access for the
+    // meeting itself, this second request resolves without another prompt.
+    // Trade-off: this uses the OS/browser default input rather than
+    // whatever specific device the user picked in LiveKit's own device
+    // picker — acceptable for most single-mic setups, not perfect for
+    // someone actively using a non-default mic.
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = micStream;
       // Own mic connects only to `dest` (the recording), never to
       // `ctx.destination` — playing your own mic back to your own speakers
       // would be a live echo.
       audioCtx.createMediaStreamSource(micStream).connect(dest);
+    } catch {
+      // Mic capture failed/denied — still record video-only rather than not
+      // starting at all.
     }
 
     drawFrame();
@@ -197,6 +215,12 @@ export function LocalRecordingProvider({ children }: { children: ReactNode }) {
     audioCtxRef.current?.close().catch(() => {});
     audioCtxRef.current = null;
     canvasRef.current = null;
+    // Unlike the old borrowed-from-LiveKit track (which LiveKit itself owned
+    // and stopped), this stream is ours alone now — leaving it open after
+    // stopping would leak an active microphone handle (and the browser's
+    // "mic in use" indicator) for the rest of the meeting.
+    micStreamRef.current?.getTracks().forEach((t) => t.stop());
+    micStreamRef.current = null;
   }
 
   function stop() {
@@ -218,9 +242,9 @@ export function LocalRecordingProvider({ children }: { children: ReactNode }) {
  * every frame (`data-video-grid-root` in `meeting-room.tsx`), mixed with
  * every remote participant's audio (LiveKit's `RoomAudioRenderer` renders
  * those as hidden `<audio>` elements in the same subtree) plus this
- * participant's own microphone — reusing the already-published local mic
- * track's `MediaStreamTrack` rather than opening the device a second time.
- * The result downloads directly as a `.webm` file the moment recording
+ * participant's own microphone, captured via its own independent
+ * `getUserMedia` call — see `start()`'s own comment for why that's
+ * deliberate. The result downloads directly as a `.webm` file the moment recording
  * stops; nothing is ever uploaded anywhere. Useful as a fallback when
  * server-side recording isn't desired or available (no host/Egress
  * dependency — any participant can use it), at the cost of only capturing

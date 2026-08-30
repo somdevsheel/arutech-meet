@@ -263,28 +263,32 @@ export function MeetingRoom({
   const timerLabel = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
 
   return (
-    // `key` forces LiveKitRoom to fully unmount/remount (cleanly disconnecting
-    // from whichever LiveKit room it was in) whenever we switch between the main
-    // meeting and a breakout room — LiveKitRoom doesn't reconnect on its own if
-    // `token`/`serverUrl` change under it.
-    <LiveKitRoom
-      key={conn.label ?? "main"}
-      token={conn.token}
-      serverUrl={conn.url}
-      connect
-      video
-      audio
-      onDisconnected={conn.label ? returnToMain : onLeave}
-      data-lk-theme="default"
-      className="flex h-screen flex-col overflow-hidden bg-surface"
-    >
-      {/* Both providers mounted once here, outside the `{panel && ...}`
-          conditional below — see each one's own comment for why: the Record
-          tab's and Tools/Whiteboard sub-tab's panel content both unmount on
-          every panel switch, but a recording in progress, and unsaved
-          whiteboard edits, must not. */}
-      <LocalRecordingProvider>
-        <WhiteboardProvider meetingId={meetingId} socket={socket}>
+    // Both providers wrap `<LiveKitRoom>` from the OUTSIDE, not just the
+    // panel-switch conditional inside it — see each one's own comment for
+    // why: `<LiveKitRoom key={conn.label ?? "main"}>` deliberately
+    // force-remounts (cleanly disconnecting from whichever LiveKit room it
+    // was in) whenever a participant joins or leaves a breakout room, since
+    // LiveKitRoom doesn't reconnect on its own if `token`/`serverUrl` change
+    // under it. Neither provider actually depends on LiveKit's own Room
+    // context (WhiteboardProvider only needs this app's own Socket.IO
+    // connection; LocalRecordingProvider captures its own independent mic
+    // stream — see its comment), so there's no reason either has to live
+    // inside that remount boundary and get taken down by it: a recording in
+    // progress, and unsaved whiteboard edits, must survive a breakout-room
+    // switch exactly like they already survive an ordinary panel switch.
+    <LocalRecordingProvider>
+      <WhiteboardProvider meetingId={meetingId} socket={socket}>
+        <LiveKitRoom
+          key={conn.label ?? "main"}
+          token={conn.token}
+          serverUrl={conn.url}
+          connect
+          video
+          audio
+          onDisconnected={conn.label ? returnToMain : onLeave}
+          data-lk-theme="default"
+          className="flex h-screen flex-col overflow-hidden bg-surface"
+        >
           <header className="flex h-14 flex-none items-center justify-between gap-4 border-b border-surface-border px-5">
             <div className="flex items-center gap-2">
               <Pill>
@@ -469,9 +473,9 @@ export function MeetingRoom({
               Report submitted — an admin will review it.
             </div>
           )}
-        </WhiteboardProvider>
-      </LocalRecordingProvider>
-    </LiveKitRoom>
+        </LiveKitRoom>
+      </WhiteboardProvider>
+    </LocalRecordingProvider>
   );
 }
 
