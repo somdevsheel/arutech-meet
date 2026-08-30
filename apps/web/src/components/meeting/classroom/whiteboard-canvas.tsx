@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { Socket } from "socket.io-client";
 import { WS_EVENTS, type WhiteboardOpPayload } from "@arutech/types";
 import { apiFetch } from "@/lib/api-client";
@@ -144,47 +152,66 @@ function translateItem(item: Item, dx: number, dy: number): Item {
   return { ...item, x1: item.x1 + dx, y1: item.y1 + dy, x2: item.x2 + dx, y2: item.y2 + dy };
 }
 
-/**
- * A real collaborative whiteboard: every item (freehand strokes, shapes,
- * text) is drawn locally with the Canvas 2D API and synced to other
- * participants over the app WebSocket (`whiteboard:op`) — see
- * docs/realtime.md. Sync is per-completed-item (or per-move-of-an-existing-
- * item), upserted by id on the receiving end — not per-pixel-move — to keep
- * bandwidth/render cost sane; this is a deliberate trade-off, not a
- * placeholder. The full page is periodically checkpointed to Postgres via
- * REST so reloading/rejoining doesn't lose work.
- */
-export function WhiteboardCanvas({
+interface WhiteboardContextValue {
+  whiteboard: WhiteboardData | null;
+  pageIndex: number;
+  setPageIndex: (i: number | ((cur: number) => number)) => void;
+  items: Item[];
+  setItems: React.Dispatch<React.SetStateAction<Item[]>>;
+  selectedId: string | null;
+  setSelectedId: (id: string | null) => void;
+  saving: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  emitItem: (item: Item) => void;
+  emitErase: (id: string) => void;
+  pushAction: (action: Action) => void;
+  undo: () => void;
+  redo: () => void;
+  deleteSelected: () => void;
+  clear: () => void;
+  save: () => Promise<void>;
+  addPage: () => Promise<void>;
+}
+
+const WhiteboardContext = createContext<WhiteboardContextValue | null>(null);
+
+/** Owns the whiteboard's actual data — page/item state, the WS sync
+ * listener, undo/redo, and REST fetch/save — independently of whether the
+ * Whiteboard tab is currently visible. Mounted once directly in
+ * meeting-room.tsx, outside the `{panel === "..." && ...}` conditional that
+ * used to own this state directly inside `WhiteboardCanvas` — the same
+ * pattern (and the same underlying bug) `LocalRecordingProvider` was
+ * already split out for. Before this, switching to any other Tools sub-tab
+ * (or closing the panel) unmounted the whiteboard entirely: local edits
+ * since the last explicit Save vanished from view (remote edits kept
+ * arriving via the socket but were dropped on the floor with nowhere to go
+ * — the listener didn't exist while unmounted), and worse, clicking Save
+ * after coming back with even one new local item would overwrite the real
+ * page for everyone with just that one item. `WhiteboardCanvas` below is
+ * now purely presentational: the toolbar + `<canvas>` + pointer-drawing
+ * interactions, which only make sense while actually visible anyway. */
+export function WhiteboardProvider({
   meetingId,
   socket,
-  canEdit,
+  children,
 }: {
   meetingId: string;
   socket: Socket | null;
-  canEdit: boolean;
+  children: ReactNode;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [whiteboard, setWhiteboard] = useState<WhiteboardData | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [items, setItems] = useState<Item[]>([]);
-  const [color, setColor] = useState<string>(COLORS[0]);
-  const [width, setWidth] = useState(3);
-  const [tool, setTool] = useState<Tool>("pen");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [textInput, setTextInput] = useState<{ x: number; y: number } | null>(null);
-  const textInputRef = useRef<HTMLInputElement | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const drawingRef = useRef<Item | null>(null);
-  const dragRef = useRef<{ id: string; before: Item; lastPoint: { x: number; y: number } } | null>(
-    null,
-  );
   const undoStack = useRef<Action[]>([]);
   const redoStack = useRef<Action[]>([]);
-  // Mutating a ref doesn't trigger a re-render on its own, and the
-  // draw-a-shape completion path below has no other setState call to
-  // piggyback on — this exists purely to force one so the Undo/Redo
-  // buttons' `disabled` reflects the stacks' current length immediately.
+  // Mutating a ref doesn't trigger a re-render on its own, and some history
+  // mutations below have no other setState call to piggyback on — this
+  // exists purely to force one so canUndo/canRedo reflect the stacks'
+  // current length immediately.
   const [, bumpHistory] = useState(0);
 
   useEffect(() => {
@@ -201,6 +228,223 @@ export function WhiteboardCanvas({
     undoStack.current = [];
     redoStack.current = [];
   }, [pageIndex, whiteboard]);
+
+  // Upserts by id so this handles both a brand-new item AND a remote move of
+  // an existing one identically — the sender only ever emits the item's full,
+  // current state, never a delta. Now lives at the provider level so remote
+  // edits are never silently dropped just because the Whiteboard tab isn't
+  // the one currently open.
+  useEffect(() => {
+    if (!socket) return;
+    const onOp = (payload: WhiteboardOpPayload) => {
+      if (payload.meetingId !== meetingId || payload.pageIndex !== pageIndex) return;
+      if (payload.op.type === "clear") {
+        setItems([]);
+        setSelectedId(null);
+      } else if (payload.op.type === "erase") {
+        const id = (payload.op.data as { id: string }).id;
+        setItems((prev) => prev.filter((i) => i.id !== id));
+        setSelectedId((cur) => (cur === id ? null : cur));
+      } else {
+        const item = payload.op.data as unknown as Item;
+        setItems((prev) => [...prev.filter((i) => i.id !== item.id), item]);
+      }
+    };
+    socket.on(WS_EVENTS.WHITEBOARD_OP, onOp);
+    return () => {
+      socket.off(WS_EVENTS.WHITEBOARD_OP, onOp);
+    };
+  }, [socket, meetingId, pageIndex]);
+
+  function emitItem(item: Item) {
+    socket?.emit(WS_EVENTS.WHITEBOARD_OP, {
+      meetingId,
+      pageIndex,
+      op: { type: opTypeFor(item), id: item.id, data: item as unknown as Record<string, unknown> },
+    });
+  }
+
+  function emitErase(id: string) {
+    socket?.emit(WS_EVENTS.WHITEBOARD_OP, {
+      meetingId,
+      pageIndex,
+      op: { type: "erase", id, data: { id } },
+    });
+  }
+
+  function emitClearOnly() {
+    socket?.emit(WS_EVENTS.WHITEBOARD_OP, {
+      meetingId,
+      pageIndex,
+      op: { type: "clear", id: crypto.randomUUID(), data: {} },
+    });
+  }
+
+  function pushAction(action: Action) {
+    undoStack.current.push(action);
+    redoStack.current = [];
+    bumpHistory((t) => t + 1);
+  }
+
+  function undo() {
+    const action = undoStack.current.pop();
+    if (!action) return;
+    if (action.type === "add") {
+      setItems((prev) => prev.filter((i) => i.id !== action.item.id));
+      emitErase(action.item.id);
+    } else if (action.type === "delete") {
+      setItems((prev) => [...prev, action.item]);
+      emitItem(action.item);
+    } else if (action.type === "update") {
+      setItems((prev) => prev.map((i) => (i.id === action.before.id ? action.before : i)));
+      emitItem(action.before);
+    } else if (action.type === "clear") {
+      setItems(action.items);
+      for (const item of action.items) emitItem(item);
+    }
+    redoStack.current.push(action);
+    setSelectedId(null);
+    bumpHistory((t) => t + 1);
+  }
+
+  function redo() {
+    const action = redoStack.current.pop();
+    if (!action) return;
+    if (action.type === "add") {
+      setItems((prev) => [...prev, action.item]);
+      emitItem(action.item);
+    } else if (action.type === "delete") {
+      setItems((prev) => prev.filter((i) => i.id !== action.item.id));
+      emitErase(action.item.id);
+    } else if (action.type === "update") {
+      setItems((prev) => prev.map((i) => (i.id === action.after.id ? action.after : i)));
+      emitItem(action.after);
+    } else if (action.type === "clear") {
+      setItems([]);
+      emitClearOnly();
+    }
+    undoStack.current.push(action);
+    setSelectedId(null);
+    bumpHistory((t) => t + 1);
+  }
+
+  function deleteSelected() {
+    setSelectedId((currentId) => {
+      if (!currentId) return currentId;
+      setItems((prev) => {
+        const item = prev.find((i) => i.id === currentId);
+        if (!item) return prev;
+        pushAction({ type: "delete", item });
+        emitErase(currentId);
+        return prev.filter((i) => i.id !== currentId);
+      });
+      return null;
+    });
+  }
+
+  function clear() {
+    setItems((prev) => {
+      if (prev.length > 0) pushAction({ type: "clear", items: prev });
+      return [];
+    });
+    setSelectedId(null);
+    emitClearOnly();
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await apiFetch(`/meetings/${meetingId}/whiteboard/pages/save`, {
+        method: "POST",
+        body: JSON.stringify({ pageIndex, data: { items } }),
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function addPage() {
+    const page = await apiFetch<WhiteboardPage>(`/meetings/${meetingId}/whiteboard/pages`, {
+      method: "POST",
+    });
+    setWhiteboard((wb) => (wb ? { ...wb, pages: [...wb.pages, page] } : wb));
+    setPageIndex(page.index);
+  }
+
+  const value: WhiteboardContextValue = {
+    whiteboard,
+    pageIndex,
+    setPageIndex,
+    items,
+    setItems,
+    selectedId,
+    setSelectedId,
+    saving,
+    canUndo: undoStack.current.length > 0,
+    canRedo: redoStack.current.length > 0,
+    emitItem,
+    emitErase,
+    pushAction,
+    undo,
+    redo,
+    deleteSelected,
+    clear,
+    save,
+    addPage,
+  };
+
+  return <WhiteboardContext.Provider value={value}>{children}</WhiteboardContext.Provider>;
+}
+
+function useWhiteboard(): WhiteboardContextValue {
+  const ctx = useContext(WhiteboardContext);
+  if (!ctx) {
+    throw new Error("WhiteboardCanvas must be rendered inside a WhiteboardProvider");
+  }
+  return ctx;
+}
+
+/**
+ * Purely presentational: the toolbar, the `<canvas>` element, and the
+ * pointer-driven drawing/select/move interactions — all of which only make
+ * sense while this is actually visible, so they stay local here rather
+ * than living in the always-mounted provider above. The item data itself,
+ * undo/redo, and the WS sync are all read from context instead of owned
+ * here — see `WhiteboardProvider`'s doc comment for why.
+ */
+export function WhiteboardCanvas({ canEdit }: { canEdit: boolean }) {
+  const {
+    pageIndex,
+    setPageIndex,
+    items,
+    setItems,
+    selectedId,
+    setSelectedId,
+    saving,
+    canUndo,
+    canRedo,
+    emitItem,
+    pushAction,
+    undo,
+    redo,
+    deleteSelected,
+    clear,
+    save,
+    addPage,
+    whiteboard,
+  } = useWhiteboard();
+
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [color, setColor] = useState<string>(COLORS[0]);
+  const [width, setWidth] = useState(3);
+  const [tool, setTool] = useState<Tool>("pen");
+  const [textInput, setTextInput] = useState<{ x: number; y: number } | null>(null);
+  const textInputRef = useRef<HTMLInputElement | null>(null);
+
+  const drawingRef = useRef<Item | null>(null);
+  const dragRef = useRef<{ id: string; before: Item; lastPoint: { x: number; y: number } } | null>(
+    null,
+  );
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -274,95 +518,6 @@ export function WhiteboardCanvas({
     const id = requestAnimationFrame(() => textInputRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [textInput]);
-
-  // Upserts by id so this handles both a brand-new item AND a remote move of
-  // an existing one identically — the sender only ever emits the item's full,
-  // current state, never a delta.
-  useEffect(() => {
-    if (!socket) return;
-    const onOp = (payload: WhiteboardOpPayload) => {
-      if (payload.meetingId !== meetingId || payload.pageIndex !== pageIndex) return;
-      if (payload.op.type === "clear") {
-        setItems([]);
-        setSelectedId(null);
-      } else if (payload.op.type === "erase") {
-        const id = (payload.op.data as { id: string }).id;
-        setItems((prev) => prev.filter((i) => i.id !== id));
-        setSelectedId((cur) => (cur === id ? null : cur));
-      } else {
-        const item = payload.op.data as unknown as Item;
-        setItems((prev) => [...prev.filter((i) => i.id !== item.id), item]);
-      }
-    };
-    socket.on(WS_EVENTS.WHITEBOARD_OP, onOp);
-    return () => {
-      socket.off(WS_EVENTS.WHITEBOARD_OP, onOp);
-    };
-  }, [socket, meetingId, pageIndex]);
-
-  function emitItem(item: Item) {
-    socket?.emit(WS_EVENTS.WHITEBOARD_OP, {
-      meetingId,
-      pageIndex,
-      op: { type: opTypeFor(item), id: item.id, data: item as unknown as Record<string, unknown> },
-    });
-  }
-
-  function emitErase(id: string) {
-    socket?.emit(WS_EVENTS.WHITEBOARD_OP, {
-      meetingId,
-      pageIndex,
-      op: { type: "erase", id, data: { id } },
-    });
-  }
-
-  function pushAction(action: Action) {
-    undoStack.current.push(action);
-    redoStack.current = [];
-    bumpHistory((t) => t + 1);
-  }
-
-  function undo() {
-    const action = undoStack.current.pop();
-    if (!action) return;
-    if (action.type === "add") {
-      setItems((prev) => prev.filter((i) => i.id !== action.item.id));
-      emitErase(action.item.id);
-    } else if (action.type === "delete") {
-      setItems((prev) => [...prev, action.item]);
-      emitItem(action.item);
-    } else if (action.type === "update") {
-      setItems((prev) => prev.map((i) => (i.id === action.before.id ? action.before : i)));
-      emitItem(action.before);
-    } else if (action.type === "clear") {
-      setItems(action.items);
-      for (const item of action.items) emitItem(item);
-    }
-    redoStack.current.push(action);
-    setSelectedId(null);
-    bumpHistory((t) => t + 1);
-  }
-
-  function redo() {
-    const action = redoStack.current.pop();
-    if (!action) return;
-    if (action.type === "add") {
-      setItems((prev) => [...prev, action.item]);
-      emitItem(action.item);
-    } else if (action.type === "delete") {
-      setItems((prev) => prev.filter((i) => i.id !== action.item.id));
-      emitErase(action.item.id);
-    } else if (action.type === "update") {
-      setItems((prev) => prev.map((i) => (i.id === action.after.id ? action.after : i)));
-      emitItem(action.after);
-    } else if (action.type === "clear") {
-      setItems([]);
-      emitClearOnly();
-    }
-    undoStack.current.push(action);
-    setSelectedId(null);
-    bumpHistory((t) => t + 1);
-  }
 
   function toCanvasPoint(e: React.PointerEvent<HTMLCanvasElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -501,16 +656,6 @@ export function WhiteboardCanvas({
     setTextInput(null);
   }
 
-  function deleteSelected() {
-    if (!selectedId) return;
-    const item = items.find((i) => i.id === selectedId);
-    if (!item) return;
-    setItems((prev) => prev.filter((i) => i.id !== selectedId));
-    pushAction({ type: "delete", item });
-    emitErase(selectedId);
-    setSelectedId(null);
-  }
-
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (!selectedId) return;
@@ -523,43 +668,7 @@ export function WhiteboardCanvas({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, items]);
-
-  function emitClearOnly() {
-    socket?.emit(WS_EVENTS.WHITEBOARD_OP, {
-      meetingId,
-      pageIndex,
-      op: { type: "clear", id: crypto.randomUUID(), data: {} },
-    });
-  }
-
-  function clear() {
-    if (items.length > 0) pushAction({ type: "clear", items });
-    setItems([]);
-    setSelectedId(null);
-    emitClearOnly();
-  }
-
-  async function save() {
-    setSaving(true);
-    try {
-      await apiFetch(`/meetings/${meetingId}/whiteboard/pages/save`, {
-        method: "POST",
-        body: JSON.stringify({ pageIndex, data: { items } }),
-      });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function addPage() {
-    const page = await apiFetch<WhiteboardPage>(`/meetings/${meetingId}/whiteboard/pages`, {
-      method: "POST",
-    });
-    setWhiteboard((wb) => (wb ? { ...wb, pages: [...wb.pages, page] } : wb));
-    setPageIndex(page.index);
-  }
+  }, [selectedId, deleteSelected]);
 
   const pageCount = whiteboard?.pages.length ?? 1;
 
@@ -626,14 +735,14 @@ export function WhiteboardCanvas({
 
           <button
             onClick={undo}
-            disabled={undoStack.current.length === 0}
+            disabled={!canUndo}
             className="rounded bg-surface-border px-2 py-1 text-xs text-ink-3 disabled:opacity-30"
           >
             Undo
           </button>
           <button
             onClick={redo}
-            disabled={redoStack.current.length === 0}
+            disabled={!canRedo}
             className="rounded bg-surface-border px-2 py-1 text-xs text-ink-3 disabled:opacity-30"
           >
             Redo

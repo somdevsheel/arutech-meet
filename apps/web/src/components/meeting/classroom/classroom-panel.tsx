@@ -31,7 +31,8 @@ export function ClassroomPanel({
 }) {
   const tabs = (["whiteboard", "polls", "quiz", "breakout"] as Tab[]).filter(
     (t) =>
-      (t !== "whiteboard" || featureFlags.WHITEBOARD) && (t !== "breakout" || featureFlags.BREAKOUT_ROOMS),
+      (t !== "whiteboard" || featureFlags.WHITEBOARD) &&
+      (t !== "breakout" || featureFlags.BREAKOUT_ROOMS),
   );
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "polls");
   const activeTab = tabs.includes(tab) ? tab : (tabs[0] ?? "polls");
@@ -51,11 +52,13 @@ export function ClassroomPanel({
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {activeTab === "whiteboard" && (
-          <WhiteboardCanvas meetingId={meetingId} socket={socket} canEdit={true} />
+        {activeTab === "whiteboard" && <WhiteboardCanvas canEdit={true} />}
+        {activeTab === "polls" && (
+          <PollsPanel meetingId={meetingId} socket={socket} canCreate={isModerator} />
         )}
-        {activeTab === "polls" && <PollsPanel meetingId={meetingId} socket={socket} canCreate={isModerator} />}
-        {activeTab === "quiz" && <QuizPanel meetingId={meetingId} socket={socket} canCreate={isModerator} />}
+        {activeTab === "quiz" && (
+          <QuizPanel meetingId={meetingId} socket={socket} canCreate={isModerator} />
+        )}
         {activeTab === "breakout" && (
           <BreakoutPanel
             meetingId={meetingId}
