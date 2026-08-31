@@ -28,7 +28,7 @@ interface JoinResponse {
   livekitToken: string | null;
 }
 
-type Phase = "loading" | "lobby" | "joining" | "waiting" | "in-meeting" | "error";
+type Phase = "loading" | "lobby" | "joining" | "waiting" | "in-meeting" | "denied" | "error";
 
 export default function MeetingPage() {
   const params = useParams<{ code: string }>();
@@ -53,9 +53,14 @@ export default function MeetingPage() {
       });
   }, [params.code, accessToken]);
 
-  // While in the waiting room, listen for the host's admit decision (authenticated
-  // users only — guests without an access token cannot open the authenticated
-  // WebSocket channel in this MVP and must be re-admitted via a fresh join attempt).
+  // While in the waiting room, listen for the host's admit/deny decision
+  // (authenticated users only — guests without an access token cannot open
+  // the authenticated WebSocket channel in this MVP and must be re-admitted
+  // via a fresh join attempt). The deny listener existing at all is the
+  // fix: nothing here ever caught WAITING_ROOM_DENY before — a denied
+  // participant's screen just spun on "Waiting for the host..." forever
+  // with no signal anything had happened, since the server itself never
+  // reached them either (see participants.service.ts's deny()).
   useEffect(() => {
     if (phase !== "waiting" || !accessToken || !joinResult) return;
     const socket = getSocket(accessToken);
@@ -74,9 +79,15 @@ export default function MeetingPage() {
         // stay in waiting state; host may retry admit
       }
     };
+    const onDeny = (payload: { participantId: string }) => {
+      if (payload.participantId !== joinResult.participantId) return;
+      setPhase("denied");
+    };
     socket.on(WS_EVENTS.WAITING_ROOM_ADMIT, onAdmit);
+    socket.on(WS_EVENTS.WAITING_ROOM_DENY, onDeny);
     return () => {
       socket.off(WS_EVENTS.WAITING_ROOM_ADMIT, onAdmit);
+      socket.off(WS_EVENTS.WAITING_ROOM_DENY, onDeny);
     };
   }, [phase, accessToken, joinResult]);
 
@@ -123,6 +134,10 @@ export default function MeetingPage() {
 
   if (phase === "waiting") {
     return <CenteredMessage text="Waiting for the host to let you in…" spinner />;
+  }
+
+  if (phase === "denied") {
+    return <CenteredMessage text="The host didn't let you into this meeting." isError />;
   }
 
   const branding = preview?.branding ?? null;

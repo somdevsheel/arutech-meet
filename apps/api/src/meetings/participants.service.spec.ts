@@ -10,8 +10,12 @@ import type { ContactsService } from "../contacts/contacts.service";
 const MEETING = { id: "meeting-1", livekitRoomName: "room-1" };
 const PARTICIPANT = { id: "participant-1", meetingId: "meeting-1", userId: "target-1", livekitIdentity: "target-1-abc" };
 const GUEST_PARTICIPANT = { id: "participant-2", meetingId: "meeting-1", userId: null, livekitIdentity: "guest-xyz" };
+const WAITING_PARTICIPANT = { ...PARTICIPANT, status: "WAITING" };
+const WAITING_GUEST_PARTICIPANT = { ...GUEST_PARTICIPANT, status: "WAITING" };
 
-function makeService(overrides?: { participant?: typeof PARTICIPANT | typeof GUEST_PARTICIPANT }) {
+function makeService(overrides?: {
+  participant?: typeof PARTICIPANT | typeof GUEST_PARTICIPANT | typeof WAITING_PARTICIPANT;
+}) {
   const participant = overrides?.participant ?? PARTICIPANT;
   const prisma = {
     client: {
@@ -25,7 +29,10 @@ function makeService(overrides?: { participant?: typeof PARTICIPANT | typeof GUE
   } as unknown as PrismaService;
   const liveKit = { removeParticipant: jest.fn().mockResolvedValue(undefined) } as unknown as LiveKitService;
   const permissions = { requireOwnerOrCapability: jest.fn().mockResolvedValue(undefined) } as unknown as PermissionService;
-  const broadcast = { publish: jest.fn().mockResolvedValue(undefined) } as unknown as RealtimeBroadcastService;
+  const broadcast = {
+    publish: jest.fn().mockResolvedValue(undefined),
+    publishToRoom: jest.fn().mockResolvedValue(undefined),
+  } as unknown as RealtimeBroadcastService;
   const auditLog = { record: jest.fn().mockResolvedValue(undefined) } as unknown as AuditLogService;
   const contacts = { block: jest.fn().mockResolvedValue(undefined) } as unknown as ContactsService;
 
@@ -70,5 +77,47 @@ describe("ParticipantsService.block", () => {
     );
     expect(liveKit.removeParticipant).not.toHaveBeenCalled();
     expect(contacts.block).not.toHaveBeenCalled();
+  });
+});
+
+// Regression coverage: deny() used to publish only to the meeting room,
+// which a still-WAITING participant's socket was never actually a member of
+// (see admit()'s own comment on the exact same limitation, which admit()
+// itself was already fixed for) — the denied person never received any
+// signal at all and their screen just spun on "Waiting for the host..."
+// forever. See git history for the finding.
+describe("ParticipantsService.deny", () => {
+  it("marks the participant DENIED", async () => {
+    const { service, prisma } = makeService({ participant: WAITING_PARTICIPANT });
+    await service.deny(MEETING.id, "caller-1", WAITING_PARTICIPANT.id);
+    expect(prisma.client.meetingParticipant.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: WAITING_PARTICIPANT.id }, data: { status: "DENIED" } }),
+    );
+  });
+
+  it("publishes to the denied user's own personal room, not just the meeting room", async () => {
+    const { service, broadcast } = makeService({ participant: WAITING_PARTICIPANT });
+    await service.deny(MEETING.id, "caller-1", WAITING_PARTICIPANT.id);
+    expect(broadcast.publishToRoom).toHaveBeenCalledWith(
+      `user:${WAITING_PARTICIPANT.userId}`,
+      expect.stringContaining("deny"),
+      expect.objectContaining({ participantId: WAITING_PARTICIPANT.id }),
+    );
+    expect(broadcast.publish).toHaveBeenCalledWith(
+      MEETING.id,
+      expect.stringContaining("deny"),
+      expect.objectContaining({ participantId: WAITING_PARTICIPANT.id }),
+    );
+  });
+
+  it("never tries to publish to a personal room for a guest — there isn't one", async () => {
+    const { service, broadcast } = makeService({ participant: WAITING_GUEST_PARTICIPANT });
+    await service.deny(MEETING.id, "caller-1", WAITING_GUEST_PARTICIPANT.id);
+    expect(broadcast.publishToRoom).not.toHaveBeenCalled();
+    expect(broadcast.publish).toHaveBeenCalledWith(
+      MEETING.id,
+      expect.stringContaining("deny"),
+      expect.objectContaining({ participantId: WAITING_GUEST_PARTICIPANT.id }),
+    );
   });
 });

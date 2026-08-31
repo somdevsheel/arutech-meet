@@ -219,8 +219,19 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     @MessageBody() body: { meetingId: string },
   ) {
     const { userId } = client.data as SocketData;
-    const participant = await this.permissions.getParticipant(body.meetingId, userId);
-    if (participant.status !== "ADMITTED" && participant.status !== "JOINED") {
+    // PermissionService.getParticipant now throws for any non-ADMITTED/
+    // JOINED status itself (a later, separate fix) — this used to be a
+    // plain call followed by an explicit status check right here, emitting
+    // this exact friendly message for the everyday "still in the waiting
+    // room" case. That check is unreachable now (getParticipant throws
+    // before ever returning a WAITING/DENIED/etc. participant), and letting
+    // the exception itself bubble up to WsExceptionFilter would replace this
+    // specific, expected message with a generic "Something went wrong" for
+    // what is a completely normal, common state — not an actual error.
+    let participant: Awaited<ReturnType<PermissionService["getParticipant"]>>;
+    try {
+      participant = await this.permissions.getParticipant(body.meetingId, userId);
+    } catch {
       client.emit(WS_EVENTS.ERROR, { message: "Not admitted to this meeting yet" });
       return;
     }

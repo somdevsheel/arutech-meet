@@ -301,4 +301,58 @@ describe("MeetingsService", () => {
       expect(call.update).not.toHaveProperty("role");
     });
   });
+
+  // Regression coverage: join()'s existing-participant write used to
+  // unconditionally reset status to WAITING/ADMITTED with no regard for what
+  // it already was — a denied or removed participant could undo either just
+  // by reloading the page. See git history for the finding.
+  describe("join — denied/removed can't rejoin by reconnecting", () => {
+    it("refuses a rejoin attempt from a participant the host denied", async () => {
+      const { service, prisma } = makeService();
+      (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
+        role: "PARTICIPANT",
+        status: "DENIED",
+        livekitIdentity: "user-2-abc",
+      });
+      await expect(service.join(MEETING.code, { userId: "user-2", email: "a@b.com" }, {})).rejects.toThrow(
+        "denied entry",
+      );
+      expect(prisma.client.meetingParticipant.upsert).not.toHaveBeenCalled();
+    });
+
+    it("refuses a rejoin attempt from a participant the host removed", async () => {
+      const { service, prisma } = makeService();
+      (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
+        role: "PARTICIPANT",
+        status: "REMOVED",
+        livekitIdentity: "user-2-abc",
+      });
+      await expect(service.join(MEETING.code, { userId: "user-2", email: "a@b.com" }, {})).rejects.toThrow(
+        "removed from this meeting",
+      );
+      expect(prisma.client.meetingParticipant.upsert).not.toHaveBeenCalled();
+    });
+
+    it("still lets a normal ADMITTED/JOINED participant reconnect", async () => {
+      const { service, prisma } = makeService();
+      (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
+        role: "PARTICIPANT",
+        status: "JOINED",
+        livekitIdentity: "user-2-abc",
+      });
+      await expect(service.join(MEETING.code, { userId: "user-2", email: "a@b.com" }, {})).resolves.toBeDefined();
+      expect(prisma.client.meetingParticipant.upsert).toHaveBeenCalled();
+    });
+
+    it("exempts the meeting owner from this check entirely", async () => {
+      const { service, prisma } = makeService();
+      (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
+        role: "HOST",
+        status: "DENIED",
+        livekitIdentity: "owner-1-abc",
+      });
+      const result = await service.join(MEETING.code, { userId: MEETING.ownerId, email: "owner@x.com" }, {});
+      expect(result.status).toBe("ADMITTED");
+    });
+  });
 });

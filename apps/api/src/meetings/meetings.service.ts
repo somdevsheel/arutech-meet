@@ -302,6 +302,22 @@ export class MeetingsService {
       : null;
     if (existing) role = existing.role as ParticipantRole;
 
+    // Without this, a denied or removed participant could undo either just
+    // by reloading the page: the write below unconditionally resets an
+    // existing row's status to WAITING/ADMITTED with no regard for what it
+    // already was, so a reconnect silently re-admitted someone a host had
+    // explicitly refused or kicked moments earlier — deny (and remove) was
+    // reversible by pressing F5. Owner is exempt in principle (own meeting),
+    // though DENIED/REMOVED would never actually apply to their own row.
+    if (existing && !isOwner) {
+      if (existing.status === "DENIED") {
+        throw new ForbiddenException("You have been denied entry to this meeting");
+      }
+      if (existing.status === "REMOVED") {
+        throw new ForbiddenException("You have been removed from this meeting");
+      }
+    }
+
     if (meeting.settings.lockAfterStart && meeting.status === "LIVE" && !existing && !isOwner) {
       throw new ForbiddenException("This meeting is locked");
     }

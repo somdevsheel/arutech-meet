@@ -70,11 +70,23 @@ export class ParticipantsService {
 
   async deny(meetingId: string, callerUserId: string, participantId: string) {
     await this.permissions.requireOwnerOrCapability(meetingId, callerUserId, "waiting_room.deny");
-    await this.getOrThrow(meetingId, participantId);
+    const participant = await this.getOrThrow(meetingId, participantId);
     await this.prisma.client.meetingParticipant.update({
       where: { id: participantId },
       data: { status: "DENIED" },
     });
+    // Same fix admit() above already needed and got: a WAITING participant's
+    // socket was never let into the meeting room in the first place (see
+    // admit()'s own comment for exactly why), so publishing only to the
+    // meeting room here never reached the person actually being denied —
+    // their screen just spun on "Waiting for the host..." forever, with no
+    // signal that anything had happened. Their personal `user:{id}` room is
+    // what actually delivers it.
+    if (participant.userId) {
+      await this.broadcast.publishToRoom(`user:${participant.userId}`, WS_EVENTS.WAITING_ROOM_DENY, {
+        participantId,
+      });
+    }
     await this.broadcast.publish(meetingId, WS_EVENTS.WAITING_ROOM_DENY, { participantId });
   }
 
