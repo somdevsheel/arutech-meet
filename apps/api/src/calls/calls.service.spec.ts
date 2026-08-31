@@ -148,6 +148,48 @@ describe("CallsService.accept", () => {
   });
 });
 
+// Regression coverage: reject() used to have no status guard at all, unlike
+// accept() right above — a stale retry or client-side race firing reject()
+// on a call this participant had already joined would mark a live, ongoing
+// call DECLINED with an end time while media was still flowing.
+describe("CallsService.reject", () => {
+  it("404s if the caller isn't actually a participant of this call", async () => {
+    const deps = makeDeps({ participant: null });
+    const service = makeService(deps);
+    await expect(service.reject(CALLEE.id, "call-1")).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("rejects rejecting a call this participant already joined", async () => {
+    const deps = makeDeps({ participant: { status: "JOINED" } });
+    const service = makeService(deps);
+    await expect(service.reject(CALLEE.id, "call-1")).rejects.toBeInstanceOf(BadRequestException);
+    expect(deps.prisma.client.callParticipant.update).not.toHaveBeenCalled();
+    expect(deps.prisma.client.call.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects rejecting a call already resolved another way (e.g. declined by someone else)", async () => {
+    const deps = makeDeps({ participant: { status: "DECLINED" } });
+    const service = makeService(deps);
+    await expect(service.reject(CALLEE.id, "call-1")).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("marks the participant DECLINED and notifies the caller when the call is still genuinely ringing", async () => {
+    const deps = makeDeps();
+    const service = makeService(deps);
+
+    await service.reject(CALLEE.id, "call-1");
+
+    expect(deps.prisma.client.callParticipant.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: "DECLINED" } }),
+    );
+    expect(deps.broadcast.publishToRoom).toHaveBeenCalledWith(
+      `user:${CALLER.id}`,
+      expect.stringContaining("rejected"),
+      expect.objectContaining({ callId: "call-1", byUserId: CALLEE.id }),
+    );
+  });
+});
+
 describe("CallsService.cancel", () => {
   it("only lets the initiator cancel", async () => {
     const deps = makeDeps();

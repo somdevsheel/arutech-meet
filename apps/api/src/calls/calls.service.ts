@@ -218,6 +218,14 @@ export class CallsService {
 
   async reject(calleeId: string, callId: string) {
     const participant = await this.getParticipantOrThrow(callId, calleeId);
+    // Same guard accept() already has — without it, a stale retry or a
+    // client-side race firing reject() on a call this participant already
+    // joined marks a live, ongoing call DECLINED with an end time while
+    // media is still flowing, and call history reports a real conversation
+    // as a declined one.
+    if (participant.status !== "RINGING") {
+      throw new BadRequestException("This call is no longer ringing");
+    }
     await this.prisma.client.callParticipant.update({ where: { id: participant.id }, data: { status: "DECLINED" } });
 
     const remainingRinging = await this.prisma.client.callParticipant.count({ where: { callId, status: "RINGING" } });
