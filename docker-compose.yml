@@ -99,7 +99,15 @@ services:
   api:
     image: node:20-alpine
     working_dir: /workspace
-    command: sh -c "corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --frozen-lockfile=false && pnpm --filter @arutech/database exec prisma migrate deploy && pnpm --filter @arutech/api dev"
+    # node:20-alpine ships libssl.so.3 but not the `openssl` CLI, and Prisma's
+    # engine-selection probes that CLI to detect which OpenSSL it's linking
+    # against — with the CLI missing, it silently guesses the older 1.1.x
+    # engine variant, which then fails to load at runtime against this image's
+    # actual OpenSSL 3.x lib (surfaces as "Could not parse schema engine
+    # response" since the engine's real error — a shared-library load failure —
+    # comes back where JSON was expected). Installing openssl gives Prisma a
+    # real CLI to probe, so it picks the matching engine.
+    command: sh -c "apk add --no-cache openssl && corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --frozen-lockfile=false && pnpm --filter @arutech/database exec prisma migrate deploy && pnpm --filter @arutech/api dev"
     env_file:
       - .env.development
     environment:
