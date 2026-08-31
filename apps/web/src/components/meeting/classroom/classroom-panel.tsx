@@ -13,17 +13,11 @@ export function ClassroomPanel({
   meetingId,
   socket,
   isModerator,
-  onJoinBreakoutRoom,
-  onReturnToMain,
-  inBreakoutRoom,
   featureFlags,
 }: {
   meetingId: string;
   socket: Socket | null;
   isModerator: boolean;
-  onJoinBreakoutRoom: (token: string, url: string, label: string) => void;
-  onReturnToMain: () => void;
-  inBreakoutRoom: boolean;
   /** Real server state (FeatureFlagsService), not a client guess — hiding a
    * disabled tab here is UX only, the actual gate is server-side in each of
    * WhiteboardService/BreakoutRoomsService. */
@@ -59,16 +53,7 @@ export function ClassroomPanel({
         {activeTab === "quiz" && (
           <QuizPanel meetingId={meetingId} socket={socket} canCreate={isModerator} />
         )}
-        {activeTab === "breakout" && (
-          <BreakoutPanel
-            meetingId={meetingId}
-            socket={socket}
-            canManage={isModerator}
-            onJoinRoom={onJoinBreakoutRoom}
-            onReturnToMain={onReturnToMain}
-            inBreakoutRoom={inBreakoutRoom}
-          />
-        )}
+        {activeTab === "breakout" && <BreakoutPanel canManage={isModerator} />}
       </div>
     </div>
   );

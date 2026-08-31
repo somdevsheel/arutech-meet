@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { Socket } from "socket.io-client";
 import { WS_EVENTS } from "@arutech/types";
 import { apiFetch } from "@/lib/api-client";
@@ -30,20 +30,46 @@ function findAssignedRoom(
   return room ? { id: room.id, name: room.name } : null;
 }
 
-export function BreakoutPanel({
+interface BreakoutContextValue {
+  rooms: BreakoutRoom[];
+  assignedRoom: { id: string; name: string } | null;
+  count: number;
+  setCount: (n: number) => void;
+  creating: boolean;
+  inBreakoutRoom: boolean;
+  onReturnToMain: () => void;
+  createRooms: () => Promise<void>;
+  joinRoom: (roomId: string, label: string) => Promise<void>;
+  closeAll: () => Promise<void>;
+}
+
+const BreakoutContext = createContext<BreakoutContextValue | null>(null);
+
+/** Owns the breakout-rooms list, this user's own assignment, and the
+ * socket listeners for all three breakout events — mounted once directly
+ * in meeting-room.tsx, same as WhiteboardProvider/LocalRecordingProvider,
+ * rather than only while the Breakout sub-tab of Tools happens to be the
+ * visible one. That used to be the only place BREAKOUT_ROOMS_CLOSED was
+ * ever caught: a participant who joined a breakout room and then closed
+ * the side panel (or switched to Chat) to actually watch video — the
+ * single most likely thing to be doing once inside a breakout room — never
+ * ran onReturnToMain() when the host closed all rooms, and was left in a
+ * dead LiveKit room with no way back except manually leaving and
+ * rejoining the meeting from scratch. */
+export function BreakoutProvider({
   meetingId,
   socket,
-  canManage,
   onJoinRoom,
   onReturnToMain,
   inBreakoutRoom,
+  children,
 }: {
   meetingId: string;
   socket: Socket | null;
-  canManage: boolean;
   onJoinRoom: (token: string, url: string, label: string) => void;
   onReturnToMain: () => void;
   inBreakoutRoom: boolean;
+  children: ReactNode;
 }) {
   const userId = useAuthStore((s) => s.user?.id);
   const [rooms, setRooms] = useState<BreakoutRoom[]>([]);
@@ -53,10 +79,10 @@ export function BreakoutPanel({
 
   useEffect(() => {
     // Also restores `assignedRoom` on mount/reload — a participant who was
-    // auto-assigned, then reloaded the page or reopened this panel, used to
-    // lose the "Join breakout room" prompt entirely until the next live
-    // event, since it was previously only ever set by catching an event,
-    // never derived from the actual current state.
+    // auto-assigned, then reloaded the page, used to lose the "Join
+    // breakout room" prompt entirely until the next live event, since it
+    // was previously only ever set by catching an event, never derived
+    // from the actual current state.
     apiFetch<BreakoutRoom[]>(`/meetings/${meetingId}/breakout-rooms`).then((data) => {
       setRooms(data);
       setAssignedRoom(findAssignedRoom(data, userId));
@@ -123,6 +149,49 @@ export function BreakoutPanel({
     await apiFetch(`/meetings/${meetingId}/breakout-rooms/close-all`, { method: "POST" });
   }
 
+  const value: BreakoutContextValue = {
+    rooms,
+    assignedRoom,
+    count,
+    setCount,
+    creating,
+    inBreakoutRoom,
+    onReturnToMain,
+    createRooms,
+    joinRoom,
+    closeAll,
+  };
+
+  return <BreakoutContext.Provider value={value}>{children}</BreakoutContext.Provider>;
+}
+
+function useBreakout(): BreakoutContextValue {
+  const ctx = useContext(BreakoutContext);
+  if (!ctx) {
+    throw new Error("BreakoutPanel must be rendered inside a BreakoutProvider");
+  }
+  return ctx;
+}
+
+/** Purely presentational — the room list, this user's assignment, and the
+ * live socket listeners all come from context (BreakoutProvider above),
+ * which stays mounted for the whole meeting regardless of which panel tab
+ * is open. This component only renders while the Breakout tab itself is
+ * open, so it must never own any of that state directly. */
+export function BreakoutPanel({ canManage }: { canManage: boolean }) {
+  const {
+    rooms,
+    assignedRoom,
+    count,
+    setCount,
+    creating,
+    inBreakoutRoom,
+    onReturnToMain,
+    createRooms,
+    joinRoom,
+    closeAll,
+  } = useBreakout();
+
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
       {inBreakoutRoom && (
@@ -170,7 +239,10 @@ export function BreakoutPanel({
             {rooms.length > 0 ? "Rooms already open" : "Create & auto-assign"}
           </button>
           {rooms.length > 0 && (
-            <button onClick={closeAll} className="w-full rounded bg-danger-strong py-2 text-xs font-medium text-white">
+            <button
+              onClick={closeAll}
+              className="w-full rounded bg-danger-strong py-2 text-xs font-medium text-white"
+            >
               Close all rooms
             </button>
           )}
@@ -183,7 +255,10 @@ export function BreakoutPanel({
             <div className="mb-1 flex items-center justify-between">
               <p className="text-sm font-medium text-white">{room.name}</p>
               {canManage && (
-                <button onClick={() => joinRoom(room.id, room.name)} className="text-xs text-brand-300">
+                <button
+                  onClick={() => joinRoom(room.id, room.name)}
+                  className="text-xs text-brand-300"
+                >
                   Join
                 </button>
               )}
