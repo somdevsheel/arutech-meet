@@ -47,6 +47,17 @@ interface SocketData {
    * Participants panel, since PARTICIPANT_JOINED is otherwise only ever
    * broadcast at the moment each participant joins, never replayed. */
   presence?: ParticipantPresencePayload;
+  /** The meeting this socket joined (onJoinMeeting), so handleDisconnect can
+   * still know which meeting room to notify on an ungraceful disconnect —
+   * `client.rooms` is *not* usable there: socket.io empties it via its own
+   * internal cleanup before the `disconnect` event fires, so a lookup based
+   * on `client.rooms` inside handleDisconnect always sees an empty set
+   * (confirmed against socket.io's own source). `client.data` isn't touched
+   * by that cleanup, which is exactly why this survives long enough to read
+   * here, same as `presence` above already relies on. Cleared again on a
+   * graceful onLeaveMeeting so a later disconnect doesn't also emit a
+   * redundant second PARTICIPANT_LEFT for a meeting already left cleanly. */
+  meetingId?: string;
 }
 
 function meetingRoom(meetingId: string): string {
@@ -191,11 +202,14 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         await this.broadcastPresence(userId, "OFFLINE");
       }
     }
-    const meetingId = [...client.rooms].find((r) => r.startsWith("meeting:"))?.split(":")[1];
+    // `client.rooms` is unusable here — see SocketData.meetingId's doc
+    // comment for why this used to silently never fire on anything but a
+    // graceful onLeaveMeeting (a closed tab, lost wifi, a sleeping laptop —
+    // every real "vanished" case — left every other participant's roster
+    // showing someone who was long gone).
+    const meetingId = (client.data as SocketData | undefined)?.meetingId;
     if (meetingId) {
-      this.server.to(meetingRoom(meetingId)).emit(WS_EVENTS.PARTICIPANT_LEFT, {
-        userId: (client.data as SocketData)?.userId,
-      });
+      this.server.to(meetingRoom(meetingId)).emit(WS_EVENTS.PARTICIPANT_LEFT, { userId });
     }
   }
 
@@ -245,6 +259,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       handRaised: false,
     };
     (client.data as SocketData).presence = presence;
+    // See SocketData.meetingId's doc comment — this is what lets
+    // handleDisconnect still know which room to notify on an ungraceful
+    // disconnect, since client.rooms is empty by the time that runs.
+    (client.data as SocketData).meetingId = body.meetingId;
     this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.PARTICIPANT_JOINED, presence);
   }
 
@@ -254,8 +272,14 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     @MessageBody() body: { meetingId: string },
   ) {
     await client.leave(meetingRoom(body.meetingId));
+    // Cleared so a later full disconnect of this same socket (closing the
+    // tab shortly after leaving, say) doesn't also emit a second, redundant
+    // PARTICIPANT_LEFT for a meeting this socket already left cleanly.
+    const data = client.data as SocketData;
+    data.meetingId = undefined;
+    data.presence = undefined;
     this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.PARTICIPANT_LEFT, {
-      userId: (client.data as SocketData).userId,
+      userId: data.userId,
     });
   }
 
