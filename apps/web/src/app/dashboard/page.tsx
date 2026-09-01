@@ -84,9 +84,25 @@ export default function DashboardPage() {
     setHosting(true);
     setError(null);
     try {
+      // H-4: waitingRoomEnabled defaults to true server-side, which is the
+      // right default for a scheduled meeting shared in advance, but wrong
+      // for "New meeting" — the entire point of this one-click flow is
+      // sharing the link and having people join immediately. There's no
+      // settings step here to ever surface (or turn off) that gate before
+      // sharing, so anyone the host sent the link to right after clicking
+      // this landed in the waiting room with no explanation, and the host
+      // had no idea anything was different. Instant meetings opt out of it
+      // explicitly instead. (There's genuinely no way to turn it back on for
+      // an already-created meeting from the UI yet — the in-meeting Info
+      // panel's "Waiting room" row is read-only, same gap H-11 flags for
+      // the password setting; that's a separate, bigger fix.)
       const meeting = await apiFetch<Meeting>("/meetings", {
         method: "POST",
-        body: JSON.stringify({ title: "Instant meeting", type: "INSTANT" }),
+        body: JSON.stringify({
+          title: "Instant meeting",
+          type: "INSTANT",
+          settings: { waitingRoomEnabled: false },
+        }),
       });
       router.push(`/meeting/${meeting.code}`);
     } catch (err) {

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api-client";
+import { Toggle } from "./personal-room-settings-modal";
 
 interface Meeting {
   id: string;
@@ -32,6 +33,13 @@ export function ScheduleMeetingModal({
   const [title, setTitle] = useState("");
   const [start, setStart] = useState(defaultStart);
   const [duration, setDuration] = useState(30);
+  // H-4: waitingRoomEnabled defaults to true server-side, but this modal
+  // never surfaced that at all — a host scheduling a meeting had no way to
+  // know or change it before sharing the invite, and attendees who arrived
+  // on time were stuck waiting with no explanation. Defaults to true here
+  // too (unchanged behavior for anyone who doesn't touch it), but now it's
+  // an actual, visible choice instead of an invisible one.
+  const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +57,7 @@ export function ScheduleMeetingModal({
           scheduledStart: scheduledStart.toISOString(),
           scheduledEnd: scheduledEnd.toISOString(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          settings: { waitingRoomEnabled },
         }),
       });
       onScheduled(meeting);
@@ -93,6 +102,13 @@ export function ScheduleMeetingModal({
             <option value={120}>2 hours</option>
           </select>
         </Field>
+
+        <Toggle
+          label="Waiting room"
+          description="Attendees wait for you to admit them before joining"
+          checked={waitingRoomEnabled}
+          onChange={setWaitingRoomEnabled}
+        />
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 

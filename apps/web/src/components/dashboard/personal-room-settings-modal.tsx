@@ -106,7 +106,7 @@ export function PersonalRoomSettingsModal({
   );
 }
 
-function Toggle({
+export function Toggle({
   label,
   description,
   checked,
