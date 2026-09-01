@@ -236,15 +236,24 @@ export function MeetingToolbar({
         {(canManageCaptions || captionsActive) && (
           <Control
             label={
-              canManageCaptions
-                ? captionsPending
-                  ? "…"
-                  : captionsActive
-                    ? "Stop captions"
-                    : "Captions"
-                : captionsHidden
+              captionsPending
+                ? "…"
+                : // Re-showing your own hidden captions has to win over the
+                  // moderator's manage-session branch below, or a moderator
+                  // who hides their local caption bar (CaptionBar's own
+                  // "Hide captions" link) has no way back except this same
+                  // button — which for them means "Stop captions", ending
+                  // the live session for every participant just to get
+                  // their own view back. Hidden-and-active means the
+                  // session is still running; showing it again is always
+                  // just a local toggle, moderator or not.
+                  captionsActive && captionsHidden
                   ? "Show captions"
-                  : "Hide captions"
+                  : canManageCaptions
+                    ? captionsActive
+                      ? "Stop captions"
+                      : "Captions"
+                    : "Hide captions"
             }
             active={captionsActive && !captionsHidden}
             accentActive={canManageCaptions && captionsActive}

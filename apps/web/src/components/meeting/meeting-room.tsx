@@ -218,7 +218,14 @@ export function MeetingRoom({
 
   useEffect(() => {
     if (!socket) return;
-    const onStarted = () => setCaptionsActive(true);
+    // Also clears any leftover captionsHidden from a previous captions
+    // session — otherwise a fresh restart (stop, then start again) renders
+    // invisibly by default, forcing a "Show captions" click for a session
+    // nobody explicitly hid yet.
+    const onStarted = () => {
+      setCaptionsActive(true);
+      setCaptionsHidden(false);
+    };
     const onStopped = () => setCaptionsActive(false);
     socket.on(WS_EVENTS.CAPTIONS_STARTED, onStarted);
     socket.on(WS_EVENTS.CAPTIONS_STOPPED, onStopped);
@@ -459,7 +466,17 @@ export function MeetingRoom({
               captionsPending={captionsPending}
               captionsHidden={captionsHidden}
               onToggleCaptions={
-                canManageCaptions ? toggleCaptions : () => setCaptionsHidden((v) => !v)
+                // Re-showing your own hidden captions always wins, moderator
+                // or not — see the matching comment on this button's label
+                // in meeting-toolbar.tsx for why: otherwise a moderator who
+                // hid their local view has no way back except this same
+                // button, which for them means "Stop captions" and ends the
+                // live session for everyone just to get their own view back.
+                captionsActive && captionsHidden
+                  ? () => setCaptionsHidden(false)
+                  : canManageCaptions
+                    ? toggleCaptions
+                    : () => setCaptionsHidden(true)
               }
               isRecording={isRecording}
               canShareScreen={true}
