@@ -362,7 +362,6 @@ S3_BUCKET=arutech-meet-dev
 S3_ACCESS_KEY=...
 S3_SECRET_KEY=...
 S3_FORCE_PATH_STYLE=...
-S3_PUBLIC_URL=...
 EOF
 ```
 
@@ -398,7 +397,6 @@ S3_BUCKET=arutech-meet-test-recordings
 S3_ACCESS_KEY=<the AccessKeyId above>
 S3_SECRET_KEY=<the SecretAccessKey above>
 S3_FORCE_PATH_STYLE=false
-S3_PUBLIC_URL=https://arutech-meet-test-recordings.s3.amazonaws.com
 ```
 
 **Alternative: self-hosted MinIO (free, but recording playback won't reach a real device).** Proxying
@@ -416,7 +414,6 @@ S3_BUCKET=arutech-meet-test
 S3_ACCESS_KEY=<pick a value>
 S3_SECRET_KEY=<openssl rand -hex 24>
 S3_FORCE_PATH_STYLE=true
-S3_PUBLIC_URL=
 ```
 
 ...and add `--profile minio` to the `dc` alias (`alias dc='... -p arutech-meet --profile minio'`) so every

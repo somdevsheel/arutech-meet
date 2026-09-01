@@ -54,7 +54,6 @@ export const envSchema = z.object({
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
   S3_FORCE_PATH_STYLE: booleanEnvVar(true),
-  S3_PUBLIC_URL: z.string().optional(),
 
   LIVEKIT_URL: z.string().min(1),
   LIVEKIT_HTTP_URL: z.string().min(1),
