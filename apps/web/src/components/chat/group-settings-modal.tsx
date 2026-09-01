@@ -8,7 +8,13 @@ interface RoomMember {
   userId: string;
   isAdmin: boolean;
   lastReadMessageId: string | null;
-  user: { id: string; displayName: string; username: string; avatarUrl: string | null; lastSeenAt: string };
+  user: {
+    id: string;
+    displayName: string;
+    username: string;
+    avatarUrl: string | null;
+    lastSeenAt: string;
+  };
 }
 
 interface RoomSummary {
@@ -54,7 +60,9 @@ export function GroupSettingsModal({
 
   useEffect(() => {
     if (showAddMember) {
-      apiFetch<Contact[]>("/contacts").then(setContacts).catch(() => setContacts([]));
+      apiFetch<Contact[]>("/contacts")
+        .then(setContacts)
+        .catch(() => setContacts([]));
     }
   }, [showAddMember]);
 
@@ -66,7 +74,12 @@ export function GroupSettingsModal({
         method: "PATCH",
         body: JSON.stringify({
           name: name.trim() || undefined,
-          photoUrl: photoUrl.trim() || undefined,
+          // `undefined` here would mean "leave the photo as it is" (omitted
+          // from the request entirely) — the field always reflects a real,
+          // definite value in this form (either the existing photo or
+          // cleared to empty), so an empty field always means "remove the
+          // photo", which only an explicit `null` can express.
+          photoUrl: photoUrl.trim() || null,
         }),
       });
       onUpdated({ ...room, ...updated });
@@ -81,7 +94,10 @@ export function GroupSettingsModal({
     setBusyUserId(userId);
     setError(null);
     try {
-      await apiFetch(`/chat-rooms/${room.id}/members`, { method: "POST", body: JSON.stringify({ userId }) });
+      await apiFetch(`/chat-rooms/${room.id}/members`, {
+        method: "POST",
+        body: JSON.stringify({ userId }),
+      });
       onUpdated({
         ...room,
         members: [
@@ -148,12 +164,23 @@ export function GroupSettingsModal({
         {isAdmin && (
           <div className="flex flex-col gap-2">
             <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium uppercase tracking-wide text-ink-muted">Group name</span>
+              <span className="text-xs font-medium uppercase tracking-wide text-ink-muted">
+                Group name
+              </span>
               <input value={name} onChange={(e) => setName(e.target.value)} className="input" />
             </label>
             <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium uppercase tracking-wide text-ink-muted">
+              <span className="flex items-center justify-between text-xs font-medium uppercase tracking-wide text-ink-muted">
                 Photo URL (optional)
+                {photoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setPhotoUrl("")}
+                    className="text-[10px] font-medium normal-case tracking-normal text-danger hover:underline"
+                  >
+                    Remove photo
+                  </button>
+                )}
               </span>
               <input
                 value={photoUrl}
@@ -192,7 +219,9 @@ export function GroupSettingsModal({
           {showAddMember && (
             <div className="mb-3 max-h-40 overflow-y-auto rounded-lg border border-surface-border">
               {nonMemberContacts.length === 0 && (
-                <p className="px-3 py-3 text-center text-xs text-ink-muted">No contacts left to add.</p>
+                <p className="px-3 py-3 text-center text-xs text-ink-muted">
+                  No contacts left to add.
+                </p>
               )}
               {nonMemberContacts.map((c) => (
                 <button
@@ -257,7 +286,10 @@ export function GroupSettingsModal({
         </div>
 
         <div className="flex justify-end">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-medium text-ink-3 hover:bg-surface-field">
+          <button
+            onClick={onClose}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-3 hover:bg-surface-field"
+          >
             Close
           </button>
         </div>

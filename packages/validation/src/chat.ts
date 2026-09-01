@@ -36,10 +36,14 @@ export type ForwardMessageDto = z.infer<typeof forwardMessageSchema>;
 
 /** GROUP rooms only — rename and/or set a photo. Same "just a URL" convention
  * as User.avatarUrl/Organization.logoUrl (see the schema comment on
- * ChatRoom.photoUrl). */
+ * ChatRoom.photoUrl). `.nullable()` matters here, not just `.optional()`:
+ * omitting the field means "leave the photo as it is", but the only way to
+ * ever remove a previously-set photo is to send an explicit `null` — see
+ * organizations.ts's updateOrganizationSchema.logoUrl for the identical
+ * convention this was missing. */
 export const updateChatRoomSchema = z.object({
   name: z.string().min(1).max(100).optional(),
-  photoUrl: z.string().url().optional(),
+  photoUrl: z.string().url().nullable().optional(),
 });
 export type UpdateChatRoomDto = z.infer<typeof updateChatRoomSchema>;
 

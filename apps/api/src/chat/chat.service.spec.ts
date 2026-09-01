@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
 import { ChatService } from "./chat.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { PermissionService } from "../meetings/permission.service";
@@ -25,7 +30,9 @@ const RAW_MESSAGE = {
   deletedAt: null as Date | null,
   forwardedFromSenderName: null as string | null,
   reactions: [] as { emoji: string; userId: string }[],
-  attachments: [] as { file: { id: string; originalName: string; mimeType: string; sizeBytes: bigint } }[],
+  attachments: [] as {
+    file: { id: string; originalName: string; mimeType: string; sizeBytes: bigint };
+  }[],
 };
 
 function makeDeps(overrides?: {
@@ -37,31 +44,50 @@ function makeDeps(overrides?: {
   targetMembership?: unknown;
   adminCount?: number;
   file?: unknown;
-  roomOrgSource?: { meeting?: { orgId: string | null }; class?: { orgId: string | null }; team?: { orgId: string | null } };
+  roomOrgSource?: {
+    meeting?: { orgId: string | null };
+    class?: { orgId: string | null };
+    team?: { orgId: string | null };
+  };
 }) {
   const message = overrides?.message === null ? null : { ...RAW_MESSAGE, ...overrides?.message };
-  const groupRoom = overrides?.groupRoom === undefined ? { id: "group-1", type: "GROUP" } : overrides.groupRoom;
+  const groupRoom =
+    overrides?.groupRoom === undefined ? { id: "group-1", type: "GROUP" } : overrides.groupRoom;
 
   const prisma = {
     client: {
       chatRoom: {
-        findUnique: jest.fn().mockImplementation(({ where }: { where: { id: string } }) =>
-          Promise.resolve(where.id === "group-1" ? groupRoom : ROOM),
-        ),
+        findUnique: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { id: string } }) =>
+            Promise.resolve(where.id === "group-1" ? groupRoom : ROOM),
+          ),
         findFirst: jest.fn().mockResolvedValue(overrides?.existingRoom ?? null),
         create: jest.fn().mockResolvedValue({ id: "room-new", type: "DIRECT" }),
-        update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "group-1", ...data })),
-        findUniqueOrThrow: jest.fn().mockResolvedValue(
-          overrides?.roomOrgSource ?? { meeting: { orgId: null }, class: { orgId: null }, team: { orgId: null } },
-        ),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }) => Promise.resolve({ id: "group-1", ...data })),
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValue(
+            overrides?.roomOrgSource ?? {
+              meeting: { orgId: null },
+              class: { orgId: null },
+              team: { orgId: null },
+            },
+          ),
       },
       chatMessage: {
         findUnique: jest.fn().mockResolvedValue(message),
         findUniqueOrThrow: jest.fn().mockResolvedValue(message),
-        create: jest.fn().mockImplementation(({ data }) =>
-          Promise.resolve({ ...RAW_MESSAGE, id: "msg-new", sender: RAW_MESSAGE.sender, ...data }),
-        ),
-        update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...message, ...data })),
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ ...RAW_MESSAGE, id: "msg-new", sender: RAW_MESSAGE.sender, ...data }),
+          ),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }) => Promise.resolve({ ...message, ...data })),
       },
       chatReaction: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -73,21 +99,35 @@ function makeDeps(overrides?: {
         // a second lookup (promote/demote/addMember's duplicate check) is the
         // TARGET's — distinguish by userId since both go through the same
         // findUnique call shape.
-        findUnique: jest.fn().mockImplementation(({ where }: { where: { chatRoomId_userId: { userId: string } } }) => {
-          const targetUserId = where.chatRoomId_userId.userId;
-          if (targetUserId === "caller-1") {
-            return Promise.resolve(overrides?.membership === undefined ? { id: "member-caller", isAdmin: true } : overrides.membership);
-          }
-          return Promise.resolve(overrides?.targetMembership === undefined ? { id: "member-target", isAdmin: false } : overrides.targetMembership);
-        }),
+        findUnique: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { chatRoomId_userId: { userId: string } } }) => {
+            const targetUserId = where.chatRoomId_userId.userId;
+            if (targetUserId === "caller-1") {
+              return Promise.resolve(
+                overrides?.membership === undefined
+                  ? { id: "member-caller", isAdmin: true }
+                  : overrides.membership,
+              );
+            }
+            return Promise.resolve(
+              overrides?.targetMembership === undefined
+                ? { id: "member-target", isAdmin: false }
+                : overrides.targetMembership,
+            );
+          }),
         create: jest.fn(),
-        update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "member-target", ...data })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }) => Promise.resolve({ id: "member-target", ...data })),
         deleteMany: jest.fn(),
         count: jest.fn().mockResolvedValue(overrides?.adminCount ?? 2),
         findMany: jest.fn().mockResolvedValue([{ userId: "member-target" }]),
       },
       fileAsset: {
-        findUnique: jest.fn().mockResolvedValue(overrides?.file === undefined ? null : overrides.file),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue(overrides?.file === undefined ? null : overrides.file),
         create: jest.fn().mockResolvedValue({ id: "file-1" }),
       },
     },
@@ -102,9 +142,14 @@ function makeDeps(overrides?: {
     markChatRoomNotificationsRead: jest.fn(),
     create: jest.fn(),
   } as unknown as NotificationsService;
-  const broadcast = { publish: jest.fn(), publishToRoom: jest.fn() } as unknown as RealtimeBroadcastService;
+  const broadcast = {
+    publish: jest.fn(),
+    publishToRoom: jest.fn(),
+  } as unknown as RealtimeBroadcastService;
   const auditLog = { record: jest.fn() } as unknown as AuditLogService;
-  const contacts = { isBlocked: jest.fn().mockResolvedValue(overrides?.isBlocked ?? false) } as unknown as ContactsService;
+  const contacts = {
+    isBlocked: jest.fn().mockResolvedValue(overrides?.isBlocked ?? false),
+  } as unknown as ContactsService;
   const storage = {
     getSignedUploadUrl: jest.fn().mockResolvedValue("https://upload.example"),
     getSignedDownloadUrl: jest.fn().mockResolvedValue("https://download.example"),
@@ -113,7 +158,16 @@ function makeDeps(overrides?: {
     assertStorageOk: jest.fn().mockResolvedValue(undefined),
   } as unknown as OrganizationsService;
 
-  return { prisma, permissions, notifications, broadcast, auditLog, contacts, storage, organizations };
+  return {
+    prisma,
+    permissions,
+    notifications,
+    broadcast,
+    auditLog,
+    contacts,
+    storage,
+    organizations,
+  };
 }
 
 function makeService(deps: ReturnType<typeof makeDeps>) {
@@ -152,7 +206,11 @@ describe("ChatService.createRoom — GROUP", () => {
     const deps = makeDeps();
     const service = makeService(deps);
 
-    await service.createRoom("user-a", { type: "GROUP", name: "Study Buddies", memberUserIds: ["user-b", "user-c"] });
+    await service.createRoom("user-a", {
+      type: "GROUP",
+      name: "Study Buddies",
+      memberUserIds: ["user-b", "user-c"],
+    });
 
     expect(deps.prisma.client.chatRoom.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -174,28 +232,56 @@ describe("ChatService group management (admin-gated)", () => {
   it("refuses a non-admin member from renaming the group", async () => {
     const deps = makeDeps({ membership: { id: "member-caller", isAdmin: false } });
     const service = makeService(deps);
-    await expect(service.updateRoom("group-1", "caller-1", { name: "New name" })).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(
+      service.updateRoom("group-1", "caller-1", { name: "New name" }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it("404s managing a room that isn't actually a GROUP", async () => {
     const deps = makeDeps({ groupRoom: { id: "group-1", type: "DIRECT" } });
     const service = makeService(deps);
-    await expect(service.updateRoom("group-1", "caller-1", { name: "X" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.updateRoom("group-1", "caller-1", { name: "X" })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it("lets an admin rename and set a photo", async () => {
     const deps = makeDeps();
     const service = makeService(deps);
-    const updated = await service.updateRoom("group-1", "caller-1", { name: "New name", photoUrl: "https://x/y.png" });
+    const updated = await service.updateRoom("group-1", "caller-1", {
+      name: "New name",
+      photoUrl: "https://x/y.png",
+    });
     expect(updated).toMatchObject({ name: "New name", photoUrl: "https://x/y.png" });
+  });
+
+  // The actual bug: updateChatRoomSchema's photoUrl was `.optional()` only,
+  // never `.nullable()` — there was no way for a client to ever express
+  // "remove the photo" at all, since Zod would reject a literal `null` in
+  // the request body before this method ever ran. Once a group's photo was
+  // set, it was permanently stuck.
+  it("lets an admin remove a previously-set photo by sending photoUrl: null", async () => {
+    const deps = makeDeps();
+    const service = makeService(deps);
+    const updated = await service.updateRoom("group-1", "caller-1", { photoUrl: null });
+    expect(updated).toMatchObject({ photoUrl: null });
+  });
+
+  it("leaves the photo untouched when photoUrl is omitted entirely (renaming only)", async () => {
+    const deps = makeDeps();
+    const service = makeService(deps);
+    await service.updateRoom("group-1", "caller-1", { name: "Renamed only" });
+    expect(deps.prisma.client.chatRoom.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ photoUrl: undefined }) }),
+    );
   });
 
   it("refuses adding someone who's already a member", async () => {
     const deps = makeDeps({ targetMembership: { id: "member-target", isAdmin: false } });
     const service = makeService(deps);
-    await expect(service.addMember("group-1", "caller-1", "user-x")).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.addMember("group-1", "caller-1", "user-x")).rejects.toBeInstanceOf(
+      ConflictException,
+    );
   });
 
   it("adds a new member as a non-admin", async () => {
@@ -223,13 +309,21 @@ describe("ChatService group management (admin-gated)", () => {
   });
 
   it("refuses demoting the last remaining admin", async () => {
-    const deps = makeDeps({ targetMembership: { id: "member-target", isAdmin: true }, adminCount: 1 });
+    const deps = makeDeps({
+      targetMembership: { id: "member-target", isAdmin: true },
+      adminCount: 1,
+    });
     const service = makeService(deps);
-    await expect(service.demoteAdmin("group-1", "caller-1", "user-x")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.demoteAdmin("group-1", "caller-1", "user-x")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it("demotes an admin when at least one other admin remains", async () => {
-    const deps = makeDeps({ targetMembership: { id: "member-target", isAdmin: true }, adminCount: 2 });
+    const deps = makeDeps({
+      targetMembership: { id: "member-target", isAdmin: true },
+      adminCount: 2,
+    });
     const service = makeService(deps);
     const result = await service.demoteAdmin("group-1", "caller-1", "user-x");
     expect(result).toMatchObject({ isAdmin: false });
@@ -251,12 +345,16 @@ describe("ChatService.toggleReaction", () => {
 
   it("removes the reaction on a second toggle", async () => {
     const deps = makeDeps();
-    (deps.prisma.client.chatReaction.findUnique as jest.Mock).mockResolvedValue({ id: "reaction-1" });
+    (deps.prisma.client.chatReaction.findUnique as jest.Mock).mockResolvedValue({
+      id: "reaction-1",
+    });
     const service = makeService(deps);
 
     await service.toggleReaction("meeting-1", "user-1", "msg-1", "👍");
 
-    expect(deps.prisma.client.chatReaction.delete).toHaveBeenCalledWith({ where: { id: "reaction-1" } });
+    expect(deps.prisma.client.chatReaction.delete).toHaveBeenCalledWith({
+      where: { id: "reaction-1" },
+    });
     expect(deps.prisma.client.chatReaction.create).not.toHaveBeenCalled();
   });
 
@@ -286,9 +384,9 @@ describe("ChatService.toggleReaction", () => {
     const deps = makeDeps({ message: { chatRoomId: "some-other-room" } });
     const service = makeService(deps);
 
-    await expect(service.toggleReaction("meeting-1", "user-1", "msg-1", "👍")).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      service.toggleReaction("meeting-1", "user-1", "msg-1", "👍"),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 
@@ -349,11 +447,17 @@ describe("ChatService.persistMessage", () => {
     });
     (deps.permissions.requireCapability as jest.Mock).mockResolvedValue({ role: "PARTICIPANT" });
     // @ts-expect-error meeting lookup isn't part of PrismaService in this mock — add it
-    deps.prisma.client.meeting = { findUniqueOrThrow: jest.fn().mockResolvedValue({ settings: { allowChat: true } }) };
+    deps.prisma.client.meeting = {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ settings: { allowChat: true } }),
+    };
     const service = makeService(deps);
 
     await expect(
-      service.persistMessage("meeting-1", "user-1", { body: "hi", fileId: "file-1", isPrivate: false }),
+      service.persistMessage("meeting-1", "user-1", {
+        body: "hi",
+        fileId: "file-1",
+        isPrivate: false,
+      }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
@@ -412,9 +516,9 @@ describe("ChatService.deleteRoomMessage — own-message-only", () => {
   it("refuses deleting someone else's room message (no admin/moderation override at all)", async () => {
     const deps = makeDeps();
     const service = makeService(deps);
-    await expect(service.deleteRoomMessage("room-1", "not-the-sender", "msg-1")).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(
+      service.deleteRoomMessage("room-1", "not-the-sender", "msg-1"),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it("lets the sender delete their own room message", async () => {
@@ -422,7 +526,9 @@ describe("ChatService.deleteRoomMessage — own-message-only", () => {
     const service = makeService(deps);
     await service.deleteRoomMessage("room-1", "sender-1", "msg-1");
     expect(deps.prisma.client.chatMessage.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ body: null, deletedAt: expect.any(Date) }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ body: null, deletedAt: expect.any(Date) }),
+      }),
     );
     expect(deps.broadcast.publishToRoom).toHaveBeenCalledWith(
       "chatroom:room-1",
@@ -501,7 +607,9 @@ describe("ChatService.presignRoomAttachment", () => {
       sizeBytes: 5000,
     });
     expect(deps.prisma.client.fileAsset.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ scope: "CHAT", chatRoomId: "room-1" }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ scope: "CHAT", chatRoomId: "room-1" }),
+      }),
     );
     expect(result).toMatchObject({ fileId: "file-1" });
   });
@@ -541,7 +649,9 @@ describe("ChatService.presignRoomAttachment", () => {
 
   it("propagates a storage-limit rejection instead of creating the file", async () => {
     const deps = makeDeps({ roomOrgSource: { meeting: { orgId: "org-1" } } });
-    (deps.organizations.assertStorageOk as jest.Mock).mockRejectedValue(new ForbiddenException("limit reached"));
+    (deps.organizations.assertStorageOk as jest.Mock).mockRejectedValue(
+      new ForbiddenException("limit reached"),
+    );
     const service = makeService(deps);
 
     await expect(
@@ -557,7 +667,9 @@ describe("ChatService.presignRoomAttachment", () => {
 
 describe("ChatService.persistRoomMessage — attachments", () => {
   it("rejects attaching a file uploaded by someone else, or to a different room", async () => {
-    const deps = makeDeps({ file: { id: "file-1", chatRoomId: "room-1", uploaderUserId: "someone-else" } });
+    const deps = makeDeps({
+      file: { id: "file-1", chatRoomId: "room-1", uploaderUserId: "someone-else" },
+    });
     const service = makeService(deps);
     await expect(
       service.persistRoomMessage("room-1", "sender-1", { fileId: "file-1" }),
@@ -565,11 +677,15 @@ describe("ChatService.persistRoomMessage — attachments", () => {
   });
 
   it("accepts a file uploaded by the sender to this same room", async () => {
-    const deps = makeDeps({ file: { id: "file-1", chatRoomId: "room-1", uploaderUserId: "sender-1" } });
+    const deps = makeDeps({
+      file: { id: "file-1", chatRoomId: "room-1", uploaderUserId: "sender-1" },
+    });
     const service = makeService(deps);
     const result = await service.persistRoomMessage("room-1", "sender-1", { fileId: "file-1" });
     expect(deps.prisma.client.chatMessage.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ attachments: { create: [{ fileId: "file-1" }] } }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ attachments: { create: [{ fileId: "file-1" }] } }),
+      }),
     );
     expect(result.senderId).toBe("sender-1");
   });
