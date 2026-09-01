@@ -13,11 +13,21 @@ export function ClassroomPanel({
   meetingId,
   socket,
   isModerator,
+  canEditWhiteboard,
   featureFlags,
 }: {
   meetingId: string;
   socket: Socket | null;
   isModerator: boolean;
+  /** `can(role, "whiteboard.edit")` from the caller — NOT the same set as
+   * isModerator. whiteboard.edit is granted to STUDENT/PARTICIPANT too, only
+   * GUEST lacks it, so isModerator would be both wrong (too narrow) and, if
+   * this were ever hardcoded true instead, wrong the other way (draws a
+   * GUEST a fully interactive-looking toolbar that 403s on every stroke —
+   * WhiteboardService/RealtimeGateway already enforce this server-side
+   * regardless, so this prop is UX only, but showing live editing controls
+   * that silently fail on click is still a real, confusing bug). */
+  canEditWhiteboard: boolean;
   /** Real server state (FeatureFlagsService), not a client guess — hiding a
    * disabled tab here is UX only, the actual gate is server-side in each of
    * WhiteboardService/BreakoutRoomsService. */
@@ -46,7 +56,7 @@ export function ClassroomPanel({
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {activeTab === "whiteboard" && <WhiteboardCanvas canEdit={true} />}
+        {activeTab === "whiteboard" && <WhiteboardCanvas canEdit={canEditWhiteboard} />}
         {activeTab === "polls" && (
           <PollsPanel meetingId={meetingId} socket={socket} canCreate={isModerator} />
         )}

@@ -104,6 +104,11 @@ export function MeetingRoom({
   // session, never hides a genuinely active one.
   const canManageCaptions =
     can(role as ParticipantRole, "captions.manage") && featureFlags.LIVE_CAPTIONS;
+  // Broader than isModerator on purpose, the other direction from
+  // canEndMeeting above: whiteboard.edit is granted to STUDENT/PARTICIPANT
+  // too, only GUEST lacks it. See ClassroomPanel's own comment on this prop
+  // for what breaks if this is hardcoded true instead.
+  const canEditWhiteboard = can(role as ParticipantRole, "whiteboard.edit");
 
   async function endMeeting() {
     try {
@@ -427,6 +432,7 @@ export function MeetingRoom({
                         meetingId={meetingId}
                         socket={socket}
                         isModerator={isModerator}
+                        canEditWhiteboard={canEditWhiteboard}
                         featureFlags={featureFlags}
                       />
                     )}
