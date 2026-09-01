@@ -116,12 +116,29 @@ export class PollsService {
     return distinct.length;
   }
 
-  private toPayload(poll: { id: string; question: string; isMultipleChoice: boolean; timerSeconds: number | null; options: { id: string; text: string; order: number }[] }, results: unknown[]) {
+  private toPayload(
+    poll: {
+      id: string;
+      question: string;
+      isMultipleChoice: boolean;
+      timerSeconds: number | null;
+      status: string;
+      options: { id: string; text: string; order: number }[];
+    },
+    results: unknown[],
+  ) {
     return {
       id: poll.id,
       question: poll.question,
       isMultipleChoice: poll.isMultipleChoice,
       timerSeconds: poll.timerSeconds,
+      // H-5: this was missing entirely, and the client gates every
+      // voting/closing control on `status === "OPEN"` — a poll a teacher
+      // JUST published rendered dead on arrival (no vote buttons, no Close
+      // button) for everyone, every time, until something else (switching
+      // Tools sub-tabs) triggered a re-fetch of the real REST shape (which
+      // always included status) and repaired it.
+      status: poll.status,
       options: poll.options.map((o) => ({ id: o.id, text: o.text, order: o.order })),
       results,
     };

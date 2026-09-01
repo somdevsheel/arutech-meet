@@ -32,6 +32,43 @@ function makeBroadcastMock(): RealtimeBroadcastService {
   return { publish: jest.fn() } as unknown as RealtimeBroadcastService;
 }
 
+// H-5: POLL_PUBLISHED's payload used to omit `status` entirely — the client
+// gates every voting/closing control on `status === "OPEN"`, so a freshly
+// published poll rendered dead on arrival for everyone until an unrelated
+// re-fetch happened to repair it.
+describe("PollsService.create", () => {
+  it("includes status: OPEN in the POLL_PUBLISHED broadcast payload", async () => {
+    const createdPoll = {
+      id: "poll-1",
+      question: "Pineapple on pizza?",
+      isMultipleChoice: false,
+      timerSeconds: null,
+      status: "OPEN",
+      options: [{ id: "opt-1", text: "Yes", order: 0 }],
+    };
+    const prisma = {
+      client: {
+        poll: { create: jest.fn().mockResolvedValue(createdPoll) },
+      },
+    } as unknown as PrismaService;
+    const broadcast = makeBroadcastMock();
+    const service = new PollsService(prisma, makePermissionsMock(), broadcast);
+
+    await service.create("meeting-1", "teacher-1", {
+      question: "Pineapple on pizza?",
+      options: ["Yes", "No"],
+      isMultipleChoice: false,
+      showResultsToParticipants: true,
+    });
+
+    expect(broadcast.publish).toHaveBeenCalledWith(
+      "meeting-1",
+      "poll:published",
+      expect.objectContaining({ status: "OPEN" }),
+    );
+  });
+});
+
 describe("PollsService.respond", () => {
   it("rejects multiple selected options on a single-choice poll", async () => {
     const prisma = makePrismaMock({
