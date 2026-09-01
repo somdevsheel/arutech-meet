@@ -695,7 +695,21 @@ export class ChatService {
     const room = await this.prisma.client.chatRoom.findUnique({ where: { id: chatRoomId } });
     if (!room) throw new NotFoundException("Chat room not found");
     if (room.type !== "GROUP") throw new ForbiddenException("Only group chats can be left");
-    await this.requireMember(chatRoomId, userId);
+    const membership = await this.requireMember(chatRoomId, userId);
+    // H-6: the sole admin leaving used to permanently orphan the group — no
+    // one left could ever manage it again (promoteAdmin/demoteAdmin/remove
+    // are all admin-gated, and there'd be nobody left to grant that back).
+    // demoteAdmin already refuses to demote a group's last admin for this
+    // exact reason; leaving is just another way to lose that same admin, so
+    // it needs the identical guard.
+    if (membership.isAdmin) {
+      const adminCount = await this.prisma.client.chatMember.count({ where: { chatRoomId, isAdmin: true } });
+      if (adminCount <= 1) {
+        throw new BadRequestException(
+          "You're the only admin — promote another member to admin before leaving",
+        );
+      }
+    }
     await this.prisma.client.chatMember.delete({
       where: { chatRoomId_userId: { chatRoomId, userId } },
     });

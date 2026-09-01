@@ -132,6 +132,7 @@ function makeDeps(overrides?: {
         update: jest
           .fn()
           .mockImplementation(({ data }) => Promise.resolve({ id: "member-target", ...data })),
+        delete: jest.fn(),
         deleteMany: jest.fn(),
         count: jest.fn().mockResolvedValue(overrides?.adminCount ?? 2),
         findMany: jest.fn().mockResolvedValue([{ userId: "member-target" }]),
@@ -343,6 +344,43 @@ describe("ChatService group management (admin-gated)", () => {
     const service = makeService(deps);
     const result = await service.demoteAdmin("group-1", "caller-1", "user-x");
     expect(result).toMatchObject({ isAdmin: false });
+  });
+
+  // H-6: the sole admin leaving used to permanently orphan the group — no
+  // guard existed at all, unlike demoteAdmin's identical protection just
+  // above for the same underlying "don't lose the last admin" invariant.
+  it("refuses the sole admin leaving the group", async () => {
+    const deps = makeDeps({
+      membership: { id: "member-caller", isAdmin: true },
+      adminCount: 1,
+    });
+    const service = makeService(deps);
+    await expect(service.leaveRoom("group-1", "caller-1")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(deps.prisma.client.chatMember.delete).not.toHaveBeenCalled();
+  });
+
+  it("lets an admin leave when at least one other admin remains", async () => {
+    const deps = makeDeps({
+      membership: { id: "member-caller", isAdmin: true },
+      adminCount: 2,
+    });
+    const service = makeService(deps);
+    await service.leaveRoom("group-1", "caller-1");
+    expect(deps.prisma.client.chatMember.delete).toHaveBeenCalledWith({
+      where: { chatRoomId_userId: { chatRoomId: "group-1", userId: "caller-1" } },
+    });
+  });
+
+  it("lets a non-admin member leave regardless of admin count", async () => {
+    const deps = makeDeps({
+      membership: { id: "member-caller", isAdmin: false },
+      adminCount: 1,
+    });
+    const service = makeService(deps);
+    await service.leaveRoom("group-1", "caller-1");
+    expect(deps.prisma.client.chatMember.delete).toHaveBeenCalled();
   });
 });
 

@@ -131,6 +131,12 @@ function TeamChatPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [forwardingId, setForwardingId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // H-6: leaving a group used to be able to orphan it (the sole admin
+  // leaving with no guard at all, no error, nothing) — the server now
+  // refuses that with a real 400, but the click handler never surfaced
+  // anything: an unhandled promise rejection, silent no-op from the user's
+  // perspective. This is what actually shows them why nothing happened.
+  const [leaveError, setLeaveError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [typingUserIds, setTypingUserIds] = useState<Set<string>>(new Set());
   const [presenceByUserId, setPresenceByUserId] = useState<Record<string, UserPresenceStatus>>({});
@@ -415,9 +421,14 @@ function TeamChatPage() {
   }
 
   async function leaveRoom(roomId: string) {
-    await apiFetch(`/chat-rooms/${roomId}/leave`, { method: "POST" });
-    setRooms((prev) => prev?.filter((r) => r.id !== roomId) ?? null);
-    if (selectedId === roomId) setSelectedId(null);
+    setLeaveError(null);
+    try {
+      await apiFetch(`/chat-rooms/${roomId}/leave`, { method: "POST" });
+      setRooms((prev) => prev?.filter((r) => r.id !== roomId) ?? null);
+      if (selectedId === roomId) setSelectedId(null);
+    } catch (err) {
+      setLeaveError(err instanceof ApiError ? err.message : "Failed to leave group");
+    }
   }
 
   /** "Group call/meeting shortcut" — starts a real instant meeting (already
@@ -497,7 +508,10 @@ function TeamChatPage() {
               return (
                 <li key={room.id}>
                   <button
-                    onClick={() => setSelectedId(room.id)}
+                    onClick={() => {
+                      setSelectedId(room.id);
+                      setLeaveError(null);
+                    }}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition ${
                       selectedId === room.id ? "bg-brand-tint2" : "hover:bg-surface-elevated"
                     }`}
@@ -579,6 +593,11 @@ function TeamChatPage() {
                   </div>
                 )}
               </div>
+              {leaveError && (
+                <p className="border-b border-surface-border bg-danger/10 px-4 py-2 text-xs text-danger">
+                  {leaveError}
+                </p>
+              )}
               <div className="flex-1 space-y-3 overflow-y-auto p-4">
                 {messages.length === 0 && (
                   <p className="text-xs text-ink-muted">No messages yet. Say hello 👋</p>
