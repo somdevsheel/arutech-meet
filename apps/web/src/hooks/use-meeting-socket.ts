@@ -41,6 +41,12 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
   const [connected, setConnected] = useState(false);
   const [participants, setParticipants] = useState<ParticipantPresencePayload[]>([]);
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
+  // How many messages the pre-join history fetch below actually loaded —
+  // null until that fetch resolves. Exists purely so the caller (MeetingRoom)
+  // can tell "the whole backlog that already existed before I joined" apart
+  // from "a message that arrived live while I wasn't looking", which is
+  // what an unread badge should actually be counting — see its own comment.
+  const [historyMessageCount, setHistoryMessageCount] = useState<number | null>(null);
   const [lastModeration, setLastModeration] = useState<ModerationEvent | null>(null);
   const [meetingEnded, setMeetingEnded] = useState(false);
   const [waitingAdmitted, setWaitingAdmitted] = useState<string | null>(null);
@@ -54,7 +60,10 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
   useEffect(() => {
     if (!meetingId || !accessToken) return;
     apiFetch<ChatMessagePayload[]>(`/meetings/${meetingId}/chat/messages`)
-      .then((history) => setMessages([...history].reverse())) // history is newest-first
+      .then((history) => {
+        setMessages([...history].reverse()); // history is newest-first
+        setHistoryMessageCount(history.length);
+      })
       .catch(() => {});
   }, [meetingId, accessToken]);
 
@@ -76,7 +85,9 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
       setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
     const onChatMessageDeleted = (p: { messageId: string }) =>
       setMessages((prev) =>
-        prev.map((m) => (m.id === p.messageId ? { ...m, body: null, deletedAt: new Date().toISOString() } : m)),
+        prev.map((m) =>
+          m.id === p.messageId ? { ...m, body: null, deletedAt: new Date().toISOString() } : m,
+        ),
       );
     const onChatMessageEdited = (updated: ChatMessagePayload) =>
       setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
@@ -89,15 +100,20 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
     const onRoleChange = (p: { participantId: string; role: string }) =>
       setLastModeration({ type: "role_change", participantId: p.participantId, role: p.role });
     const onMeetingEnded = () => setMeetingEnded(true);
-    const onWaitingRoomAdmit = (p: { participantId: string }) => setWaitingAdmitted(p.participantId);
+    const onWaitingRoomAdmit = (p: { participantId: string }) =>
+      setWaitingAdmitted(p.participantId);
     const onWaitingRoomJoined = () => setWaitingRoomCount((c) => c + 1);
     // Merges into the same presence rows ParticipantsPanel already reads
     // `handRaised` off of — previously nothing ever set this field to true, so
     // the raise-hand button had no visible effect anywhere in the UI.
     const onHandRaise = (p: { userId: string }) =>
-      setParticipants((prev) => prev.map((x) => (x.userId === p.userId ? { ...x, handRaised: true } : x)));
+      setParticipants((prev) =>
+        prev.map((x) => (x.userId === p.userId ? { ...x, handRaised: true } : x)),
+      );
     const onHandLower = (p: { userId: string }) =>
-      setParticipants((prev) => prev.map((x) => (x.userId === p.userId ? { ...x, handRaised: false } : x)));
+      setParticipants((prev) =>
+        prev.map((x) => (x.userId === p.userId ? { ...x, handRaised: false } : x)),
+      );
     const onReaction = (r: ReactionPayload) => {
       const key = `${r.userId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       setReactions((prev) => [...prev, { key, userId: r.userId, emoji: r.emoji }]);
@@ -155,7 +171,10 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
   }, [meetingId, accessToken]);
 
   const sendMessage = useCallback(
-    (body: string, opts?: { replyToId?: string; isPrivate?: boolean; toUserId?: string; fileId?: string }) => {
+    (
+      body: string,
+      opts?: { replyToId?: string; isPrivate?: boolean; toUserId?: string; fileId?: string },
+    ) => {
       if (!meetingId) return;
       socketRef.current?.emit(WS_EVENTS.CHAT_MESSAGE, {
         meetingId,
@@ -235,6 +254,7 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
     connected,
     participants,
     messages,
+    historyMessageCount,
     lastModeration,
     meetingEnded,
     waitingAdmitted,

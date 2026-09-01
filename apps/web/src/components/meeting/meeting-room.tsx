@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LiveKitRoom } from "@livekit/components-react";
 import "@livekit/components-styles";
 import {
@@ -124,6 +124,7 @@ export function MeetingRoom({
   const {
     participants,
     messages,
+    historyMessageCount,
     lastModeration,
     meetingEnded,
     waitingRoomCount,
@@ -152,7 +153,24 @@ export function MeetingRoom({
     return () => clearInterval(id);
   }, []);
 
-  // Real unread tracking: whatever's arrived since the chat tab was last open.
+  // Real unread tracking: whatever's arrived since the chat tab was last
+  // open. `seenChatCount` starts at 0, but `messages` doesn't — it jumps
+  // straight to the full pre-join history's length the moment that REST
+  // fetch resolves (useMeetingSocket loads history so joining an
+  // in-progress meeting shows past messages at all). Without the baseline
+  // effect below, that backlog itself briefly WAS "unread": every message
+  // ever sent before you joined, reported as new the instant you arrived.
+  // historyMessageCount marks exactly when that history load happens, so
+  // seenChatCount can be baselined to it once — only messages that arrive
+  // live after that point (a real socket append, not the initial fetch)
+  // should ever count as unread.
+  const historyBaselineApplied = useRef(false);
+  useEffect(() => {
+    if (!historyBaselineApplied.current && historyMessageCount !== null) {
+      setSeenChatCount(historyMessageCount);
+      historyBaselineApplied.current = true;
+    }
+  }, [historyMessageCount]);
   useEffect(() => {
     if (panel === "chat") setSeenChatCount(messages.length);
   }, [panel, messages.length]);
