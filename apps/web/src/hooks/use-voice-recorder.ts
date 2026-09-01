@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Records a real voice message via `getUserMedia` + `MediaRecorder` — a
  * genuinely separate, much simpler recording than Stage 18's local meeting
@@ -36,7 +36,8 @@ export function useVoiceRecorder() {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunksRef.current, { type: mimeType ?? "audio/webm" });
         const ext = (mimeType ?? "audio/webm").includes("mp4") ? "m4a" : "webm";
-        const file = blob.size > 0 ? new File([blob], `voice-message.${ext}`, { type: blob.type }) : null;
+        const file =
+          blob.size > 0 ? new File([blob], `voice-message.${ext}`, { type: blob.type }) : null;
         resolveRef.current?.(file);
         resolveRef.current = null;
       };
@@ -79,7 +80,31 @@ export function useVoiceRecorder() {
     recorderRef.current = null;
   }, []);
 
-  const supported = typeof window !== "undefined" && typeof MediaRecorder !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+  // start()/stop()/cancel() only ever release the mic in response to an
+  // explicit user action — nothing previously ran if the component using
+  // this hook unmounted while a recording was still in progress (closing
+  // the chat panel mid-recording, navigating away, a meeting panel switch).
+  // getUserMedia's tracks keep running until something calls .stop() on
+  // them; without this, that never happened, and the browser's mic-active
+  // indicator stayed on indefinitely — a real, user-visible privacy/resource
+  // leak, not just a cosmetic one. Mirrors cancel()'s own cleanup, and is
+  // safe to run even when recording already stopped normally: stopping an
+  // already-stopped MediaStreamTrack is a harmless no-op.
+  useEffect(() => {
+    return () => {
+      if (tickRef.current) clearInterval(tickRef.current);
+      if (recorderRef.current && recorderRef.current.state !== "inactive") {
+        recorderRef.current.onstop = null; // don't resolve a promise nobody can await anymore
+        recorderRef.current.stop();
+      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  const supported =
+    typeof window !== "undefined" &&
+    typeof MediaRecorder !== "undefined" &&
+    Boolean(navigator.mediaDevices?.getUserMedia);
 
   return { recording, elapsed, error, supported, start, stop, cancel };
 }
