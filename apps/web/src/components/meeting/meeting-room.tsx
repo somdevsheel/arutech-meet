@@ -298,11 +298,39 @@ export function MeetingRoom({
     }
   }
 
+  // H-3: "You were removed" used to flash for ~150ms and then silently
+  // auto-navigate away ~200-350ms later — no click, no pause, effectively a
+  // silent kick instead of the deliberate "stays until you click Back to
+  // dashboard" screen it's meant to be.
+  //
+  // Root cause (confirmed by instrumenting both channels live, not just
+  // reading the code): being removed reaches this client over TWO separate
+  // channels that are NOT the same event arriving twice — LiveKit's own
+  // real-time signaling forcibly disconnects the room connection almost
+  // immediately, firing <LiveKitRoom>'s `onDisconnected` well BEFORE this
+  // app's own Socket.IO broadcast (MODERATION_REMOVE, REST -> DB write ->
+  // Redis pubsub -> socket emit -> client) arrives to explain WHY and render
+  // the actual RemovedScreen below. So `onDisconnected` firing first,
+  // instantly calling onLeave(), was never a stale echo of a screen that
+  // already committed — it consistently WON the race and navigated away
+  // before that screen's own state update had even landed.
+  //
+  // Fix: don't call onLeave() immediately from onDisconnected. Give the
+  // slower, explanatory channel (MODERATION_REMOVE / MEETING_ENDED) a brief
+  // grace window to catch up and take over via its own explicit screen —
+  // comfortably longer than the ~200-360ms delay actually measured between
+  // the two channels. Only fall back to a bare disconnect-triggered
+  // navigation if nothing explains it within that window (a genuine
+  // unexpected drop, e.g. a real network failure).
+  const showingTerminalScreenRef = useRef(false);
+
   if (meetingEnded) {
+    showingTerminalScreenRef.current = true;
     return <EndedScreen onLeave={onLeave} />;
   }
 
   if (lastModeration?.type === "remove" && lastModeration.participantId === participantId) {
+    showingTerminalScreenRef.current = true;
     return <RemovedScreen onLeave={onLeave} />;
   }
 
@@ -355,7 +383,20 @@ export function MeetingRoom({
             connect
             video
             audio
-            onDisconnected={conn.label ? returnToMain : onLeave}
+            onDisconnected={
+              conn.label
+                ? returnToMain
+                : () => {
+                    // See showingTerminalScreenRef's own comment above for
+                    // why this waits instead of navigating immediately: the
+                    // LiveKit-level disconnect that triggers this callback
+                    // reliably arrives before the app's own explanation for
+                    // it does, not after.
+                    setTimeout(() => {
+                      if (!showingTerminalScreenRef.current) onLeave();
+                    }, 700);
+                  }
+            }
             data-lk-theme="default"
             className="flex h-screen flex-col overflow-hidden bg-surface"
           >
