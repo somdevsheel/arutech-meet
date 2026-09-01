@@ -1,6 +1,13 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@arutech/database";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
+
+/** True only for Prisma's "record to update/delete not found" error (P2025)
+ * — see the two catches below for why this distinction matters. */
+function isRecordNotFound(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025";
+}
 
 @Injectable()
 export class AdminUsersService {
@@ -44,10 +51,21 @@ export class AdminUsersService {
   }
 
   async suspend(adminUserId: string, targetUserId: string) {
-    const user = await this.prisma.client.user.update({
-      where: { id: targetUserId },
-      data: { status: "SUSPENDED" },
-    }).catch(() => null);
+    // Only a genuinely missing row should become "User not found" — a
+    // blanket `.catch(() => null)` here used to swallow every possible
+    // failure (a DB connection drop, a constraint violation, anything),
+    // reporting each one as "User not found" with the real cause never
+    // logged anywhere. Anything other than an actual missing-record error
+    // rethrows as a real 500, visible for what it is.
+    const user = await this.prisma.client.user
+      .update({
+        where: { id: targetUserId },
+        data: { status: "SUSPENDED" },
+      })
+      .catch((err) => {
+        if (isRecordNotFound(err)) return null;
+        throw err;
+      });
     if (!user) throw new NotFoundException("User not found");
 
     // Suspending an account should also cut off any sessions it already holds —
@@ -67,10 +85,16 @@ export class AdminUsersService {
   }
 
   async activate(adminUserId: string, targetUserId: string) {
-    const user = await this.prisma.client.user.update({
-      where: { id: targetUserId },
-      data: { status: "ACTIVE" },
-    }).catch(() => null);
+    // Same reasoning as suspend() above.
+    const user = await this.prisma.client.user
+      .update({
+        where: { id: targetUserId },
+        data: { status: "ACTIVE" },
+      })
+      .catch((err) => {
+        if (isRecordNotFound(err)) return null;
+        throw err;
+      });
     if (!user) throw new NotFoundException("User not found");
 
     await this.auditLog.record({
