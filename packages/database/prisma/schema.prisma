@@ -891,6 +891,12 @@ model ChatMessage {
   // came from, so resolving a live reference could leak that source's
   // existence/content. A snapshot avoids that entirely.
   forwardedFromSenderName String? @map("forwarded_from_sender_name")
+  // A meeting guest has no User row for `sender` to resolve to (senderId is
+  // left null for them, same as a deleted user's message today), so this is
+  // their chosen display name at send time, denormalized the same way
+  // `forwardedFromSenderName` already snapshots a name rather than tracking
+  // a live reference. Null for every message with a real `sender`.
+  senderGuestName String? @map("sender_guest_name")
 
   chatRoom    ChatRoom         @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
   sender      User?            @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)

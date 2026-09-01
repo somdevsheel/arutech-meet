@@ -1,5 +1,6 @@
 import { env } from "./env";
 import { useAuthStore } from "./auth-store";
+import { getGuestToken } from "./guest-session";
 
 export class ApiError extends Error {
   constructor(
@@ -48,7 +49,13 @@ export async function apiFetch<T = unknown>(
   path: string,
   options: RequestInit & { skipAuth?: boolean } = {},
 ): Promise<T> {
+  // A meeting guest has no access token at all — only a meeting-scoped guest
+  // token (see lib/guest-session.ts) — so every REST call a guest's meeting
+  // screen makes (chat history, whiteboard, polls, reactions...) would
+  // otherwise silently go out with no Authorization header at all and 401.
+  // A signed-in user's real token always takes precedence.
   const { accessToken } = useAuthStore.getState();
+  const token = accessToken ?? getGuestToken();
   const doFetch = (token: string | null) =>
     fetch(`${env.apiUrl}/api/v1${path}`, {
       ...options,
@@ -59,8 +66,11 @@ export async function apiFetch<T = unknown>(
       },
     });
 
-  let response = await doFetch(accessToken);
+  let response = await doFetch(token);
 
+  // Refreshing only ever applies to a real access token (it needs a stored
+  // refreshToken, which a guest never has — see refreshAccessToken) — a
+  // guest token 401ing just fails through as-is.
   if (response.status === 401 && !options.skipAuth) {
     const newToken = await refreshAccessToken();
     if (newToken) {
@@ -111,6 +121,7 @@ export async function apiFetchBlob(
   options: RequestInit & { skipAuth?: boolean } = {},
 ): Promise<Blob> {
   const { accessToken } = useAuthStore.getState();
+  const token = accessToken ?? getGuestToken();
   const doFetch = (token: string | null) =>
     fetch(`${env.apiUrl}/api/v1${path}`, {
       ...options,
@@ -120,7 +131,7 @@ export async function apiFetchBlob(
       },
     });
 
-  let response = await doFetch(accessToken);
+  let response = await doFetch(token);
 
   if (response.status === 401 && !options.skipAuth) {
     const newToken = await refreshAccessToken();

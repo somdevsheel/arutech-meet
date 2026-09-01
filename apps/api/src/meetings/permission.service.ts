@@ -15,8 +15,17 @@ export class PermissionService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getParticipant(meetingId: string, userId: string) {
+    // `userId` here is either a real User.id (the normal case) or — for a
+    // guest, who has no User row at all — their own MeetingParticipant.id,
+    // per how JwtAuthGuard/RealtimeGateway populate a guest token's `sub`
+    // (see TokenService.GuestTokenPayload). Checking both columns lets a
+    // guest's identity resolve through this exact same authoritative
+    // lookup as everyone else, rather than needing a parallel "guest
+    // permission" code path duplicated across every caller of this method.
+    // No ambiguity risk: MeetingParticipant.id and User.id are independent
+    // UUID spaces, and the match is still scoped to this one meetingId.
     const participant = await this.prisma.client.meetingParticipant.findFirst({
-      where: { meetingId, userId },
+      where: { meetingId, OR: [{ userId }, { id: userId }] },
       orderBy: { createdAt: "desc" },
     });
     if (!participant) {

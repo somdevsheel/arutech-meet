@@ -35,7 +35,11 @@ export interface MeetingRoomProps {
   participantId: string;
   role: string;
   userId: string | null;
-  accessToken: string | null;
+  /** Whichever token authenticates this participant's app-level socket
+   * connection — a real access token for a signed-in user, or a meeting-
+   * scoped guest token (see lib/guest-session.ts) for a guest. Both are
+   * accepted identically by TokenService.verifyAnyToken server-side. */
+  authToken: string | null;
   onLeave: () => void;
 }
 
@@ -64,7 +68,7 @@ export function MeetingRoom({
   participantId,
   role,
   userId,
-  accessToken,
+  authToken,
   onLeave,
 }: MeetingRoomProps) {
   const [panel, setPanel] = useState<PanelKind | null>(null);
@@ -138,7 +142,7 @@ export function MeetingRoom({
     sendReaction,
     dismissReaction,
     socket,
-  } = useMeetingSocket(meetingId, accessToken);
+  } = useMeetingSocket(meetingId, authToken);
 
   // Derived from the server-broadcast presence list, not separate local state,
   // so it stays correct whether the toggle came from this tab or a host

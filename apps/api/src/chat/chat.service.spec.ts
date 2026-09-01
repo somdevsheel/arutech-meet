@@ -82,8 +82,20 @@ function makeDeps(overrides?: {
         findUniqueOrThrow: jest.fn().mockResolvedValue(message),
         create: jest
           .fn()
+          // `attachments` is forced back to RAW_MESSAGE's `[]` after the
+          // `...data` spread — `data.attachments` (when present) is the
+          // create-input shape (`{ create: [...] }`), not the queried-back
+          // relation shape `shapeMessage` expects, and it's `undefined`
+          // entirely on a message with no attachment at all, which would
+          // otherwise crash shapeMessage's `message.attachments[0]` read.
           .mockImplementation(({ data }) =>
-            Promise.resolve({ ...RAW_MESSAGE, id: "msg-new", sender: RAW_MESSAGE.sender, ...data }),
+            Promise.resolve({
+              ...RAW_MESSAGE,
+              id: "msg-new",
+              sender: RAW_MESSAGE.sender,
+              ...data,
+              attachments: RAW_MESSAGE.attachments,
+            }),
           ),
         update: jest
           .fn()
@@ -134,7 +146,11 @@ function makeDeps(overrides?: {
   } as unknown as PrismaService;
 
   const permissions = {
-    getParticipant: jest.fn().mockResolvedValue({}),
+    // Defaults to a real (non-guest) HOST participant — the vast majority of
+    // these tests are exercising an authenticated caller. Tests specifically
+    // about guest behavior override this per-call via
+    // `(permissions.getParticipant as jest.Mock).mockResolvedValueOnce(...)`.
+    getParticipant: jest.fn().mockResolvedValue({ role: "HOST", userId: "user-1" }),
     requireCapability: jest.fn().mockResolvedValue({ role: "HOST" }),
   } as unknown as PermissionService;
 
@@ -380,6 +396,20 @@ describe("ChatService.toggleReaction", () => {
     );
   });
 
+  // ChatReaction.userId is a required FK to User.id — a guest's identity is
+  // their MeetingParticipant.id, not a User.id, so letting this through
+  // would hit a DB foreign-key violation instead of a clean, expected error.
+  it("rejects a guest reacting to a message — no User row to satisfy the FK", async () => {
+    const deps = makeDeps();
+    (deps.permissions.getParticipant as jest.Mock).mockResolvedValue({ role: "GUEST", userId: null });
+    const service = makeService(deps);
+
+    await expect(
+      service.toggleReaction("meeting-1", "guest-participant-1", "msg-1", "👍"),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(deps.prisma.client.chatReaction.create).not.toHaveBeenCalled();
+  });
+
   it("404s reacting to a message from a different meeting's chat room", async () => {
     const deps = makeDeps({ message: { chatRoomId: "some-other-room" } });
     const service = makeService(deps);
@@ -459,6 +489,55 @@ describe("ChatService.persistMessage", () => {
         isPrivate: false,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  // A guest's `senderId` argument here is their own MeetingParticipant.id,
+  // not a User.id — ChatMessage.senderId is FK'd to User, so writing it
+  // straight through would violate that FK. senderGuestName is the
+  // guest-safe path instead — see the schema's doc comment on that column.
+  it("stores a guest sender via senderGuestName, leaving senderId null", async () => {
+    const deps = makeDeps();
+    (deps.permissions.getParticipant as jest.Mock).mockResolvedValue({
+      role: "GUEST",
+      userId: null,
+      guestName: "Jamie",
+    });
+    // @ts-expect-error meeting lookup isn't part of PrismaService in this mock — add it
+    deps.prisma.client.meeting = {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ settings: { allowChat: true } }),
+    };
+    const service = makeService(deps);
+
+    await service.persistMessage("meeting-1", "guest-participant-1", { body: "hi", isPrivate: false });
+
+    expect(deps.prisma.client.chatMessage.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ senderId: null, senderGuestName: "Jamie" }),
+      }),
+    );
+  });
+
+  it("rejects a guest trying to attach a file — FileAsset has no guest-compatible uploader", async () => {
+    const deps = makeDeps();
+    (deps.permissions.getParticipant as jest.Mock).mockResolvedValue({
+      role: "GUEST",
+      userId: null,
+      guestName: "Jamie",
+    });
+    // @ts-expect-error meeting lookup isn't part of PrismaService in this mock — add it
+    deps.prisma.client.meeting = {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ settings: { allowChat: true } }),
+    };
+    const service = makeService(deps);
+
+    await expect(
+      service.persistMessage("meeting-1", "guest-participant-1", {
+        body: "hi",
+        fileId: "file-1",
+        isPrivate: false,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(deps.prisma.client.chatMessage.create).not.toHaveBeenCalled();
   });
 });
 

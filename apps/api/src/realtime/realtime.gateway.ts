@@ -26,7 +26,7 @@ import {
 } from "@arutech/types";
 import { sendChatMessageSchema, sendRoomChatMessageSchema, whiteboardOpSchema } from "@arutech/validation";
 import type { Env } from "@arutech/config";
-import { TokenService } from "../common/lib/tokens";
+import { TokenService, isGuestTokenPayload } from "../common/lib/tokens";
 import { PermissionService } from "../meetings/permission.service";
 import { ChatService } from "../chat/chat.service";
 import { WsExceptionFilter } from "./ws-exception.filter";
@@ -40,6 +40,12 @@ import { PresenceService } from "../presence/presence.service";
 interface SocketData {
   userId: string;
   email: string;
+  /** True for a meeting guest's socket (see TokenService.GuestTokenPayload) —
+   * `userId` above is then their MeetingParticipant.id, not a User.id. Guests
+   * have no User row, so anything that touches the `user` table or presence
+   * (which is keyed on real accounts) must be skipped for them; they still
+   * get the same `userRoom` join so admit/deny broadcasts reach them. */
+  isGuest?: boolean;
   /** This socket's own last-broadcast presence, stashed here purely so a
    * participant who joins the meeting LATER can be handed a roster snapshot
    * of everyone already present (see onJoinMeeting) — without this, only
@@ -154,15 +160,26 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       return;
     }
     try {
-      const payload = this.tokens.verifyAccessToken(token);
-      const data: SocketData = { userId: payload.sub, email: payload.email };
+      const payload = this.tokens.verifyAnyToken(token);
+      const isGuest = isGuestTokenPayload(payload);
+      const data: SocketData = isGuest
+        ? { userId: payload.sub, email: "", isGuest: true }
+        : { userId: payload.sub, email: payload.email };
       client.data = data;
       // Personal channel every authenticated socket gets for free — used to
       // push notifications (NotificationsService.create) and direct/group
       // team-chat messages (see onJoinChatRoom below) without a per-feature
       // join step, the same way `meeting:{id}` rooms work for meeting events.
+      // A guest gets this too (keyed on their MeetingParticipant.id) — it's
+      // the only channel ParticipantsService.admit/deny has to reach them on.
       await client.join(userRoom(payload.sub));
       this.metrics.websocketConnections.inc();
+
+      // Everything below this line — lastSeenAt and presence — is keyed on a
+      // real User row. A guest has none, so skip it entirely rather than
+      // firing updates/broadcasts for an id that isn't a user at all.
+      if (isGuest) return;
+
       // `User.lastSeenAt` — kept as the fallback "last seen X ago" shown once
       // a user is genuinely OFFLINE (see PresenceService). Bumped again in
       // handleDisconnect below so it reflects when they actually left, not
@@ -186,7 +203,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   }
 
   async handleDisconnect(client: Socket) {
-    const userId = (client.data as SocketData | undefined)?.userId;
+    const socketData = client.data as SocketData | undefined;
+    const userId = socketData?.userId;
     // Only decrement if this socket actually made it through auth (client.data
     // is only ever populated on the success path in handleConnection) — a
     // rejected/unauthenticated socket never incremented the gauge, so
@@ -194,12 +212,16 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     // (e.g. under a stream of failed connection attempts).
     if (userId) {
       this.metrics.websocketConnections.dec();
-      const wentOffline = await this.presence.disconnect(userId, client.id);
-      if (wentOffline) {
-        void this.prisma.client.user
-          .update({ where: { id: userId }, data: { lastSeenAt: new Date() } })
-          .catch((err) => this.logger.warn(`Failed to bump lastSeenAt for ${userId}: ${String(err)}`));
-        await this.broadcastPresence(userId, "OFFLINE");
+      // Guests never ran the presence/lastSeenAt setup in handleConnection —
+      // see the isGuest early-return there — so there is nothing to undo here.
+      if (!socketData?.isGuest) {
+        const wentOffline = await this.presence.disconnect(userId, client.id);
+        if (wentOffline) {
+          void this.prisma.client.user
+            .update({ where: { id: userId }, data: { lastSeenAt: new Date() } })
+            .catch((err) => this.logger.warn(`Failed to bump lastSeenAt for ${userId}: ${String(err)}`));
+          await this.broadcastPresence(userId, "OFFLINE");
+        }
       }
     }
     // `client.rooms` is unusable here — see SocketData.meetingId's doc

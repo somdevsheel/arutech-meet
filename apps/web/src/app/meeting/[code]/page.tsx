@@ -9,6 +9,11 @@ import { useAuthStore } from "@/lib/auth-store";
 import { MeetingRoom } from "@/components/meeting/meeting-room";
 import { WS_EVENTS } from "@arutech/types";
 import { getSocket } from "@/lib/socket";
+import {
+  setGuestSession,
+  getStoredGuestParticipantId,
+  storeGuestParticipantId,
+} from "@/lib/guest-session";
 
 interface MeetingPreview {
   code: string;
@@ -26,6 +31,10 @@ interface JoinResponse {
   meeting: { id: string; code: string; title: string; livekitRoomName: string };
   livekitUrl: string | null;
   livekitToken: string | null;
+  /** Set only for a guest join — see TokenService.GuestTokenPayload. Null for
+   * an authenticated /join, which relies on the user's real access token
+   * instead. */
+  guestToken: string | null;
 }
 
 type Phase = "loading" | "lobby" | "joining" | "waiting" | "in-meeting" | "denied" | "error";
@@ -53,17 +62,20 @@ export default function MeetingPage() {
       });
   }, [params.code, accessToken]);
 
-  // While in the waiting room, listen for the host's admit/deny decision
-  // (authenticated users only — guests without an access token cannot open
-  // the authenticated WebSocket channel in this MVP and must be re-admitted
-  // via a fresh join attempt). The deny listener existing at all is the
-  // fix: nothing here ever caught WAITING_ROOM_DENY before — a denied
-  // participant's screen just spun on "Waiting for the host..." forever
-  // with no signal anything had happened, since the server itself never
-  // reached them either (see participants.service.ts's deny()).
+  // While in the waiting room, listen for the host's admit/deny decision.
+  // A guest authenticates this same socket with their guestToken instead of
+  // an access token (see TokenService.verifyAnyToken / RealtimeGateway) —
+  // without that, a waiting guest had no way to ever be told they'd been
+  // admitted or denied; only a fresh join attempt could ever move them out
+  // of "Waiting for the host...". The deny listener itself existing at all
+  // is a second, separate fix: nothing here ever caught WAITING_ROOM_DENY
+  // before — a denied participant's screen just spun forever with no signal
+  // anything had happened, since the server itself never reached them
+  // either (see participants.service.ts's deny()).
   useEffect(() => {
-    if (phase !== "waiting" || !accessToken || !joinResult) return;
-    const socket = getSocket(accessToken);
+    const authToken = accessToken ?? joinResult?.guestToken ?? null;
+    if (phase !== "waiting" || !authToken || !joinResult) return;
+    const socket = getSocket(authToken);
     socket.emit(WS_EVENTS.JOIN_MEETING, { meetingId: joinResult.meeting.id });
 
     const onAdmit = async (payload: { participantId: string }) => {
@@ -96,18 +108,40 @@ export default function MeetingPage() {
     setError(null);
     try {
       const path = user ? `/meetings/${params.code}/join` : `/meetings/${params.code}/join-as-guest`;
+      // A guest who already has a remembered participant id (a prior visit
+      // this same tab — see lib/guest-session.ts) sends it back so the
+      // server can recognize them as the SAME guest, rather than always
+      // starting a fresh WAITING row that could never carry over a DENIED
+      // or REMOVED status from before.
+      const guestParticipantId = user ? undefined : (getStoredGuestParticipantId(params.code) ?? undefined);
       const result = await apiFetch<JoinResponse>(path, {
         method: "POST",
         body: JSON.stringify({
           password: password || undefined,
           guestName: user ? undefined : choices.username,
+          guestParticipantId,
         }),
         skipAuth: !user,
       });
+      if (!user && result.guestToken) {
+        setGuestSession(result.guestToken, result.meeting.id);
+        storeGuestParticipantId(params.code, result.participantId);
+      }
       setJoinResult(result);
       setPhase(result.status === "ADMITTED" ? "in-meeting" : "waiting");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to join meeting");
+      // A denied/removed guest re-joining hits this same ForbiddenException
+      // the waiting-room deny listener otherwise reports live — see
+      // MeetingsService.join's DENIED/REMOVED guard. Route it to the same
+      // full "denied" screen instead of just an inline lobby error, since
+      // it's the exact same outcome, just discovered on this join attempt
+      // itself rather than while already waiting.
+      const message = err instanceof ApiError ? err.message : "Failed to join meeting";
+      if (err instanceof ApiError && err.status === 403 && /denied entry|removed from this meeting/.test(message)) {
+        setPhase("denied");
+        return;
+      }
+      setError(message);
       setPhase("lobby");
     }
   }
@@ -126,7 +160,7 @@ export default function MeetingPage() {
         participantId={joinResult.participantId}
         role={joinResult.role}
         userId={user?.id ?? null}
-        accessToken={accessToken}
+        authToken={accessToken ?? joinResult.guestToken}
         onLeave={() => router.push(user ? "/dashboard" : "/")}
       />
     );

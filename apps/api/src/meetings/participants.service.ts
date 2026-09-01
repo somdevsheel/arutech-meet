@@ -56,15 +56,15 @@ export class ParticipantsService {
     // refuses to let a WAITING participant's socket join that room at all
     // (they're not admitted yet — that's the whole point of a waiting room),
     // so they were never in it to receive this event. Their personal
-    // `user:{id}` room (joined on every socket connect, auth-gated so guests
-    // don't have one — same limitation guests already have elsewhere) is what
-    // actually delivers it to them; the meeting-room publish below is kept for
-    // any other listener (e.g. a host's own UI reacting to the admit).
-    if (participant.userId) {
-      await this.broadcast.publishToRoom(`user:${participant.userId}`, WS_EVENTS.WAITING_ROOM_ADMIT, {
-        participantId,
-      });
-    }
+    // `user:{id}` room (joined on every socket connect — including a guest's,
+    // whose socket joins the same room keyed on their own
+    // MeetingParticipant.id instead of a User.id; see RealtimeGateway.
+    // handleConnection) is what actually delivers it to them; the
+    // meeting-room publish below is kept for any other listener (e.g. a
+    // host's own UI reacting to the admit).
+    await this.broadcast.publishToRoom(`user:${participant.userId ?? participant.id}`, WS_EVENTS.WAITING_ROOM_ADMIT, {
+      participantId,
+    });
     await this.broadcast.publish(meetingId, WS_EVENTS.WAITING_ROOM_ADMIT, { participantId });
   }
 
@@ -80,13 +80,12 @@ export class ParticipantsService {
     // admit()'s own comment for exactly why), so publishing only to the
     // meeting room here never reached the person actually being denied —
     // their screen just spun on "Waiting for the host..." forever, with no
-    // signal that anything had happened. Their personal `user:{id}` room is
-    // what actually delivers it.
-    if (participant.userId) {
-      await this.broadcast.publishToRoom(`user:${participant.userId}`, WS_EVENTS.WAITING_ROOM_DENY, {
-        participantId,
-      });
-    }
+    // signal that anything had happened. Their personal `user:{id}` room
+    // (guest sockets join it too, keyed on their own MeetingParticipant.id —
+    // see admit()'s comment) is what actually delivers it.
+    await this.broadcast.publishToRoom(`user:${participant.userId ?? participant.id}`, WS_EVENTS.WAITING_ROOM_DENY, {
+      participantId,
+    });
     await this.broadcast.publish(meetingId, WS_EVENTS.WAITING_ROOM_DENY, { participantId });
   }
 

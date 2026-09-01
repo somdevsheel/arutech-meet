@@ -8,7 +8,7 @@ import type {
   EditMessageDto,
   PresignUploadDto,
 } from "@arutech/validation";
-import { WS_EVENTS, type ChatMessagePayload, type ChatMessageReactionGroup } from "@arutech/types";
+import { WS_EVENTS, can, type ChatMessagePayload, type ChatMessageReactionGroup, type ParticipantRole } from "@arutech/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService } from "../meetings/permission.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -46,6 +46,7 @@ type RawMessage = {
   editedAt: Date | null;
   deletedAt: Date | null;
   forwardedFromSenderName: string | null;
+  senderGuestName: string | null;
   reactions: { emoji: string; userId: string }[];
   attachments: { file: { id: string; originalName: string; mimeType: string; sizeBytes: bigint } }[];
 };
@@ -93,7 +94,7 @@ export class ChatService {
       id: message.id,
       chatRoomId: message.chatRoomId,
       senderId: message.senderId,
-      senderName: message.sender?.displayName ?? "Unknown",
+      senderName: message.sender?.displayName ?? message.senderGuestName ?? "Unknown",
       body: message.body,
       replyToId: message.replyToId,
       isPrivate: message.isPrivate,
@@ -132,9 +133,18 @@ export class ChatService {
 
   /** Persists a chat message. Called from the WebSocket gateway after it has already
    * verified the sender is a connected, authorized participant for this meeting — this
-   * method re-derives the capability check independently rather than trusting the caller. */
+   * method re-derives the capability check independently rather than trusting the caller.
+   *
+   * `senderId` is whatever PermissionService.getParticipant accepts for either kind of
+   * caller: a real User.id, or — for a guest — their own MeetingParticipant.id. Resolving
+   * the full participant row here (rather than the narrower requireCapability) is what lets
+   * this tell the two apart, since a guest's row has `userId: null` and `guestName` set.
+   */
   async persistMessage(meetingId: string, senderId: string, dto: SendChatMessageDto): Promise<ChatMessagePayload> {
-    const { role } = await this.permissions.requireCapability(meetingId, senderId, "chat.send");
+    const participant = await this.permissions.getParticipant(meetingId, senderId);
+    if (!can(participant.role as ParticipantRole, "chat.send")) {
+      throw new ForbiddenException(`Role ${participant.role} does not have permission: chat.send`);
+    }
     const meeting = await this.prisma.client.meeting.findUniqueOrThrow({
       where: { id: meetingId },
       include: { settings: true },
@@ -142,8 +152,15 @@ export class ChatService {
     if (!meeting.settings?.allowChat) {
       throw new ForbiddenException("Chat is disabled for this meeting");
     }
-    void role;
 
+    const isGuest = !participant.userId;
+    // FileAsset.uploaderUserId is a required FK to User — a guest has no such
+    // row to have uploaded one under, so there's nothing valid to attach.
+    // (Guest file/voice-message attachments are a real but separate feature;
+    // this only guards against the FK violation a guest fileId would hit.)
+    if (dto.fileId && isGuest) {
+      throw new BadRequestException("Guests can't send file attachments");
+    }
     if (dto.fileId) {
       // Prevents attaching a file uploaded by someone else, or one uploaded to a
       // different meeting entirely, to this message.
@@ -157,7 +174,13 @@ export class ChatService {
     const message = await this.prisma.client.chatMessage.create({
       data: {
         chatRoomId: room.id,
-        senderId,
+        // ChatMessage.senderId is FK'd to User.id — a guest's `senderId`
+        // above is their MeetingParticipant.id, not a User.id, so it must
+        // never be written there (would fail the FK, or worse, someday
+        // collide with an unrelated real user's id). senderGuestName is the
+        // guest-safe equivalent; see its schema doc comment.
+        senderId: isGuest ? null : senderId,
+        senderGuestName: isGuest ? (participant.guestName ?? "Guest") : null,
         body: dto.body,
         replyToId: dto.replyToId,
         isPrivate: dto.isPrivate,
@@ -174,7 +197,14 @@ export class ChatService {
    * the gateway broadcasts to the whole room so every open panel stays in sync
    * without re-fetching. */
   async toggleReaction(meetingId: string, callerUserId: string, messageId: string, emoji: string) {
-    await this.permissions.getParticipant(meetingId, callerUserId);
+    const participant = await this.permissions.getParticipant(meetingId, callerUserId);
+    // ChatReaction.userId is a required FK to User.id — a guest's identity
+    // here is their MeetingParticipant.id, which isn't one. Reacting to chat
+    // messages as a guest is a real feature gap, not something to silently
+    // corrupt or crash on; reject it clearly instead until it's built.
+    if (!participant.userId) {
+      throw new ForbiddenException("Guests can't react to chat messages yet");
+    }
     const message = await this.getMeetingScopedMessage(meetingId, messageId);
 
     const existing = await this.prisma.client.chatReaction.findUnique({

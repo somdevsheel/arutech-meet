@@ -111,7 +111,11 @@ export class MeetingsController {
     @Param("code") code: string,
     @Body(new ZodValidationPipe(joinMeetingSchema)) dto: JoinMeetingDto,
   ) {
-    return this.meetingsService.join(code, { guestName: dto.guestName }, dto);
+    return this.meetingsService.join(
+      code,
+      { guestName: dto.guestName, guestParticipantId: dto.guestParticipantId },
+      dto,
+    );
   }
 
   @Post(":id/participants/:participantId/token")

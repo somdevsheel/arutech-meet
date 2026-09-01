@@ -6,6 +6,7 @@ import type { PermissionService } from "./permission.service";
 import type { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service";
 import type { OrganizationsService } from "../organizations/organizations.service";
 import type { ContactsService } from "../contacts/contacts.service";
+import type { TokenService } from "../common/lib/tokens";
 
 const MEETING = {
   id: "meeting-1",
@@ -80,9 +81,12 @@ function makeService(overrides?: {
   const contacts = {
     hasBlocked: jest.fn().mockResolvedValue(overrides?.hasBlocked ?? false),
   } as unknown as ContactsService;
+  const tokens = {
+    signGuestToken: jest.fn().mockReturnValue("guest-token"),
+  } as unknown as TokenService;
 
-  const service = new MeetingsService(prisma, liveKit, permissions, broadcast, organizations, contacts);
-  return { service, prisma, liveKit, permissions, broadcast, organizations, contacts };
+  const service = new MeetingsService(prisma, liveKit, permissions, broadcast, organizations, contacts, tokens);
+  return { service, prisma, liveKit, permissions, broadcast, organizations, contacts, tokens };
 }
 
 const BASE_DTO = { title: "Test meeting", type: "INSTANT" as const, timezone: "UTC" };
@@ -354,5 +358,122 @@ describe("MeetingsService", () => {
       const result = await service.join(MEETING.code, { userId: MEETING.ownerId, email: "owner@x.com" }, {});
       expect(result.status).toBe("ADMITTED");
     });
+  });
+
+  // A guest has no access token at all, only a short-lived meeting-scoped
+  // guest token (see TokenService.GuestTokenPayload) — this is what lets
+  // their app-level socket connection and REST calls (chat, whiteboard,
+  // polls...) work at all. `guestParticipantId` is how a returning guest
+  // (a reload) is recognized as the SAME guest instead of always starting a
+  // fresh WAITING row — see joinMeetingSchema's doc comment.
+  describe("join — guest identity", () => {
+    it("mints and returns a guest token for a guest join", async () => {
+      const { service, tokens } = makeService();
+      const result = await service.join(MEETING.code, { guestName: "Guest" }, {});
+      expect(result.guestToken).toBe("guest-token");
+      expect(tokens.signGuestToken).toHaveBeenCalledWith(
+        expect.objectContaining({ meetingId: MEETING.id, kind: "guest" }),
+      );
+    });
+
+    it("never mints a guest token for an authenticated join", async () => {
+      const { service, tokens } = makeService();
+      const result = await service.join(MEETING.code, { userId: "user-2", email: "a@b.com" }, {});
+      expect(result.guestToken).toBeNull();
+      expect(tokens.signGuestToken).not.toHaveBeenCalled();
+    });
+
+    it("recognizes a returning guest via guestParticipantId and UPDATEs their existing row instead of creating a new one", async () => {
+      const { service, prisma } = makeService();
+      (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
+        id: "guest-participant-1",
+        role: "GUEST",
+        status: "WAITING",
+        userId: null,
+        livekitIdentity: "guest-abc",
+      });
+      await service.join(
+        MEETING.code,
+        { guestName: "Guest", guestParticipantId: "guest-participant-1" },
+        {},
+      );
+      expect(prisma.client.meetingParticipant.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "guest-participant-1" } }),
+      );
+      expect(prisma.client.meetingParticipant.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses a returning guest the host denied, the same as an authenticated user", async () => {
+      const { service, prisma } = makeService();
+      (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
+        id: "guest-participant-1",
+        role: "GUEST",
+        status: "DENIED",
+        userId: null,
+        livekitIdentity: "guest-abc",
+      });
+      await expect(
+        service.join(
+          MEETING.code,
+          { guestName: "Guest", guestParticipantId: "guest-participant-1" },
+          {},
+        ),
+      ).rejects.toThrow("denied entry");
+      expect(prisma.client.meetingParticipant.update).not.toHaveBeenCalled();
+    });
+
+    it("still does a plain create for a first-time guest with no guestParticipantId", async () => {
+      const { service, prisma } = makeService();
+      await service.join(MEETING.code, { guestName: "Guest" }, {});
+      expect(prisma.client.meetingParticipant.create).toHaveBeenCalled();
+      expect(prisma.client.meetingParticipant.update).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// A guest reissuing their own LiveKit token (e.g. right after being
+// admitted) has no User.id to match against — `callerUserId` here is their
+// own MeetingParticipant.id (see JwtAuthGuard). Comparing only against
+// `participant.userId` would always read as "not the same person" for a
+// guest (null !== their id) and wrongly demand the moderator-only
+// participant.role.promote_co_host capability just to fetch their own token.
+describe("MeetingsService.issueTokenForCaller", () => {
+  it("lets a guest reissue their own token without any moderator capability check", async () => {
+    const { service, prisma, liveKit, permissions } = makeService();
+    (prisma.client.meetingParticipant.findUnique as jest.Mock).mockResolvedValue({
+      id: "guest-participant-1",
+      meetingId: MEETING.id,
+      userId: null,
+      guestName: "Guest",
+      role: "GUEST",
+      status: "ADMITTED",
+      livekitIdentity: "guest-abc",
+    });
+
+    await service.issueTokenForCaller(MEETING.id, "guest-participant-1", "guest-participant-1");
+
+    expect(permissions.requireOwnerOrCapability).not.toHaveBeenCalled();
+    expect(liveKit.createRoomToken).toHaveBeenCalled();
+  });
+
+  it("still requires participant.role.promote_co_host to fetch someone ELSE's token", async () => {
+    const { service, prisma, permissions } = makeService();
+    (prisma.client.meetingParticipant.findUnique as jest.Mock).mockResolvedValue({
+      id: "participant-1",
+      meetingId: MEETING.id,
+      userId: "user-2",
+      guestName: null,
+      role: "PARTICIPANT",
+      status: "ADMITTED",
+      livekitIdentity: "user-2-abc",
+    });
+
+    await service.issueTokenForCaller(MEETING.id, "participant-1", "host-1");
+
+    expect(permissions.requireOwnerOrCapability).toHaveBeenCalledWith(
+      MEETING.id,
+      "host-1",
+      "participant.role.promote_co_host",
+    );
   });
 });

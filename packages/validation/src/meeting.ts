@@ -40,6 +40,15 @@ export type UpdateMeetingDto = z.infer<typeof updateMeetingSchema>;
 export const joinMeetingSchema = z.object({
   password: z.string().max(64).optional(),
   guestName: z.string().min(1).max(100).optional(),
+  // A guest reconnecting (a page reload, a flaky network) sends back the
+  // MeetingParticipant.id their browser remembers from a prior join-as-guest
+  // call in this same meeting (see sessionStorage use in the web app's join
+  // page), so the server can recognize them as the SAME guest instead of
+  // always creating a fresh row — the only way a denied/removed guest can
+  // ever actually be told so on rejoin, the same protection an authenticated
+  // user's account identity already gives them for free. Ignored (and
+  // harmless) for the authenticated /join endpoint, which never reads it.
+  guestParticipantId: z.string().uuid().optional(),
 });
 export type JoinMeetingDto = z.infer<typeof joinMeetingSchema>;
 

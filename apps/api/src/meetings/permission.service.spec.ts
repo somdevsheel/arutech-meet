@@ -56,6 +56,34 @@ describe("PermissionService", () => {
         });
       },
     );
+
+    // A guest has no User row — their JwtAuthGuard-issued identity is their
+    // own MeetingParticipant.id (see TokenService.GuestTokenPayload). This
+    // must resolve through the exact same `findFirst` call as a real user,
+    // just matching a different column, so every downstream authorization
+    // decision built on getParticipant (chat, whiteboard, polls...) treats a
+    // guest identically instead of needing its own parallel code path.
+    it("resolves a guest's identity by matching MeetingParticipant.id, not just userId", async () => {
+      const prisma = makePrismaMock();
+      (prisma.client.meetingParticipant.findFirst as jest.Mock).mockResolvedValue({
+        id: "guest-participant-1",
+        role: "GUEST",
+        status: "ADMITTED",
+        userId: null,
+      });
+      const service = new PermissionService(prisma);
+
+      await expect(
+        service.getParticipant("meeting-1", "guest-participant-1"),
+      ).resolves.toMatchObject({ id: "guest-participant-1" });
+      expect(prisma.client.meetingParticipant.findFirst).toHaveBeenCalledWith({
+        where: {
+          meetingId: "meeting-1",
+          OR: [{ userId: "guest-participant-1" }, { id: "guest-participant-1" }],
+        },
+        orderBy: { createdAt: "desc" },
+      });
+    });
   });
 
   describe("requireCapability", () => {

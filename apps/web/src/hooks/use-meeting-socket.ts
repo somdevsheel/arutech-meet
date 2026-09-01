@@ -35,8 +35,12 @@ export interface ActiveReaction {
  * moderation/waiting-room events for the UI to react to. This channel carries
  * everything EXCEPT audio/video/screen-share media, which flows directly between
  * the browser and LiveKit (see MeetingRoom's <LiveKitRoom>).
+ *
+ * `authToken` is whatever MeetingRoom was given — a real access token or a
+ * meeting-scoped guest token — and is handed to getSocket() as-is; the
+ * server's handshake (RealtimeGateway.handleConnection) accepts either.
  */
-export function useMeetingSocket(meetingId: string | null, accessToken: string | null) {
+export function useMeetingSocket(meetingId: string | null, authToken: string | null) {
   const socketRef = useRef<Socket | null>(null);
   const [connected, setConnected] = useState(false);
   const [participants, setParticipants] = useState<ParticipantPresencePayload[]>([]);
@@ -58,18 +62,18 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
   // messages sent after that moment, since the WS channel only ever appends
   // live events and nothing previously fetched the REST history endpoint.
   useEffect(() => {
-    if (!meetingId || !accessToken) return;
+    if (!meetingId || !authToken) return;
     apiFetch<ChatMessagePayload[]>(`/meetings/${meetingId}/chat/messages`)
       .then((history) => {
         setMessages([...history].reverse()); // history is newest-first
         setHistoryMessageCount(history.length);
       })
       .catch(() => {});
-  }, [meetingId, accessToken]);
+  }, [meetingId, authToken]);
 
   useEffect(() => {
-    if (!meetingId || !accessToken) return;
-    const socket = getSocket(accessToken);
+    if (!meetingId || !authToken) return;
+    const socket = getSocket(authToken);
     socketRef.current = socket;
 
     const onConnect = () => {
@@ -168,7 +172,7 @@ export function useMeetingSocket(meetingId: string | null, accessToken: string |
       // one meeting screen — see lib/socket.ts. It's torn down on sign-out
       // instead (useAuthStore.clear()), not on every meeting-leave.
     };
-  }, [meetingId, accessToken]);
+  }, [meetingId, authToken]);
 
   const sendMessage = useCallback(
     (

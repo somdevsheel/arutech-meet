@@ -80,6 +80,40 @@ describe("ParticipantsService.block", () => {
   });
 });
 
+describe("ParticipantsService.admit", () => {
+  it("marks the participant ADMITTED", async () => {
+    const { service, prisma } = makeService({ participant: WAITING_PARTICIPANT });
+    await service.admit(MEETING.id, "caller-1", WAITING_PARTICIPANT.id);
+    expect(prisma.client.meetingParticipant.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: WAITING_PARTICIPANT.id }, data: { status: "ADMITTED" } }),
+    );
+  });
+
+  it("publishes to the admitted user's own personal room, not just the meeting room", async () => {
+    const { service, broadcast } = makeService({ participant: WAITING_PARTICIPANT });
+    await service.admit(MEETING.id, "caller-1", WAITING_PARTICIPANT.id);
+    expect(broadcast.publishToRoom).toHaveBeenCalledWith(
+      `user:${WAITING_PARTICIPANT.userId}`,
+      expect.stringContaining("admit"),
+      expect.objectContaining({ participantId: WAITING_PARTICIPANT.id }),
+    );
+  });
+
+  // Same guest-reachability fix as deny() below — a WAITING guest's socket
+  // is in its own personal room (keyed on their MeetingParticipant.id, not a
+  // User.id they don't have), and that's the only way they ever learn
+  // they've been let in.
+  it("publishes to a guest's own personal room too, keyed on their participant id", async () => {
+    const { service, broadcast } = makeService({ participant: WAITING_GUEST_PARTICIPANT });
+    await service.admit(MEETING.id, "caller-1", WAITING_GUEST_PARTICIPANT.id);
+    expect(broadcast.publishToRoom).toHaveBeenCalledWith(
+      `user:${WAITING_GUEST_PARTICIPANT.id}`,
+      expect.stringContaining("admit"),
+      expect.objectContaining({ participantId: WAITING_GUEST_PARTICIPANT.id }),
+    );
+  });
+});
+
 // Regression coverage: deny() used to publish only to the meeting room,
 // which a still-WAITING participant's socket was never actually a member of
 // (see admit()'s own comment on the exact same limitation, which admit()
@@ -110,10 +144,21 @@ describe("ParticipantsService.deny", () => {
     );
   });
 
-  it("never tries to publish to a personal room for a guest — there isn't one", async () => {
+  // A guest's socket joins its personal room keyed on their own
+  // MeetingParticipant.id instead of a User.id (see RealtimeGateway.
+  // handleConnection / TokenService.GuestTokenPayload) — that's the ONLY
+  // channel a still-WAITING guest has to ever learn they were denied at
+  // all, so this must reach them the exact same way an authenticated
+  // user's deny does, just keyed on `participant.id` instead of
+  // `participant.userId`.
+  it("publishes to a guest's own personal room too, keyed on their participant id", async () => {
     const { service, broadcast } = makeService({ participant: WAITING_GUEST_PARTICIPANT });
     await service.deny(MEETING.id, "caller-1", WAITING_GUEST_PARTICIPANT.id);
-    expect(broadcast.publishToRoom).not.toHaveBeenCalled();
+    expect(broadcast.publishToRoom).toHaveBeenCalledWith(
+      `user:${WAITING_GUEST_PARTICIPANT.id}`,
+      expect.stringContaining("deny"),
+      expect.objectContaining({ participantId: WAITING_GUEST_PARTICIPANT.id }),
+    );
     expect(broadcast.publish).toHaveBeenCalledWith(
       MEETING.id,
       expect.stringContaining("deny"),

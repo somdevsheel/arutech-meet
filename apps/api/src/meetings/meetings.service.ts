@@ -15,6 +15,7 @@ import { RealtimeBroadcastService } from "../realtime/realtime-broadcast.service
 import { generateLiveKitRoomName, generateMeetingCode } from "../common/lib/meeting-code";
 import { OrganizationsService } from "../organizations/organizations.service";
 import { ContactsService } from "../contacts/contacts.service";
+import { TokenService } from "../common/lib/tokens";
 
 export interface JoinResult {
   participantId: string;
@@ -23,6 +24,14 @@ export interface JoinResult {
   meeting: { id: string; code: string; title: string; livekitRoomName: string };
   livekitUrl: string | null;
   livekitToken: string | null;
+  /** Only ever set for a guest (no userId) — authenticates their app-level
+   * realtime socket and REST calls for this one meeting, exactly like a
+   * real accessToken does for an authenticated user. See
+   * TokenService.GuestTokenPayload for why this can't just BE an
+   * accessToken. Present regardless of WAITING/ADMITTED status: a waiting
+   * guest still needs a working socket to ever receive the admit/deny
+   * decision at all. */
+  guestToken: string | null;
 }
 
 @Injectable()
@@ -34,6 +43,7 @@ export class MeetingsService {
     private readonly broadcast: RealtimeBroadcastService,
     private readonly organizations: OrganizationsService,
     private readonly contacts: ContactsService,
+    private readonly tokens: TokenService,
   ) {}
 
   async create(userId: string, dto: CreateMeetingDto) {
@@ -232,7 +242,7 @@ export class MeetingsService {
    */
   async join(
     code: string,
-    caller: { userId?: string; email?: string; guestName?: string },
+    caller: { userId?: string; email?: string; guestName?: string; guestParticipantId?: string },
     dto: JoinMeetingDto,
   ): Promise<JoinResult> {
     const meeting = await this.findByCode(code);
@@ -295,11 +305,22 @@ export class MeetingsService {
 
     // Existing participant reconnecting keeps their previously assigned role
     // (e.g. a promoted co-host doesn't get demoted just by refreshing the page).
+    // A guest has no account identity to look this up by — `guestParticipantId`
+    // (their own prior row's id, remembered client-side across a reload) is
+    // the only way a returning guest can ever be recognized as the SAME guest
+    // rather than a brand-new one. Without this, the DENIED/REMOVED check
+    // just below could never apply to a guest at all: every "rejoin" would
+    // silently create a fresh WAITING row no matter what happened to the
+    // last one.
     const existing = caller.userId
       ? await this.prisma.client.meetingParticipant.findFirst({
           where: { meetingId: meeting.id, userId: caller.userId },
         })
-      : null;
+      : caller.guestParticipantId
+        ? await this.prisma.client.meetingParticipant.findFirst({
+            where: { id: caller.guestParticipantId, meetingId: meeting.id, userId: null },
+          })
+        : null;
     if (existing) role = existing.role as ParticipantRole;
 
     // Without this, a denied or removed participant could undo either just
@@ -341,10 +362,16 @@ export class MeetingsService {
     // a single atomic upsert keyed on the meetingId_userId unique
     // constraint, so the loser of that race updates the winner's row
     // instead of creating a duplicate one — Postgres, not a check-then-act
-    // race, decides who "wins". Guests have no equivalent "existing" concept
-    // to begin with (every guest join already created a fresh row) and
-    // their userId is always null, which a unique index treats as always
-    // distinct anyway, so they stay on a plain create.
+    // race, decides who "wins".
+    //
+    // A returning guest (found above via guestParticipantId) instead UPDATEs
+    // their own known row directly by id — there's no unique-constraint race
+    // to resolve here since a brand-new guest with no guestParticipantId
+    // always creates, and a guest that already has one is updating a row
+    // only their own browser knows the id of. Keeping the SAME participant
+    // id across a guest's reload is the entire point: it's what lets their
+    // next guest token (signed with this id as `sub`) still resolve to the
+    // same row PermissionService already checked for DENIED/REMOVED above.
     const participant = caller.userId
       ? await this.prisma.client.meetingParticipant.upsert({
           where: { meetingId_userId: { meetingId: meeting.id, userId: caller.userId } },
@@ -358,16 +385,21 @@ export class MeetingsService {
             livekitIdentity,
           },
         })
-      : await this.prisma.client.meetingParticipant.create({
-          data: {
-            meetingId: meeting.id,
-            userId: caller.userId,
-            guestName: caller.guestName ?? dto.guestName,
-            role,
-            status,
-            livekitIdentity,
-          },
-        });
+      : existing
+        ? await this.prisma.client.meetingParticipant.update({
+            where: { id: existing.id },
+            data: { status, guestName: caller.guestName ?? dto.guestName },
+          })
+        : await this.prisma.client.meetingParticipant.create({
+            data: {
+              meetingId: meeting.id,
+              userId: caller.userId,
+              guestName: caller.guestName ?? dto.guestName,
+              role,
+              status,
+              livekitIdentity,
+            },
+          });
 
     await this.prisma.client.meetingEvent.create({
       data: {
@@ -392,6 +424,16 @@ export class MeetingsService {
       });
     }
 
+    // Minted unconditionally for a guest, regardless of WAITING vs ADMITTED —
+    // a waiting guest still needs a working authenticated socket connection
+    // to ever receive the admit/deny decision in the first place (see
+    // RealtimeGateway.handleConnection and ParticipantsService.admit/deny).
+    // `sub` is this row's own id, kept stable across reloads by the
+    // create/update branch above.
+    const guestToken = !caller.userId
+      ? this.tokens.signGuestToken({ sub: participant.id, meetingId: meeting.id, kind: "guest" })
+      : null;
+
     return {
       participantId: participant.id,
       role: participant.role as ParticipantRole,
@@ -404,6 +446,7 @@ export class MeetingsService {
       },
       livekitToken,
       livekitUrl,
+      guestToken,
     };
   }
 
@@ -418,7 +461,15 @@ export class MeetingsService {
     if (!participant || participant.meetingId !== meetingId) {
       throw new NotFoundException("Participant not found");
     }
-    if (participant.userId !== callerUserId) {
+    // "Is the caller reissuing their OWN token" — for a guest, `callerUserId`
+    // here is their own MeetingParticipant.id (there's no User.id to compare
+    // against; see JwtAuthGuard/TokenService.GuestTokenPayload), the same
+    // identity substitution PermissionService.getParticipant already makes.
+    // Comparing only against `participant.userId` would always read as
+    // false for a guest reissuing their own token (null !== their id),
+    // wrongly routing every guest through the moderator-only capability
+    // check below and rejecting them outright.
+    if ((participant.userId ?? participant.id) !== callerUserId) {
       await this.permissions.requireOwnerOrCapability(
         meetingId,
         callerUserId,
