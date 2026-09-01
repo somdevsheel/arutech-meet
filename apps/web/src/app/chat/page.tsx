@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { WS_EVENTS, type ChatMessagePayload, type UserPresenceStatus, type UserPresenceUpdatedPayload } from "@arutech/types";
+import {
+  WS_EVENTS,
+  type ChatMessagePayload,
+  type UserPresenceStatus,
+  type UserPresenceUpdatedPayload,
+} from "@arutech/types";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { getSocket } from "@/lib/socket";
@@ -18,7 +23,13 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const TYPING_STOP_DELAY_MS = 2500;
 
 interface RoomMember {
-  user: { id: string; displayName: string; username: string; avatarUrl: string | null; lastSeenAt: string };
+  user: {
+    id: string;
+    displayName: string;
+    username: string;
+    avatarUrl: string | null;
+    lastSeenAt: string;
+  };
   lastReadMessageId: string | null;
   userId: string;
   isAdmin: boolean;
@@ -34,7 +45,15 @@ interface RoomSummary {
 }
 
 function initialsOf(name: string) {
-  return name.split(" ").map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase() || "?";
+  return (
+    name
+      .split(" ")
+      .map((p) => p[0])
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?"
+  );
 }
 
 function roomTitle(room: RoomSummary, myUserId: string) {
@@ -54,7 +73,13 @@ function renderBody(text: string) {
     const [full, url, mention] = match;
     if (url) {
       parts.push(
-        <a key={key++} href={url} target="_blank" rel="noopener noreferrer" className="text-brand-300 underline">
+        <a
+          key={key++}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-brand-300 underline"
+        >
           {url}
         </a>,
       );
@@ -74,7 +99,14 @@ function renderBody(text: string) {
 async function uploadRoomAttachment(chatRoomId: string, file: File): Promise<string> {
   const { fileId, uploadUrl } = await apiFetch<{ fileId: string; uploadUrl: string }>(
     `/chat-rooms/${chatRoomId}/files/presign`,
-    { method: "POST", body: JSON.stringify({ fileName: file.name, mimeType: file.type || "application/octet-stream", sizeBytes: file.size }) },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        fileName: file.name,
+        mimeType: file.type || "application/octet-stream",
+        sizeBytes: file.size,
+      }),
+    },
   );
   const uploadRes = await fetch(uploadUrl, {
     method: "PUT",
@@ -109,6 +141,21 @@ function TeamChatPage() {
 
   const selected = rooms?.find((r) => r.id === selectedId) ?? null;
 
+  // `selectedId`'s useState initializer above only ever reads searchParams
+  // once, at mount. A notification/search-result deep link to a *different*
+  // room while already sitting on /chat (app-shell.tsx's
+  // router.push(`/chat?room=${id}`)) is a same-route client-side
+  // navigation — Next's App Router updates the URL and re-renders this
+  // already-mounted component instead of remounting it, so that initializer
+  // never re-runs and the click silently no-ops, leaving whatever room was
+  // already open still open. Re-sync on every actual change to the `room`
+  // param (not on every render — roomParam is a primitive, so this only
+  // re-fires when the URL's room id genuinely changes).
+  const roomParam = searchParams.get("room");
+  useEffect(() => {
+    if (roomParam) setSelectedId(roomParam);
+  }, [roomParam]);
+
   useEffect(() => {
     if (!hasHydrated) return;
     if (!accessToken) {
@@ -129,9 +176,15 @@ function TeamChatPage() {
   // kept live for whichever room actually is open via the listener below.
   useEffect(() => {
     if (!rooms || rooms.length === 0) return;
-    const ids = [...new Set(rooms.flatMap((r) => r.members.map((m) => m.userId)).filter((id) => id !== user?.id))];
+    const ids = [
+      ...new Set(
+        rooms.flatMap((r) => r.members.map((m) => m.userId)).filter((id) => id !== user?.id),
+      ),
+    ];
     if (ids.length === 0) return;
-    apiFetch<Record<string, UserPresenceStatus>>(`/presence?userIds=${encodeURIComponent(ids.join(","))}`)
+    apiFetch<Record<string, UserPresenceStatus>>(
+      `/presence?userIds=${encodeURIComponent(ids.join(","))}`,
+    )
       .then((statuses) => setPresenceByUserId((prev) => ({ ...prev, ...statuses })))
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -193,7 +246,10 @@ function TeamChatPage() {
         return prev
           .map((r) =>
             r.id === payload.chatRoomId
-              ? { ...r, messages: [{ id: payload.id, body: payload.body, createdAt: payload.createdAt }] }
+              ? {
+                  ...r,
+                  messages: [{ id: payload.id, body: payload.body, createdAt: payload.createdAt }],
+                }
               : r,
           )
           .sort((a, b) => {
@@ -207,7 +263,9 @@ function TeamChatPage() {
       setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
     const onDeleted = (p: { messageId: string }) =>
       setMessages((prev) =>
-        prev.map((m) => (m.id === p.messageId ? { ...m, body: null, deletedAt: new Date().toISOString() } : m)),
+        prev.map((m) =>
+          m.id === p.messageId ? { ...m, body: null, deletedAt: new Date().toISOString() } : m,
+        ),
       );
     socket.on(WS_EVENTS.ROOM_MESSAGE, onMessage);
     socket.on(WS_EVENTS.ROOM_MESSAGE_EDITED, onEdited);
@@ -272,7 +330,10 @@ function TeamChatPage() {
     if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
     if (wasTypingRef.current && accessToken && selectedId) {
       wasTypingRef.current = false;
-      getSocket(accessToken).emit(WS_EVENTS.CHAT_TYPING, { chatRoomId: selectedId, isTyping: false });
+      getSocket(accessToken).emit(WS_EVENTS.CHAT_TYPING, {
+        chatRoomId: selectedId,
+        isTyping: false,
+      });
     }
   }
 
@@ -291,16 +352,28 @@ function TeamChatPage() {
     if (!file || !selectedId || !accessToken) return;
     setUploadError(null);
     if (file.size > MAX_UPLOAD_BYTES) {
-      setUploadError(`${file.name} is too large (max ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB)`);
+      setUploadError(
+        `${file.name} is too large (max ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB)`,
+      );
       return;
     }
     setUploading(true);
     try {
       const fileId = await uploadRoomAttachment(selectedId, file);
-      getSocket(accessToken).emit(WS_EVENTS.ROOM_MESSAGE, { chatRoomId: selectedId, body: draft.trim() || undefined, fileId });
+      getSocket(accessToken).emit(WS_EVENTS.ROOM_MESSAGE, {
+        chatRoomId: selectedId,
+        body: draft.trim() || undefined,
+        fileId,
+      });
       setDraft("");
     } catch (err) {
-      setUploadError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Upload failed");
+      setUploadError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Upload failed",
+      );
     } finally {
       setUploading(false);
     }
@@ -315,7 +388,13 @@ function TeamChatPage() {
       const fileId = await uploadRoomAttachment(selectedId, file);
       getSocket(accessToken).emit(WS_EVENTS.ROOM_MESSAGE, { chatRoomId: selectedId, fileId });
     } catch (err) {
-      setUploadError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Failed to send voice message");
+      setUploadError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Failed to send voice message",
+      );
     } finally {
       setUploading(false);
     }
@@ -323,7 +402,10 @@ function TeamChatPage() {
 
   async function editMessage(messageId: string, body: string) {
     if (!selectedId) return;
-    await apiFetch(`/chat-rooms/${selectedId}/messages/${messageId}`, { method: "PATCH", body: JSON.stringify({ body }) });
+    await apiFetch(`/chat-rooms/${selectedId}/messages/${messageId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ body }),
+    });
     setEditingId(null);
   }
 
@@ -366,7 +448,8 @@ function TeamChatPage() {
 
   if (!user) return null;
 
-  const otherMember = selected?.type === "DIRECT" ? selected.members.find((m) => m.userId !== user.id) : null;
+  const otherMember =
+    selected?.type === "DIRECT" ? selected.members.find((m) => m.userId !== user.id) : null;
 
   return (
     <AppShell
@@ -387,7 +470,14 @@ function TeamChatPage() {
               aria-label="New chat"
               className="grid h-8 w-8 place-items-center rounded-lg bg-surface-chip text-ink-3 hover:brightness-110"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+              >
                 <path d="M12 5v14M5 12h14" />
               </svg>
             </button>
@@ -401,7 +491,8 @@ function TeamChatPage() {
               const mine = room.members.find((m) => m.userId === user.id);
               const latest = room.messages[0];
               const unread = Boolean(latest && mine && mine.lastReadMessageId !== latest.id);
-              const other = room.type === "DIRECT" ? room.members.find((m) => m.userId !== user.id) : null;
+              const other =
+                room.type === "DIRECT" ? room.members.find((m) => m.userId !== user.id) : null;
               const otherPresence = other ? presenceByUserId[other.userId] : undefined;
               return (
                 <li key={room.id}>
@@ -424,7 +515,9 @@ function TeamChatPage() {
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2">
-                        <span className={`truncate text-sm ${unread ? "font-semibold text-white" : "font-medium text-ink-2"}`}>
+                        <span
+                          className={`truncate text-sm ${unread ? "font-semibold text-white" : "font-medium text-ink-2"}`}
+                        >
                           {roomTitle(room, user.id)}
                         </span>
                         {unread && <span className="h-2 w-2 flex-none rounded-full bg-brand-500" />}
@@ -453,8 +546,10 @@ function TeamChatPage() {
                     <p className="text-xs text-ink-muted">
                       {(() => {
                         const status = presenceByUserId[otherMember.userId];
-                        if (status && status !== "OFFLINE") return PRESENCE_STATUS_META[status].label;
-                        if (status === "OFFLINE") return formatLastSeenPhrase(otherMember.user.lastSeenAt);
+                        if (status && status !== "OFFLINE")
+                          return PRESENCE_STATUS_META[status].label;
+                        if (status === "OFFLINE")
+                          return formatLastSeenPhrase(otherMember.user.lastSeenAt);
                         return formatLastSeen(otherMember.user.lastSeenAt);
                       })()}
                     </p>
@@ -485,7 +580,9 @@ function TeamChatPage() {
                 )}
               </div>
               <div className="flex-1 space-y-3 overflow-y-auto p-4">
-                {messages.length === 0 && <p className="text-xs text-ink-muted">No messages yet. Say hello 👋</p>}
+                {messages.length === 0 && (
+                  <p className="text-xs text-ink-muted">No messages yet. Say hello 👋</p>
+                )}
                 {messages.map((m) => (
                   <RoomChatMessage
                     key={m.id}
@@ -519,9 +616,13 @@ function TeamChatPage() {
                 <div className="flex items-center gap-2 border-t border-surface-border px-3 py-3">
                   <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-danger" />
                   <span className="flex-1 text-xs text-ink-2">
-                    Recording… {String(Math.floor(voice.elapsed / 60)).padStart(2, "0")}:{String(voice.elapsed % 60).padStart(2, "0")}
+                    Recording… {String(Math.floor(voice.elapsed / 60)).padStart(2, "0")}:
+                    {String(voice.elapsed % 60).padStart(2, "0")}
                   </span>
-                  <button onClick={() => voice.cancel()} className="text-xs text-ink-muted2 hover:text-white">
+                  <button
+                    onClick={() => voice.cancel()}
+                    className="text-xs text-ink-muted2 hover:text-white"
+                  >
                     Cancel
                   </button>
                   <button
@@ -532,8 +633,16 @@ function TeamChatPage() {
                   </button>
                 </div>
               ) : (
-                <form onSubmit={send} className="flex items-center gap-2 border-t border-surface-border p-3">
-                  <input ref={fileInputRef} type="file" className="hidden" onChange={onFileSelected} />
+                <form
+                  onSubmit={send}
+                  className="flex items-center gap-2 border-t border-surface-border p-3"
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={onFileSelected}
+                  />
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
@@ -542,7 +651,14 @@ function TeamChatPage() {
                     aria-label="Attach a file"
                     className="flex-none text-ink-muted2 hover:text-white disabled:opacity-50"
                   >
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <svg
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
                       <path d="M21 11.5V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h6.5M17 14v6M14 17h6" />
                     </svg>
                   </button>
@@ -555,7 +671,14 @@ function TeamChatPage() {
                       aria-label="Record a voice message"
                       className="flex-none text-ink-muted2 hover:text-white disabled:opacity-50"
                     >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <svg
+                        width="15"
+                        height="15"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
                         <rect x="9" y="2" width="6" height="12" rx="3" />
                         <path d="M5 10a7 7 0 0 0 14 0M12 19v3" />
                       </svg>
@@ -608,7 +731,9 @@ function TeamChatPage() {
           currentUserId={user.id}
           onClose={() => setShowGroupSettings(false)}
           onUpdated={(updated) => {
-            setRooms((prev) => prev?.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)) ?? null);
+            setRooms(
+              (prev) => prev?.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)) ?? null,
+            );
           }}
         />
       )}
@@ -648,16 +773,28 @@ function RoomChatMessage({
   return (
     <div className="group">
       <div className="flex items-baseline gap-1.5">
-        <b className="text-[11px] font-semibold text-ink-3">{isMine ? "You" : message.senderName}</b>
+        <b className="text-[11px] font-semibold text-ink-3">
+          {isMine ? "You" : message.senderName}
+        </b>
         <span className="text-[10px] text-ink-muted2">
-          {new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+          {new Date(message.createdAt).toLocaleTimeString(undefined, {
+            hour: "numeric",
+            minute: "2-digit",
+          })}
         </span>
         {message.editedAt && <span className="text-[10px] text-ink-muted2">(edited)</span>}
       </div>
 
       {message.forwardedFromSenderName && !isDeleted && (
         <p className="mt-0.5 flex items-center gap-1 text-[10px] text-ink-muted2">
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+          >
             <path d="m9 17 5-5-5-5M4 12h10" />
           </svg>
           Forwarded from {message.forwardedFromSenderName}
@@ -668,7 +805,13 @@ function RoomChatMessage({
         <p className="mt-1 inline-block text-xs italic text-ink-muted">Message deleted</p>
       ) : isEditing ? (
         <div className="mt-1 flex max-w-[85%] flex-col gap-1.5">
-          <textarea value={editDraft} onChange={(e) => setEditDraft(e.target.value)} rows={2} autoFocus className="input text-xs" />
+          <textarea
+            value={editDraft}
+            onChange={(e) => setEditDraft(e.target.value)}
+            rows={2}
+            autoFocus
+            className="input text-xs"
+          />
           <div className="flex gap-2">
             <button
               onClick={() => editDraft.trim() && onSaveEdit(editDraft.trim())}
@@ -677,7 +820,10 @@ function RoomChatMessage({
             >
               Save
             </button>
-            <button onClick={onCancelEdit} className="rounded px-2.5 py-1 text-[11px] text-ink-muted hover:text-white">
+            <button
+              onClick={onCancelEdit}
+              className="rounded px-2.5 py-1 text-[11px] text-ink-muted hover:text-white"
+            >
               Cancel
             </button>
           </div>
@@ -703,7 +849,12 @@ function RoomChatMessage({
                   Forward
                 </button>
                 {isForwarding && (
-                  <ForwardPicker messageId={message.id} excludeRoomId={chatRoomId} onForwarded={onForwarded} onClose={onStartForward} />
+                  <ForwardPicker
+                    messageId={message.id}
+                    excludeRoomId={chatRoomId}
+                    onForwarded={onForwarded}
+                    onClose={onStartForward}
+                  />
                 )}
               </div>
             )}
@@ -740,14 +891,19 @@ function ForwardPicker({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<RoomSummary[]>("/chat-rooms").then(setRooms).catch(() => setRooms([]));
+    apiFetch<RoomSummary[]>("/chat-rooms")
+      .then(setRooms)
+      .catch(() => setRooms([]));
   }, []);
 
   async function forwardTo(roomId: string) {
     setBusyRoomId(roomId);
     setError(null);
     try {
-      await apiFetch(`/chat-rooms/${roomId}/messages/forward`, { method: "POST", body: JSON.stringify({ messageId }) });
+      await apiFetch(`/chat-rooms/${roomId}/messages/forward`, {
+        method: "POST",
+        body: JSON.stringify({ messageId }),
+      });
       onForwarded();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to forward");
@@ -767,7 +923,9 @@ function ForwardPicker({
         </button>
       </div>
       {targets === null && <p className="px-1.5 py-1 text-[11px] text-ink-muted">Loading…</p>}
-      {targets?.length === 0 && <p className="px-1.5 py-1 text-[11px] text-ink-muted">No other conversations yet.</p>}
+      {targets?.length === 0 && (
+        <p className="px-1.5 py-1 text-[11px] text-ink-muted">No other conversations yet.</p>
+      )}
       {error && <p className="px-1.5 py-1 text-[11px] text-danger">{error}</p>}
       <div className="max-h-40 overflow-y-auto">
         {targets?.map((room) => (
@@ -777,7 +935,9 @@ function ForwardPicker({
             disabled={busyRoomId === room.id}
             className="block w-full rounded px-2 py-1.5 text-left text-[11px] text-ink-2 hover:bg-surface-field disabled:opacity-50"
           >
-            {busyRoomId === room.id ? "Forwarding…" : room.name || (room.type === "DIRECT" ? "Direct message" : "Group chat")}
+            {busyRoomId === room.id
+              ? "Forwarding…"
+              : room.name || (room.type === "DIRECT" ? "Direct message" : "Group chat")}
           </button>
         ))}
       </div>
