@@ -86,6 +86,18 @@ export const WS_EVENTS = {
   // recording finished processing short of re-opening the panel.
   RECORDING_UPDATED: "recording:updated",
 
+  // A participant's LOCAL recording (see LocalRecordingProvider — a
+  // browser-only MediaRecorder capture, never uploaded, no server-side
+  // Egress row at all) starting/stopping. Deliberately separate events from
+  // RECORDING_STARTED/STOPPED above, not a reuse of them: those mean "a real
+  // server-side recording exists and the host will get a downloadable file
+  // later," which is a materially different, stronger claim than "one
+  // participant is capturing their own view to their own disk." Ephemeral
+  // like a reaction/hand-raise — broadcast-only, nothing persisted — since
+  // its only job is giving everyone else in the room live notice.
+  LOCAL_RECORDING_STARTED: "local_recording:started",
+  LOCAL_RECORDING_STOPPED: "local_recording:stopped",
+
   // AI meeting assistant — fired on every status change of a MeetingTranscript
   // (PENDING -> PROCESSING -> READY/FAILED), same shape of problem/fix as
   // RECORDING_UPDATED above: transcription runs well after a recording finishes,
@@ -203,6 +215,10 @@ export type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
 export interface ReactionPayload {
   userId: string;
   emoji: ReactionEmoji;
+}
+
+export interface LocalRecordingPayload {
+  displayName: string;
 }
 
 export type CallType = "AUDIO" | "VIDEO";

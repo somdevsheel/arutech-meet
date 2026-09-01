@@ -20,6 +20,7 @@ import {
   type ParticipantPresencePayload,
   type ReactionEmoji,
   type ReactionPayload,
+  type LocalRecordingPayload,
   type ChatReactionEmoji,
   type SettablePresenceStatus,
   type UserPresenceStatus,
@@ -493,6 +494,31 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     if (!REACTION_EMOJIS.includes(body.emoji as ReactionEmoji)) return;
     const payload: ReactionPayload = { userId: (client.data as SocketData).userId, emoji: body.emoji as ReactionEmoji };
     this.server.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.REACTION, payload);
+  }
+
+  /** The only signal anyone else in the meeting ever gets that a participant
+   * started capturing everyone's video/audio to their own disk —
+   * LocalRecordingProvider runs entirely client-side and never touches the
+   * API, so without this broadcast nobody else has any way to know it's
+   * happening at all. Ephemeral like reactions/hand-raise: not persisted,
+   * and deliberately excludes the sender (`client.to`, not `server.to`) —
+   * they already have their own "recording" UI state, they don't need a
+   * notice about themselves. Trusts the socket's own resolved display name
+   * (participant's real name, or a guest's chosen name) rather than
+   * anything client-supplied, same as every other presence-derived broadcast
+   * here. */
+  @SubscribeMessage(WS_EVENTS.LOCAL_RECORDING_STARTED)
+  onLocalRecordingStart(@ConnectedSocket() client: Socket, @MessageBody() body: { meetingId: string }) {
+    const data = client.data as SocketData;
+    const payload: LocalRecordingPayload = { displayName: data.presence?.displayName ?? "A participant" };
+    client.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.LOCAL_RECORDING_STARTED, payload);
+  }
+
+  @SubscribeMessage(WS_EVENTS.LOCAL_RECORDING_STOPPED)
+  onLocalRecordingStop(@ConnectedSocket() client: Socket, @MessageBody() body: { meetingId: string }) {
+    const data = client.data as SocketData;
+    const payload: LocalRecordingPayload = { displayName: data.presence?.displayName ?? "A participant" };
+    client.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.LOCAL_RECORDING_STOPPED, payload);
   }
 
   /** Live stroke-by-stroke whiteboard sync. High-frequency and ephemeral by

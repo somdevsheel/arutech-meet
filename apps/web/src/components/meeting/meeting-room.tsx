@@ -222,6 +222,31 @@ export function MeetingRoom({
     return () => clearTimeout(id);
   }, [recordingBanner]);
 
+  // H-1: a participant's LOCAL recording (LocalRecordingProvider — a
+  // browser-only capture, no server Egress row) previously gave everyone
+  // else in the meeting zero notice it was happening at all. This banner is
+  // that notice, kept visually distinct (amber, "locally recording" wording)
+  // from the red "this meeting is being recorded" banner above so the two
+  // very different claims — a real server recording that becomes a
+  // downloadable file vs. one participant's own on-device capture — are
+  // never confused for each other.
+  const [localRecordingNotice, setLocalRecordingNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!socket) return;
+    const onStarted = (p: { displayName: string }) =>
+      setLocalRecordingNotice(`${p.displayName} started a local recording of this meeting.`);
+    socket.on(WS_EVENTS.LOCAL_RECORDING_STARTED, onStarted);
+    return () => {
+      socket.off(WS_EVENTS.LOCAL_RECORDING_STARTED, onStarted);
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    if (!localRecordingNotice) return;
+    const id = setTimeout(() => setLocalRecordingNotice(null), 8000);
+    return () => clearTimeout(id);
+  }, [localRecordingNotice]);
+
   // Same "seed from real current state, then stay live via broadcast" shape
   // as the recording flag above — a late joiner should see captions are
   // already on rather than only learning it from the next CAPTIONS_STARTED.
@@ -314,7 +339,7 @@ export function MeetingRoom({
     // BREAKOUT_ROOMS_CLOSED while inside a breakout room with some other
     // panel open, must all survive a breakout-room switch exactly like they
     // already survive an ordinary panel switch.
-    <LocalRecordingProvider>
+    <LocalRecordingProvider meetingId={meetingId} socket={socket}>
       <WhiteboardProvider meetingId={meetingId} socket={socket}>
         <BreakoutProvider
           meetingId={meetingId}
@@ -389,6 +414,24 @@ export function MeetingRoom({
                     <button
                       onClick={() => setRecordingBanner(false)}
                       aria-label="Dismiss recording notice"
+                      className="ml-1 flex-none text-white/80 hover:text-white"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+                {localRecordingNotice && (
+                  <div
+                    role="alert"
+                    className={`absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-2.5 rounded-lg bg-amber-600 px-4 py-2.5 text-xs font-medium text-white shadow-lg ${
+                      recordingBanner ? "top-16" : "top-4"
+                    }`}
+                  >
+                    <span className="h-2 w-2 flex-none rounded-full bg-white" />
+                    {localRecordingNotice}
+                    <button
+                      onClick={() => setLocalRecordingNotice(null)}
+                      aria-label="Dismiss local recording notice"
                       className="ml-1 flex-none text-white/80 hover:text-white"
                     >
                       ✕

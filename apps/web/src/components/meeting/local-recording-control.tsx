@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import type { Socket } from "socket.io-client";
+import { WS_EVENTS } from "@arutech/types";
 
 type State = "idle" | "recording" | "unsupported";
 
@@ -27,7 +29,20 @@ const LocalRecordingContext = createContext<LocalRecordingValue | null>(null);
  * and no way to opt out. Being outside that remount boundary entirely means
  * neither that nor any other panel-switch inside the room can touch it;
  * only an explicit "Stop" click or leaving the meeting does. */
-export function LocalRecordingProvider({ children }: { children: ReactNode }) {
+export function LocalRecordingProvider({
+  children,
+  meetingId,
+  socket,
+}: {
+  children: ReactNode;
+  /** Broadcasts LOCAL_RECORDING_STARTED/STOPPED so everyone else in the
+   * meeting actually gets told this is happening (see H-1 in the QA sweep —
+   * previously nobody else had any signal at all). Optional purely so this
+   * component doesn't hard-crash if ever mounted without a live socket
+   * (e.g. a future standalone usage) — meeting-room.tsx always provides both. */
+  meetingId?: string;
+  socket?: Socket | null;
+}) {
   const [state, setState] = useState<State>("idle");
   const [elapsed, setElapsed] = useState(0);
 
@@ -199,6 +214,7 @@ export function LocalRecordingProvider({ children }: { children: ReactNode }) {
     elapsedTickRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
 
     setState("recording");
+    if (socket && meetingId) socket.emit(WS_EVENTS.LOCAL_RECORDING_STARTED, { meetingId });
   }
 
   function stopInternal() {
@@ -224,8 +240,13 @@ export function LocalRecordingProvider({ children }: { children: ReactNode }) {
   }
 
   function stop() {
+    const wasRecording = state === "recording";
     stopInternal();
     setState("idle");
+    // Only for an explicit Stop click, not the unmount cleanup path (which
+    // calls stopInternal() directly) — nobody needs a "stopped" notice for
+    // a socket that's also in the middle of tearing down.
+    if (wasRecording && socket && meetingId) socket.emit(WS_EVENTS.LOCAL_RECORDING_STOPPED, { meetingId });
   }
 
   return (
