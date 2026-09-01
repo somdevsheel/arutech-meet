@@ -41,6 +41,8 @@ interface BreakoutContextValue {
   createRooms: () => Promise<void>;
   joinRoom: (roomId: string, label: string) => Promise<void>;
   closeAll: () => Promise<void>;
+  sendBroadcast: (message: string) => Promise<void>;
+  broadcasting: boolean;
 }
 
 const BreakoutContext = createContext<BreakoutContextValue | null>(null);
@@ -76,6 +78,18 @@ export function BreakoutProvider({
   const [count, setCount] = useState(2);
   const [assignedRoom, setAssignedRoom] = useState<{ id: string; name: string } | null>(null);
   const [creating, setCreating] = useState(false);
+  const [broadcasting, setBroadcasting] = useState(false);
+  // The received side of POST .../breakout-rooms/broadcast — a moderator
+  // announcement meant to reach EVERYONE, including people currently inside
+  // a breakout room. That's the whole reason this lives here rather than as
+  // local state in BreakoutPanel: BreakoutPanel only exists in the DOM while
+  // the Breakout sub-tab is the open one, same class of bug as every other
+  // piece of state already lifted to this provider. The banner itself is
+  // rendered directly by this provider below, not delegated to
+  // BreakoutPanel, so it shows up regardless of which panel tab (or none)
+  // is currently open, and survives the LiveKitRoom remount a breakout-room
+  // join/leave triggers.
+  const [broadcastMessage, setBroadcastMessage] = useState<string | null>(null);
 
   useEffect(() => {
     // Also restores `assignedRoom` on mount/reload — a participant who was
@@ -111,15 +125,27 @@ export function BreakoutProvider({
       setAssignedRoom(null);
       if (inBreakoutRoom) onReturnToMain();
     };
+    const onBroadcast = (p: { message: string }) => setBroadcastMessage(p.message);
     socket.on(WS_EVENTS.BREAKOUT_ROOMS_CREATED, onCreated);
     socket.on(WS_EVENTS.BREAKOUT_ROOM_ASSIGNED, onAssigned);
     socket.on(WS_EVENTS.BREAKOUT_ROOMS_CLOSED, onClosed);
+    socket.on(WS_EVENTS.BREAKOUT_BROADCAST, onBroadcast);
     return () => {
       socket.off(WS_EVENTS.BREAKOUT_ROOMS_CREATED, onCreated);
       socket.off(WS_EVENTS.BREAKOUT_ROOM_ASSIGNED, onAssigned);
       socket.off(WS_EVENTS.BREAKOUT_ROOMS_CLOSED, onClosed);
+      socket.off(WS_EVENTS.BREAKOUT_BROADCAST, onBroadcast);
     };
   }, [socket, meetingId, userId, inBreakoutRoom, onReturnToMain]);
+
+  // Auto-dismiss after a while, same pattern as the recording-consent
+  // banner in meeting-room.tsx — long enough to actually read an
+  // announcement, short enough not to linger forever if no one dismisses it.
+  useEffect(() => {
+    if (!broadcastMessage) return;
+    const id = setTimeout(() => setBroadcastMessage(null), 12000);
+    return () => clearTimeout(id);
+  }, [broadcastMessage]);
 
   async function createRooms() {
     setCreating(true);
@@ -149,6 +175,18 @@ export function BreakoutProvider({
     await apiFetch(`/meetings/${meetingId}/breakout-rooms/close-all`, { method: "POST" });
   }
 
+  async function sendBroadcast(message: string) {
+    setBroadcasting(true);
+    try {
+      await apiFetch(`/meetings/${meetingId}/breakout-rooms/broadcast`, {
+        method: "POST",
+        body: JSON.stringify({ message }),
+      });
+    } finally {
+      setBroadcasting(false);
+    }
+  }
+
   const value: BreakoutContextValue = {
     rooms,
     assignedRoom,
@@ -160,9 +198,31 @@ export function BreakoutProvider({
     createRooms,
     joinRoom,
     closeAll,
+    sendBroadcast,
+    broadcasting,
   };
 
-  return <BreakoutContext.Provider value={value}>{children}</BreakoutContext.Provider>;
+  return (
+    <BreakoutContext.Provider value={value}>
+      {children}
+      {broadcastMessage && (
+        <div
+          role="alert"
+          className="fixed left-1/2 top-4 z-50 flex max-w-md -translate-x-1/2 items-start gap-2.5 rounded-lg bg-brand-600 px-4 py-2.5 text-xs font-medium text-white shadow-lg"
+        >
+          <span className="mt-0.5 flex-none">📢</span>
+          <span className="flex-1">{broadcastMessage}</span>
+          <button
+            onClick={() => setBroadcastMessage(null)}
+            aria-label="Dismiss announcement"
+            className="flex-none text-white/70 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+    </BreakoutContext.Provider>
+  );
 }
 
 function useBreakout(): BreakoutContextValue {
@@ -190,7 +250,18 @@ export function BreakoutPanel({ canManage }: { canManage: boolean }) {
     createRooms,
     joinRoom,
     closeAll,
+    sendBroadcast,
+    broadcasting,
   } = useBreakout();
+  const [broadcastDraft, setBroadcastDraft] = useState("");
+
+  async function submitBroadcast(e: React.FormEvent) {
+    e.preventDefault();
+    const message = broadcastDraft.trim();
+    if (!message) return;
+    await sendBroadcast(message);
+    setBroadcastDraft("");
+  }
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
@@ -245,6 +316,29 @@ export function BreakoutPanel({ canManage }: { canManage: boolean }) {
             >
               Close all rooms
             </button>
+          )}
+          {rooms.length > 0 && (
+            <form
+              onSubmit={submitBroadcast}
+              className="space-y-1.5 border-t border-surface-border pt-2"
+            >
+              <p className="text-xs font-medium uppercase text-ink-muted">Announce to everyone</p>
+              <textarea
+                value={broadcastDraft}
+                onChange={(e) => setBroadcastDraft(e.target.value)}
+                placeholder="e.g. Back in the main room in 2 minutes"
+                maxLength={1000}
+                rows={2}
+                className="input w-full resize-none text-xs"
+              />
+              <button
+                type="submit"
+                disabled={broadcasting || !broadcastDraft.trim()}
+                className="w-full rounded bg-brand-500 py-2 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {broadcasting ? "Sending…" : "Send to everyone"}
+              </button>
+            </form>
           )}
         </div>
       )}
