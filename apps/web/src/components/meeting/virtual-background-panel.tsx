@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useVirtualBackground } from "@/hooks/use-virtual-background";
+import type { BackgroundMode } from "@/hooks/use-virtual-background";
 
 /** A handful of generated gradient presets — deliberately abstract rather than
  * pretending to be stock office/nature photography this app doesn't actually
@@ -28,9 +28,34 @@ function renderGradient(colors: [string, string]): string {
   return canvas.toDataURL("image/png");
 }
 
-export function VirtualBackgroundPanel({ onClose }: { onClose: () => void }) {
-  const { supported, mode, imagePath, busy, error, isCameraEnabled, applyNone, applyBlur, applyImage } =
-    useVirtualBackground();
+/** Purely presentational — `mode`/`imagePath`/etc. all come from the caller
+ * (MeetingToolbar), which calls useVirtualBackground() itself and stays
+ * mounted for the whole meeting. This component only exists in the DOM
+ * while the popover is open, so it must never own that state directly —
+ * see MeetingToolbar's own comment on why. */
+export function VirtualBackgroundPanel({
+  onClose,
+  supported,
+  mode,
+  imagePath,
+  busy,
+  error,
+  isCameraEnabled,
+  applyNone,
+  applyBlur,
+  applyImage,
+}: {
+  onClose: () => void;
+  supported: boolean;
+  mode: BackgroundMode;
+  imagePath: string | null;
+  busy: boolean;
+  error: string | null;
+  isCameraEnabled: boolean;
+  applyNone: () => void;
+  applyBlur: (blurRadius?: number) => void;
+  applyImage: (path: string) => void;
+}) {
   const [presets, setPresets] = useState<{ name: string; url: string }[] | null>(null);
   const [customUrl, setCustomUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -55,8 +80,8 @@ export function VirtualBackgroundPanel({ onClose }: { onClose: () => void }) {
   if (!supported) {
     return (
       <div className="w-64 rounded-xl border border-surface-border bg-surface-raised p-3 text-xs text-ink-muted">
-        Virtual backgrounds aren&apos;t supported in this browser (needs WebGL + Insertable Streams support —
-        try a recent Chrome or Edge).
+        Virtual backgrounds aren&apos;t supported in this browser (needs WebGL + Insertable Streams
+        support — try a recent Chrome or Edge).
       </div>
     );
   }
@@ -82,7 +107,9 @@ export function VirtualBackgroundPanel({ onClose }: { onClose: () => void }) {
           onClick={applyNone}
           disabled={busy || !isCameraEnabled}
           className={`col-span-3 rounded-lg border px-2 py-2 text-[11px] font-medium transition disabled:opacity-40 ${
-            mode === "none" ? "border-brand-500 bg-brand-500/20 text-brand-300" : "border-surface-border2 text-ink-2 hover:bg-surface-field"
+            mode === "none"
+              ? "border-brand-500 bg-brand-500/20 text-brand-300"
+              : "border-surface-border2 text-ink-2 hover:bg-surface-field"
           }`}
         >
           None
@@ -91,7 +118,9 @@ export function VirtualBackgroundPanel({ onClose }: { onClose: () => void }) {
           onClick={() => applyBlur(15)}
           disabled={busy || !isCameraEnabled}
           className={`col-span-3 rounded-lg border px-2 py-2 text-[11px] font-medium transition disabled:opacity-40 ${
-            mode === "blur" ? "border-brand-500 bg-brand-500/20 text-brand-300" : "border-surface-border2 text-ink-2 hover:bg-surface-field"
+            mode === "blur"
+              ? "border-brand-500 bg-brand-500/20 text-brand-300"
+              : "border-surface-border2 text-ink-2 hover:bg-surface-field"
           }`}
         >
           Blur
@@ -104,7 +133,9 @@ export function VirtualBackgroundPanel({ onClose }: { onClose: () => void }) {
             disabled={busy || !isCameraEnabled}
             title={name}
             className={`relative h-14 overflow-hidden rounded-lg border-2 bg-cover bg-center transition disabled:opacity-40 ${
-              mode === "image" && imagePath === url ? "border-brand-500" : "border-transparent hover:border-surface-border2"
+              mode === "image" && imagePath === url
+                ? "border-brand-500"
+                : "border-transparent hover:border-surface-border2"
             }`}
             style={{ backgroundImage: `url(${url})` }}
           />
@@ -122,17 +153,27 @@ export function VirtualBackgroundPanel({ onClose }: { onClose: () => void }) {
         >
           {customUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- a local blob: object URL, not an optimizable remote asset
-            <img src={customUrl} alt="Custom background" className="h-full w-full rounded-md object-cover" />
+            <img
+              src={customUrl}
+              alt="Custom background"
+              className="h-full w-full rounded-md object-cover"
+            />
           ) : (
             <span className="text-lg">+</span>
           )}
         </button>
-        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onCustomFileSelected} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={onCustomFileSelected}
+        />
       </div>
 
       <p className="mt-2 text-[10px] leading-relaxed text-ink-muted2">
-        Runs entirely on your device — the background image never leaves your browser, and a custom upload
-        isn&apos;t saved anywhere (pick it again next time).
+        Runs entirely on your device — the background image never leaves your browser, and a custom
+        upload isn&apos;t saved anywhere (pick it again next time).
       </p>
     </div>
   );

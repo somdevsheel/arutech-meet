@@ -4,6 +4,7 @@ import { useLocalParticipant } from "@livekit/components-react";
 import { useState } from "react";
 import { REACTION_EMOJIS, type ReactionEmoji } from "@arutech/types";
 import { VirtualBackgroundPanel } from "./virtual-background-panel";
+import { useVirtualBackground } from "@/hooks/use-virtual-background";
 
 export type PanelKind = "participants" | "chat" | "tools" | "recordings" | "info";
 
@@ -54,6 +55,15 @@ export function MeetingToolbar({
   const [busy, setBusy] = useState(false);
   const [reactionsOpen, setReactionsOpen] = useState(false);
   const [backgroundOpen, setBackgroundOpen] = useState(false);
+  // Called here rather than inside VirtualBackgroundPanel itself: that panel
+  // only exists in the DOM while its popover is open, so `mode`/`imagePath`/
+  // the processor ref all used to live and die with every open/close — the
+  // popover looked like it had reset to "None" on reopen even though the
+  // actual background effect was still genuinely running on the track the
+  // whole time (only the *display* of which button should be highlighted
+  // was wrong, not the effect itself). MeetingToolbar stays mounted for the
+  // life of the LiveKit connection, so this survives the popover toggling.
+  const virtualBackground = useVirtualBackground();
   // Ending a meeting disconnects every participant, not just the host — a
   // much bigger blast radius than any other button on this bar, and there's
   // no confirm-dialog pattern anywhere else in this app to reuse. Arm on the
@@ -111,19 +121,30 @@ export function MeetingToolbar({
           <path d="m15 11 6-4v10l-6-4" />
         </Control>
         <div className="relative">
-          <Control label="Background" active={backgroundOpen} onClick={() => setBackgroundOpen((v) => !v)}>
+          <Control
+            label="Background"
+            active={backgroundOpen}
+            onClick={() => setBackgroundOpen((v) => !v)}
+          >
             <path d="M4 16V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10M4 16l4.5-5 3 3L16 9l4 4M4 16h16v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2Z" />
           </Control>
           {backgroundOpen && (
             <div className="absolute bottom-full left-0 mb-2">
-              <VirtualBackgroundPanel onClose={() => setBackgroundOpen(false)} />
+              <VirtualBackgroundPanel
+                onClose={() => setBackgroundOpen(false)}
+                {...virtualBackground}
+              />
             </div>
           )}
         </div>
       </div>
 
       <div className="flex items-center gap-1.5">
-        <Control label={handRaised ? "Lower hand" : "Raise hand"} active={handRaised} onClick={onToggleHand}>
+        <Control
+          label={handRaised ? "Lower hand" : "Raise hand"}
+          active={handRaised}
+          onClick={onToggleHand}
+        >
           <path d="M8 13V6a1.5 1.5 0 0 1 3 0v5M11 11V4a1.5 1.5 0 0 1 3 0v7M14 11.5V6a1.5 1.5 0 0 1 3 0v8c0 3.3-2.7 6-6 6h-1a6 6 0 0 1-5-2.7L3 13.5a1.4 1.4 0 0 1 2.2-1.7L8 15" />
         </Control>
         <div className="relative">
@@ -174,10 +195,19 @@ export function MeetingToolbar({
             onClick={() => toggle("screen")}
             disabled={busy}
             className={`flex flex-col items-center gap-1.5 rounded-lg px-4 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
-              isScreenShareEnabled ? "bg-success text-white" : "bg-success-bg text-success hover:brightness-110"
+              isScreenShareEnabled
+                ? "bg-success text-white"
+                : "bg-success-bg text-success hover:brightness-110"
             }`}
           >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+            >
               <rect x="3" y="4" width="18" height="13" rx="2" />
               <path d="M12 13V7m0 0-2.5 2.5M12 7l2.5 2.5M8 21h8" />
             </svg>
@@ -278,7 +308,14 @@ function Control({
       }`}
     >
       <span className={off ? "text-danger" : accentActive ? "text-danger" : ""}>
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        >
           {children}
         </svg>
       </span>
