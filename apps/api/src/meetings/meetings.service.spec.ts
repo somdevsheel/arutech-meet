@@ -59,6 +59,7 @@ function makeService(overrides?: {
           livekitIdentity: "owner-1-abc",
           guestName: null,
           userId: MEETING.ownerId,
+          user: { displayName: "Real Owner Name" },
         }),
       },
       classSession: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -466,6 +467,7 @@ describe("MeetingsService.issueTokenForCaller", () => {
       role: "PARTICIPANT",
       status: "ADMITTED",
       livekitIdentity: "user-2-abc",
+      user: { displayName: "User Two" },
     });
 
     await service.issueTokenForCaller(MEETING.id, "participant-1", "host-1");
@@ -474,6 +476,52 @@ describe("MeetingsService.issueTokenForCaller", () => {
       MEETING.id,
       "host-1",
       "participant.role.promote_co_host",
+    );
+  });
+});
+
+// H-2: every authenticated participant's video tile showed their raw
+// User.id UUID instead of their name — createRoomToken's `name` fell
+// through `guestName ?? participant.userId ?? "Guest"` for anyone with a
+// real account (guestName is always null for them), landing on the id.
+describe("MeetingsService.issueToken", () => {
+  it("uses the account's real display name for an authenticated participant's LiveKit token", async () => {
+    const { service, liveKit, prisma } = makeService();
+    (prisma.client.meetingParticipant.findUnique as jest.Mock).mockResolvedValue({
+      id: "participant-1",
+      meetingId: MEETING.id,
+      role: "PARTICIPANT",
+      status: "ADMITTED",
+      livekitIdentity: "user-2-abc",
+      guestName: null,
+      userId: "user-2",
+      user: { displayName: "Jamie Real Name" },
+    });
+
+    await service.issueToken(MEETING.id, "participant-1");
+
+    expect(liveKit.createRoomToken).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Jamie Real Name" }),
+    );
+  });
+
+  it("still uses guestName for a guest, never the display-name fallback", async () => {
+    const { service, liveKit, prisma } = makeService();
+    (prisma.client.meetingParticipant.findUnique as jest.Mock).mockResolvedValue({
+      id: "guest-participant-1",
+      meetingId: MEETING.id,
+      role: "GUEST",
+      status: "ADMITTED",
+      livekitIdentity: "guest-abc",
+      guestName: "Casual Visitor",
+      userId: null,
+      user: null,
+    });
+
+    await service.issueToken(MEETING.id, "guest-participant-1");
+
+    expect(liveKit.createRoomToken).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Casual Visitor" }),
     );
   });
 });

@@ -483,6 +483,12 @@ export class MeetingsService {
   async issueToken(meetingId: string, participantId: string) {
     const participant = await this.prisma.client.meetingParticipant.findUnique({
       where: { id: participantId },
+      // Only need `displayName`, but the previous code fell back to the raw
+      // `userId` UUID for every real account's video-tile label — LiveKit's
+      // `name` is exactly what the client renders under each tile (see
+      // VideoGrid), so a missing join here meant every authenticated
+      // participant's own name was never actually used for it.
+      include: { user: { select: { displayName: true } } },
     });
     if (!participant || participant.meetingId !== meetingId) {
       throw new NotFoundException("Participant not found");
@@ -500,7 +506,7 @@ export class MeetingsService {
     const token = await this.liveKit.createRoomToken({
       roomName: meeting.livekitRoomName,
       identity: participant.livekitIdentity,
-      name: participant.guestName ?? participant.userId ?? "Guest",
+      name: participant.guestName ?? participant.user?.displayName ?? "Guest",
       canPublishScreenShare: canScreenShare,
     });
     return { token, url: this.liveKit.getClientUrl() };
