@@ -852,6 +852,7 @@ function RoomChatMessage({
                   <ForwardPicker
                     messageId={message.id}
                     excludeRoomId={chatRoomId}
+                    currentUserId={currentUserId}
                     onForwarded={onForwarded}
                     onClose={onStartForward}
                   />
@@ -875,14 +876,21 @@ function RoomChatMessage({
   );
 }
 
+// `currentUserId` exists solely so the DIRECT-room labels below can call the
+// same `roomTitle` helper the sidebar list uses (which needs "who am I" to
+// find the *other* member) — without it, every DM's `room.name` is null (DMs
+// are never named) and the old inline fallback rendered the literal string
+// "Direct message" for every single one, indistinguishable from each other.
 function ForwardPicker({
   messageId,
   excludeRoomId,
+  currentUserId,
   onForwarded,
   onClose,
 }: {
   messageId: string;
   excludeRoomId: string;
+  currentUserId: string;
   onForwarded: () => void;
   onClose: () => void;
 }) {
@@ -935,9 +943,7 @@ function ForwardPicker({
             disabled={busyRoomId === room.id}
             className="block w-full rounded px-2 py-1.5 text-left text-[11px] text-ink-2 hover:bg-surface-field disabled:opacity-50"
           >
-            {busyRoomId === room.id
-              ? "Forwarding…"
-              : room.name || (room.type === "DIRECT" ? "Direct message" : "Group chat")}
+            {busyRoomId === room.id ? "Forwarding…" : roomTitle(room, currentUserId)}
           </button>
         ))}
       </div>
