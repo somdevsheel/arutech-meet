@@ -16,7 +16,13 @@ function renderBody(text: string) {
   while ((match = tokenPattern.exec(text))) {
     if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
     parts.push(
-      <a key={key++} href={match[0]} target="_blank" rel="noopener noreferrer" className="text-brand-300 underline">
+      <a
+        key={key++}
+        href={match[0]}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-brand-300 underline"
+      >
         {match[0]}
       </a>,
     );
@@ -45,7 +51,19 @@ export function TeamChatPanel({ chatRoomId }: { chatRoomId: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<ChatMessagePayload[]>(`/chat-rooms/${chatRoomId}/messages`).then(setMessages);
+    // GET .../messages returns newest-first (ChatService.roomHistory orders
+    // by createdAt desc, for cursor-based pagination going backward in
+    // time) — every sibling chat surface (meeting chat-panel.tsx, Team
+    // Chat's own chat/page.tsx) reverses this before rendering so the
+    // oldest message ends up on top and the newest at the bottom, the
+    // universal chat-UI convention. This one never did, so a team's chat
+    // rendered upside down: newest message first, oldest at the bottom —
+    // and got more confusing over time as live messages correctly appended
+    // to the *end* (see onMessage below) while history sat reversed above
+    // them.
+    apiFetch<ChatMessagePayload[]>(`/chat-rooms/${chatRoomId}/messages`).then((history) =>
+      setMessages([...history].reverse()),
+    );
     apiFetch(`/chat-rooms/${chatRoomId}/read`, { method: "POST" }).catch(() => {});
   }, [chatRoomId]);
 
@@ -59,15 +77,18 @@ export function TeamChatPanel({ chatRoomId }: { chatRoomId: string }) {
       // Dedup by id — React Strict Mode's dev-only double-effect-invocation
       // can otherwise double-register this listener for an instant, same
       // guard the existing chat/page.tsx room listener already uses.
-      setMessages((prev) => (prev?.some((m) => m.id === payload.id) ? prev : [...(prev ?? []), payload]));
+      setMessages((prev) =>
+        prev?.some((m) => m.id === payload.id) ? prev : [...(prev ?? []), payload],
+      );
     };
     const onEdited = (updated: ChatMessagePayload) =>
       setMessages((prev) => prev?.map((m) => (m.id === updated.id ? updated : m)) ?? prev);
     const onDeleted = (p: { messageId: string }) =>
       setMessages(
         (prev) =>
-          prev?.map((m) => (m.id === p.messageId ? { ...m, body: null, deletedAt: new Date().toISOString() } : m)) ??
-          prev,
+          prev?.map((m) =>
+            m.id === p.messageId ? { ...m, body: null, deletedAt: new Date().toISOString() } : m,
+          ) ?? prev,
       );
 
     socket.on(WS_EVENTS.ROOM_MESSAGE, onMessage);
@@ -105,7 +126,9 @@ export function TeamChatPanel({ chatRoomId }: { chatRoomId: string }) {
     <div className="flex h-full flex-col">
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages === null && <p className="text-xs text-ink-muted">Loading…</p>}
-        {messages?.length === 0 && <p className="text-xs text-ink-muted">No messages yet. Say hello 👋</p>}
+        {messages?.length === 0 && (
+          <p className="text-xs text-ink-muted">No messages yet. Say hello 👋</p>
+        )}
         {messages?.map((m) => (
           <TeamChatMessageRow
             key={m.id}
@@ -166,9 +189,14 @@ function TeamChatMessageRow({
   return (
     <div className="group">
       <div className="flex items-baseline gap-1.5">
-        <b className="text-[11px] font-semibold text-ink-3">{isMine ? "You" : message.senderName}</b>
+        <b className="text-[11px] font-semibold text-ink-3">
+          {isMine ? "You" : message.senderName}
+        </b>
         <span className="text-[10px] text-ink-muted2">
-          {new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+          {new Date(message.createdAt).toLocaleTimeString(undefined, {
+            hour: "numeric",
+            minute: "2-digit",
+          })}
         </span>
         {message.editedAt && <span className="text-[10px] text-ink-muted2">(edited)</span>}
       </div>
@@ -177,7 +205,13 @@ function TeamChatMessageRow({
         <p className="mt-1 inline-block text-xs italic text-ink-muted">Message deleted</p>
       ) : isEditing ? (
         <div className="mt-1 flex max-w-[85%] flex-col gap-1.5">
-          <textarea value={editDraft} onChange={(e) => setEditDraft(e.target.value)} rows={2} autoFocus className="input text-xs" />
+          <textarea
+            value={editDraft}
+            onChange={(e) => setEditDraft(e.target.value)}
+            rows={2}
+            autoFocus
+            className="input text-xs"
+          />
           <div className="flex gap-2">
             <button
               onClick={() => editDraft.trim() && onSaveEdit(editDraft.trim())}
@@ -186,7 +220,10 @@ function TeamChatMessageRow({
             >
               Save
             </button>
-            <button onClick={onCancelEdit} className="rounded px-2.5 py-1 text-[11px] text-ink-muted hover:text-white">
+            <button
+              onClick={onCancelEdit}
+              className="rounded px-2.5 py-1 text-[11px] text-ink-muted hover:text-white"
+            >
               Cancel
             </button>
           </div>
