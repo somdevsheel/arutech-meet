@@ -92,3 +92,56 @@ export async function apiFetch<T = unknown>(
   const text = await response.text();
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
+
+/**
+ * Like apiFetch, but for endpoints that return a binary body (a CSV/file
+ * export) instead of JSON — attaches the bearer token, retries once after a
+ * silent refresh on 401 exactly like apiFetch, and throws the same ApiError
+ * on a non-ok response instead of returning it. That last part is the whole
+ * point of this function existing: a plain `fetch(...).then(r => r.blob())`
+ * has no concept of "ok" at all — an error response's JSON body (e.g. a 401
+ * "Unauthorized" or 403 "Forbidden" payload) gets turned into a Blob just as
+ * happily as a real file would, and a caller that unconditionally hands that
+ * blob to a download link ends up silently saving the error message to disk
+ * as if it were the requested export, with no visible indication anything
+ * went wrong.
+ */
+export async function apiFetchBlob(
+  path: string,
+  options: RequestInit & { skipAuth?: boolean } = {},
+): Promise<Blob> {
+  const { accessToken } = useAuthStore.getState();
+  const doFetch = (token: string | null) =>
+    fetch(`${env.apiUrl}/api/v1${path}`, {
+      ...options,
+      headers: {
+        ...(token && !options.skipAuth ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    });
+
+  let response = await doFetch(accessToken);
+
+  if (response.status === 401 && !options.skipAuth) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      response = await doFetch(newToken);
+    }
+  }
+
+  if (!response.ok) {
+    const requestId = response.headers.get("x-request-id") ?? undefined;
+    let message = `Request failed (${response.status})`;
+    try {
+      const body = await response.json();
+      message = Array.isArray(body?.error?.message)
+        ? body.error.message.join(", ")
+        : (body?.error?.message ?? message);
+    } catch {
+      // response had no JSON body
+    }
+    throw new ApiError(response.status, message, requestId);
+  }
+
+  return response.blob();
+}

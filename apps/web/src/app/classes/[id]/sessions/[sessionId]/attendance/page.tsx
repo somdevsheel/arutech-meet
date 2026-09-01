@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { apiFetch } from "@/lib/api-client";
+import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api-client";
 import { env } from "@/lib/env";
 import { useAuthStore } from "@/lib/auth-store";
 import { useRouter } from "next/navigation";
@@ -31,6 +31,8 @@ export default function AttendancePage() {
   const { user, accessToken, clear } = useAuthStore();
   const [rows, setRows] = useState<AttendanceRow[]>([]);
   const [recomputing, setRecomputing] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   async function refresh() {
     const data = await apiFetch<AttendanceRow[]>(`/class-sessions/${params.sessionId}/attendance`);
@@ -42,10 +44,35 @@ export default function AttendancePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.sessionId]);
 
+  async function downloadCsv() {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const blob = await apiFetchBlob(`/class-sessions/${params.sessionId}/attendance/export.csv`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "attendance.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // apiFetchBlob throws the same ApiError apiFetch does on a non-ok
+      // response — this is the actual fix: a 401/403/etc. response used to
+      // get silently saved to disk as "attendance.csv" (its JSON error body
+      // is, after all, still valid bytes for a Blob) with no indication
+      // anything had gone wrong. Show the real error instead of downloading it.
+      setExportError(err instanceof ApiError ? err.message : "Couldn't export attendance");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function recompute() {
     setRecomputing(true);
     try {
-      await apiFetch(`/class-sessions/${params.sessionId}/attendance/recompute`, { method: "POST" });
+      await apiFetch(`/class-sessions/${params.sessionId}/attendance/recompute`, {
+        method: "POST",
+      });
       await refresh();
     } finally {
       setRecomputing(false);
@@ -83,19 +110,20 @@ export default function AttendancePage() {
                 href={`${env.apiUrl}/api/v1/class-sessions/${params.sessionId}/attendance/export.csv`}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-lg bg-brand-500 px-3 py-2 text-xs font-medium text-white hover:bg-brand-600"
+                className="rounded-lg bg-brand-500 px-3 py-2 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-50"
                 onClick={(e) => {
                   // The export endpoint requires auth like everything else; a plain
                   // anchor tag can't send an Authorization header, so route it
                   // through fetch + blob download instead of a raw href navigation.
                   e.preventDefault();
-                  downloadCsv(params.sessionId, accessToken);
+                  if (!exporting) downloadCsv();
                 }}
               >
-                Export CSV
+                {exporting ? "Exporting…" : "Export CSV"}
               </a>
             </div>
           </div>
+          {exportError && <p className="mt-2 text-right text-xs text-danger">{exportError}</p>}
         </div>
 
         <table className="w-full text-sm">
@@ -113,8 +141,12 @@ export default function AttendancePage() {
             {rows.map((r) => (
               <tr key={r.userId} className="border-b border-surface-border/50">
                 <td className="py-2 text-white">{r.user.displayName}</td>
-                <td className="py-2 text-ink-muted">{r.joinedAt ? new Date(r.joinedAt).toLocaleTimeString() : "—"}</td>
-                <td className="py-2 text-ink-muted">{r.leftAt ? new Date(r.leftAt).toLocaleTimeString() : "—"}</td>
+                <td className="py-2 text-ink-muted">
+                  {r.joinedAt ? new Date(r.joinedAt).toLocaleTimeString() : "—"}
+                </td>
+                <td className="py-2 text-ink-muted">
+                  {r.leftAt ? new Date(r.leftAt).toLocaleTimeString() : "—"}
+                </td>
                 <td className="py-2 text-ink-muted">{Math.round(r.durationSeconds / 60)} min</td>
                 <td className="py-2 text-ink-muted">{r.rejoinCount}</td>
                 <td className={`py-2 font-medium ${STATUS_COLOR[r.status]}`}>{r.status}</td>
@@ -123,7 +155,8 @@ export default function AttendancePage() {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={6} className="py-6 text-center text-ink-muted">
-                  No attendance data yet — click Recompute after the session has had participants join.
+                  No attendance data yet — click Recompute after the session has had participants
+                  join.
                 </td>
               </tr>
             )}
@@ -132,17 +165,4 @@ export default function AttendancePage() {
       </div>
     </AppShell>
   );
-}
-
-async function downloadCsv(sessionId: string, accessToken: string | null) {
-  const res = await fetch(`${env.apiUrl}/api/v1/class-sessions/${sessionId}/attendance/export.csv`, {
-    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-  });
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "attendance.csv";
-  a.click();
-  URL.revokeObjectURL(url);
 }
