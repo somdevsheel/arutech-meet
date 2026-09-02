@@ -300,7 +300,17 @@ export class MeetingsService {
     // generic HOST/PARTICIPANT default, so classroom capabilities (whiteboard,
     // polls, quizzes, attendance) resolve correctly via the same capability
     // matrix meetings already use — see packages/types/src/permissions.ts.
-    if (!isOwner && caller.userId) {
+    //
+    // CS-2: this used to be gated on `!isOwner`, so the teacher who actually
+    // started their own class session — the single most common case — never
+    // reached it at all and stayed the generic "HOST" default from above,
+    // while any OTHER teacher joining the same session correctly got
+    // "TEACHER". Capabilities were identical either way (HOST and TEACHER
+    // are both full moderators — see MODERATOR_ROLES/the permissions
+    // matrix), so this was purely a label mismatch, not a permissions bug —
+    // but it's still confusing to a teacher to see themselves called
+    // something else in their own classroom.
+    if (caller.userId) {
       const classSession = await this.prisma.client.classSession.findUnique({
         where: { meetingId: meeting.id },
       });

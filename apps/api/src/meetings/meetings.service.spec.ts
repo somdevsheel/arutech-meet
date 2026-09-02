@@ -67,6 +67,8 @@ function makeService(overrides?: {
         }),
       },
       classSession: { findUnique: jest.fn().mockResolvedValue(null) },
+      classTeacher: { findUnique: jest.fn().mockResolvedValue(null) },
+      classStudent: { findUnique: jest.fn().mockResolvedValue(null) },
       meetingEvent: { create: jest.fn().mockResolvedValue(undefined) },
     },
   } as unknown as PrismaService;
@@ -318,6 +320,53 @@ describe("MeetingsService", () => {
       const { service } = makeService({ hasBlocked: false });
       const result = await service.join(MEETING.code, { userId: "user-2", email: "a@b.com" }, {});
       expect(result.status).toBe("WAITING");
+    });
+  });
+
+  // CS-2: the class-session TEACHER/STUDENT role lookup used to be gated on
+  // `!isOwner`, so the teacher who actually started their own class session
+  // — the single most common case — never reached it and stayed the
+  // generic "HOST" default instead, while any OTHER teacher joining the
+  // same session correctly got "TEACHER".
+  describe("join — class session role", () => {
+    it("assigns the meeting owner TEACHER, not the generic HOST default, when they're a teacher of the linked class", async () => {
+      const { service, prisma } = makeService();
+      (prisma.client.classSession.findUnique as jest.Mock).mockResolvedValue({
+        id: "session-1",
+        classId: "class-1",
+        meetingId: MEETING.id,
+      });
+      (prisma.client.classTeacher.findUnique as jest.Mock).mockResolvedValue({
+        classId: "class-1",
+        userId: MEETING.ownerId,
+      });
+
+      const result = await service.join(MEETING.code, { userId: MEETING.ownerId, email: "owner@x.com" }, {});
+
+      expect(result.role).toBe("TEACHER");
+    });
+
+    it("still assigns TEACHER to a non-owner co-teacher joining someone else's class session (no regression)", async () => {
+      const { service, prisma } = makeService();
+      (prisma.client.classSession.findUnique as jest.Mock).mockResolvedValue({
+        id: "session-1",
+        classId: "class-1",
+        meetingId: MEETING.id,
+      });
+      (prisma.client.classTeacher.findUnique as jest.Mock).mockResolvedValue({
+        classId: "class-1",
+        userId: "co-teacher-1",
+      });
+
+      const result = await service.join(MEETING.code, { userId: "co-teacher-1", email: "coteacher@x.com" }, {});
+
+      expect(result.role).toBe("TEACHER");
+    });
+
+    it("leaves a non-classroom meeting's owner as HOST (no linked class session at all)", async () => {
+      const { service } = makeService();
+      const result = await service.join(MEETING.code, { userId: MEETING.ownerId, email: "owner@x.com" }, {});
+      expect(result.role).toBe("HOST");
     });
   });
 
