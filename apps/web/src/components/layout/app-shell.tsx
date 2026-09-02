@@ -65,6 +65,12 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  // H-9: below md (~768px) the sidebar was just `hidden`, full stop — no
+  // hamburger, no bottom tab bar, nothing replaced it. Home (via the header
+  // logo) plus whatever the header itself exposes (search, notifications,
+  // settings, account menu) were the only reachable destinations; the other
+  // 9 of 10 nav items had no path to them at all on a small screen.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -112,9 +118,81 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
       results.assignments.length > 0 ||
       results.classes.length > 0);
 
+  // Shared between the desktop sidebar and the mobile drawer below (H-9) —
+  // one real list of destinations, rendered twice into two different
+  // containers, rather than two lists that could quietly drift apart.
+  const navLinks = (
+    <>
+      <SidebarLink href="/dashboard" label="Home" active={active === "home"}>
+        <path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+        <path d="M9 21v-8h6v8" />
+      </SidebarLink>
+      <SidebarLink href="/calendar" label="Calendar" active={active === "calendar"}>
+        <rect x="3" y="4.5" width="18" height="16" rx="2" />
+        <path d="M3 9.5h18M8 3v3M16 3v3" />
+      </SidebarLink>
+      <SidebarLink href="/classes" label="Classes" active={active === "classes"}>
+        <path d="M12 3 2 8l10 5 10-5-10-5Z" />
+        <path d="M6 10.5V16c0 1.5 2.7 3 6 3s6-1.5 6-3v-5.5" />
+      </SidebarLink>
+      <SidebarLink href="/courses" label="Courses" active={active === "courses"}>
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" />
+      </SidebarLink>
+      <SidebarLink href="/chat" label="Team Chat" active={active === "chat"} badge={chatUnreadCount}>
+        <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.2A8 8 0 1 1 21 12Z" />
+      </SidebarLink>
+      <SidebarLink href="/contacts" label="Contacts" active={active === "contacts"}>
+        <circle cx="9" cy="8" r="3.2" />
+        <path d="M3 20a6 6 0 0 1 12 0" />
+        <path d="M16 5.5a3 3 0 0 1 0 5.6M17.5 20a5.6 5.6 0 0 0-2-4" />
+      </SidebarLink>
+      <SidebarLink href="/recordings" label="Recordings" active={active === "recordings"}>
+        <circle cx="12" cy="12" r="9" />
+        <circle cx="12" cy="12" r="3.2" />
+      </SidebarLink>
+      <SidebarLink href="/organizations" label="Organizations" active={active === "organizations"}>
+        <path d="M5 21V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v16" />
+        <path d="M15 10h4a1 1 0 0 1 1 1v10" />
+        <path d="M9 9h.01M9 13h.01M9 17h.01M18 14h.01M18 18h.01" />
+      </SidebarLink>
+
+      <p className="px-3 pb-1.5 pt-4 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+        Workspace
+      </p>
+
+      <SidebarLink href="/notes" label="Notes" active={active === "notes"}>
+        <path d="M5 4h11l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
+        <path d="M8 12h8M8 16h5" />
+      </SidebarLink>
+      <SidebarLink href="/apps" label="Apps" active={active === "apps"}>
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      </SidebarLink>
+
+      {user.systemRole === "ADMIN" && (
+        <SidebarLink href="/admin" label="Admin" active={active === "admin"}>
+          <path d="M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6l-8-3Z" />
+        </SidebarLink>
+      )}
+    </>
+  );
+
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <header className="flex h-16 flex-none items-center gap-6 border-b border-surface-border bg-surface-raised px-6">
+        <button
+          onClick={() => setMobileNavOpen(true)}
+          aria-label="Open navigation menu"
+          className="grid h-9 w-9 flex-none place-items-center rounded-lg text-ink-muted hover:bg-surface-field hover:text-ink-2 md:hidden"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+
         <Link href="/dashboard" className="flex flex-none items-center gap-2.5 text-base font-semibold">
           <span className="grid h-7 w-7 place-items-center rounded-full bg-brand-500 text-white" aria-hidden>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -375,61 +453,37 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
           aria-label="Main"
           className="hidden w-[230px] flex-none flex-col gap-1 overflow-y-auto border-r border-surface-border bg-surface-sunken p-3 md:flex"
         >
-          <SidebarLink href="/dashboard" label="Home" active={active === "home"}>
-            <path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
-            <path d="M9 21v-8h6v8" />
-          </SidebarLink>
-          <SidebarLink href="/calendar" label="Calendar" active={active === "calendar"}>
-            <rect x="3" y="4.5" width="18" height="16" rx="2" />
-            <path d="M3 9.5h18M8 3v3M16 3v3" />
-          </SidebarLink>
-          <SidebarLink href="/classes" label="Classes" active={active === "classes"}>
-            <path d="M12 3 2 8l10 5 10-5-10-5Z" />
-            <path d="M6 10.5V16c0 1.5 2.7 3 6 3s6-1.5 6-3v-5.5" />
-          </SidebarLink>
-          <SidebarLink href="/courses" label="Courses" active={active === "courses"}>
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" />
-          </SidebarLink>
-          <SidebarLink href="/chat" label="Team Chat" active={active === "chat"} badge={chatUnreadCount}>
-            <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.2A8 8 0 1 1 21 12Z" />
-          </SidebarLink>
-          <SidebarLink href="/contacts" label="Contacts" active={active === "contacts"}>
-            <circle cx="9" cy="8" r="3.2" />
-            <path d="M3 20a6 6 0 0 1 12 0" />
-            <path d="M16 5.5a3 3 0 0 1 0 5.6M17.5 20a5.6 5.6 0 0 0-2-4" />
-          </SidebarLink>
-          <SidebarLink href="/recordings" label="Recordings" active={active === "recordings"}>
-            <circle cx="12" cy="12" r="9" />
-            <circle cx="12" cy="12" r="3.2" />
-          </SidebarLink>
-          <SidebarLink href="/organizations" label="Organizations" active={active === "organizations"}>
-            <path d="M5 21V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v16" />
-            <path d="M15 10h4a1 1 0 0 1 1 1v10" />
-            <path d="M9 9h.01M9 13h.01M9 17h.01M18 14h.01M18 18h.01" />
-          </SidebarLink>
-
-          <p className="px-3 pb-1.5 pt-4 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
-            Workspace
-          </p>
-
-          <SidebarLink href="/notes" label="Notes" active={active === "notes"}>
-            <path d="M5 4h11l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
-            <path d="M8 12h8M8 16h5" />
-          </SidebarLink>
-          <SidebarLink href="/apps" label="Apps" active={active === "apps"}>
-            <rect x="3" y="3" width="7" height="7" rx="1.5" />
-            <rect x="14" y="3" width="7" height="7" rx="1.5" />
-            <rect x="3" y="14" width="7" height="7" rx="1.5" />
-            <rect x="14" y="14" width="7" height="7" rx="1.5" />
-          </SidebarLink>
-
-          {user.systemRole === "ADMIN" && (
-            <SidebarLink href="/admin" label="Admin" active={active === "admin"}>
-              <path d="M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6l-8-3Z" />
-            </SidebarLink>
-          )}
+          {navLinks}
         </nav>
+
+        {mobileNavOpen && (
+          <div className="fixed inset-0 z-40 md:hidden">
+            <div
+              className="absolute inset-0 bg-black/60"
+              onClick={() => setMobileNavOpen(false)}
+              aria-hidden
+            />
+            <nav
+              aria-label="Main"
+              onClick={() => setMobileNavOpen(false)}
+              className="absolute left-0 top-0 flex h-full w-[260px] flex-col gap-1 overflow-y-auto bg-surface-sunken p-3 shadow-xl"
+            >
+              <div className="mb-2 flex items-center justify-between px-1">
+                <span className="text-sm font-semibold text-white">Menu</span>
+                <button
+                  onClick={() => setMobileNavOpen(false)}
+                  aria-label="Close navigation menu"
+                  className="grid h-8 w-8 place-items-center rounded-lg text-ink-muted hover:bg-surface-field hover:text-ink-2"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                </button>
+              </div>
+              {navLinks}
+            </nav>
+          </div>
+        )}
 
         <main className="min-w-0 flex-1 overflow-y-auto px-6 py-7 md:px-8">{children}</main>
 
