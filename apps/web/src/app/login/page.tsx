@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { loginSchema } from "@arutech/validation";
@@ -14,8 +14,20 @@ function LoginPage() {
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // L-5: beyond H-10's friendly message text, there was no indication of
+  // WHEN the limiter lifts — a user just had to guess when to try again.
+  // The server already sends a real Retry-After header (see ApiError's own
+  // doc comment); this counts it down live instead of leaving the generic
+  // message to sit there unchanged for a full minute.
+  const [retryAfter, setRetryAfter] = useState<number | null>(null);
   const redirectParam = searchParams.get("redirect");
   const registerHref = redirectParam ? `/register?redirect=${encodeURIComponent(redirectParam)}` : "/register";
+
+  useEffect(() => {
+    if (retryAfter === null || retryAfter <= 0) return;
+    const timer = setTimeout(() => setRetryAfter((s) => (s && s > 1 ? s - 1 : null)), 1000);
+    return () => clearTimeout(timer);
+  }, [retryAfter]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,7 +49,11 @@ function LoginPage() {
       setSession(res.user, res.accessToken, res.refreshToken);
       router.push(searchParams.get("redirect") || "/dashboard");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Login failed");
+      if (err instanceof ApiError && err.status === 429 && err.retryAfterSeconds) {
+        setRetryAfter(err.retryAfterSeconds);
+      } else {
+        setError(err instanceof ApiError ? err.message : "Login failed");
+      }
     } finally {
       setLoading(false);
     }
@@ -74,14 +90,24 @@ function LoginPage() {
           />
         </label>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {retryAfter !== null && retryAfter > 0 ? (
+          <p className="text-sm text-red-400">
+            Too many attempts. Try again in {retryAfter}s.
+          </p>
+        ) : (
+          error && <p className="text-sm text-red-400">{error}</p>
+        )}
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || (retryAfter !== null && retryAfter > 0)}
           className="w-full rounded-lg bg-brand-500 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
         >
-          {loading ? "Signing in…" : "Sign in"}
+          {retryAfter !== null && retryAfter > 0
+            ? `Try again in ${retryAfter}s`
+            : loading
+              ? "Signing in…"
+              : "Sign in"}
         </button>
 
         <p className="text-center text-sm text-slate-400">

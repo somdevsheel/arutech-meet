@@ -7,6 +7,12 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public requestId?: string,
+    /** L-5: NestJS's ThrottlerGuard already sets a real `Retry-After` header
+     * (in whole seconds) on every 429 — H-10 fixed the message text, but
+     * nothing ever surfaced this so a caller could show an actual countdown
+     * instead of a generic "try again later". Undefined for any non-429
+     * error, or a 429 response that somehow lacks the header. */
+    public retryAfterSeconds?: number,
   ) {
     super(message);
   }
@@ -90,7 +96,16 @@ export async function apiFetch<T = unknown>(
     } catch {
       // response had no JSON body
     }
-    throw new ApiError(response.status, message, requestId);
+    // L-5: ThrottlerGuard's own Retry-After header is already real seconds
+    // (see ApiError's own doc comment) — only meaningful on a 429.
+    const retryAfterHeader = response.status === 429 ? response.headers.get("retry-after") : null;
+    const parsedRetryAfter = retryAfterHeader ? Number(retryAfterHeader) : NaN;
+    throw new ApiError(
+      response.status,
+      message,
+      requestId,
+      Number.isFinite(parsedRetryAfter) ? parsedRetryAfter : undefined,
+    );
   }
 
   if (response.status === 204) return undefined as T;

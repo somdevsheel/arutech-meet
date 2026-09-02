@@ -49,6 +49,13 @@ async function bootstrap() {
   app.enableCors({
     origin: env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean),
     credentials: true,
+    // L-5: `Retry-After` isn't one of the handful of response headers a
+    // cross-origin fetch can read by default (Cache-Control, Content-*,
+    // Expires, Last-Modified, Pragma) — ThrottlerGuard has always sent a
+    // real one on every 429 (confirmed live: `Retry-After: 60`), but the
+    // browser was silently hiding it from `response.headers.get(...)`
+    // without this, no matter what the client-side code did with it.
+    exposedHeaders: ["Retry-After"],
   });
 
   // Per-route body/query validation is done via ZodValidationPipe (see
