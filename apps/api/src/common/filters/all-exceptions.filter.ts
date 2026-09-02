@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from "@nestjs/common";
+import { ThrottlerException } from "@nestjs/throttler";
 import type { Request, Response } from "express";
 import { ZodError } from "zod";
 import { Sentry } from "../../observability/sentry";
@@ -32,6 +33,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
       status = HttpStatus.BAD_REQUEST;
       code = "VALIDATION_ERROR";
       message = exception.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+    } else if (exception instanceof ThrottlerException) {
+      // H-10: ThrottlerException's own default message is the literal string
+      // "ThrottlerException: Too Many Requests" — with no override, that's
+      // exactly what `body` below resolves to (its getResponse() is a bare
+      // string, not `{ message }`), and it went straight to the user
+      // verbatim, on every throttled endpoint, with no indication of what
+      // happened or how long to wait. This must come before the generic
+      // HttpException branch below — ThrottlerException IS one.
+      status = HttpStatus.TOO_MANY_REQUESTS;
+      code = "RATE_LIMITED";
+      message = "Too many attempts. Please wait a minute and try again.";
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const body = exception.getResponse();
