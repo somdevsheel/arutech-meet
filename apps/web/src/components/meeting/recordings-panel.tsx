@@ -226,7 +226,28 @@ export function RecordingsPanel({
                       Generate transcript &amp; AI summary
                     </button>
                   )}
-                  {transcript && (
+                  {/* H-13: once ANY transcript row existed for this recording, this
+                      button always toggled `expanded` — even for a FAILED one, whose
+                      whole label promises "try again". There was no path left to
+                      actually call generateTranscript() again; clicking just
+                      silently expanded/collapsed a panel with nothing in it.
+                      generate() server-side already supports this correctly (a
+                      FAILED transcript never blocks a fresh one — only an
+                      in-flight PENDING/PROCESSING one does), so this only ever
+                      needed the client to actually call it again. Kept visible
+                      (not just moderator-only) same as before, since a non-
+                      moderator could already see this status — only the retry
+                      action itself is moderator-gated, matching the fresh-
+                      transcript "Generate" button above. */}
+                  {transcript && transcript.status === "FAILED" && isModerator && (
+                    <button onClick={() => generateTranscript(r.id)} className="text-brand-300">
+                      {TRANSCRIPT_STATUS_LABEL.FAILED}
+                    </button>
+                  )}
+                  {transcript && transcript.status === "FAILED" && !isModerator && (
+                    <span className="text-ink-muted">{TRANSCRIPT_STATUS_LABEL.FAILED}</span>
+                  )}
+                  {transcript && transcript.status !== "FAILED" && (
                     <button
                       onClick={() => setExpandedRecordingId(expanded ? null : r.id)}
                       className="text-brand-300"
