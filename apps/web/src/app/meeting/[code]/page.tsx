@@ -174,6 +174,16 @@ export default function MeetingPage() {
     return <CenteredMessage text="The host didn't let you into this meeting." isError />;
   }
 
+  // L-2: the preview fetch above already tells us this — MeetingsService.join
+  // throws this exact same "This meeting has ended" for ENDED/CANCELED, but
+  // only once someone actually clicked Join on a full camera/mic/name setup
+  // screen that was never going to work. Nothing else after this point in the
+  // lobby is relevant for a meeting that's already over, so this replaces it
+  // outright rather than just adding a banner on top.
+  if (phase === "lobby" && (preview?.status === "ENDED" || preview?.status === "CANCELED")) {
+    return <CenteredMessage text="This meeting has ended" isError />;
+  }
+
   const branding = preview?.branding ?? null;
 
   return (
