@@ -31,13 +31,30 @@ export default function AttendancePage() {
   const router = useRouter();
   const { user, accessToken, clear } = useAuthStore();
   const [rows, setRows] = useState<AttendanceRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  // M-4: the initial load and Recompute both used to have no error handling
+  // at all — a non-member's 403 (or a teacher-only Recompute from a
+  // non-teacher member) just rejected silently, leaving the page showing an
+  // empty table with "No attendance data yet — click Recompute", which both
+  // hides the real reason and suggests a fix (Recompute) that would fail
+  // the exact same way. Export CSV already handled this correctly (see
+  // downloadCsv below) — these two now follow the same pattern.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [recomputing, setRecomputing] = useState(false);
+  const [recomputeError, setRecomputeError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
   async function refresh() {
-    const data = await apiFetch<AttendanceRow[]>(`/class-sessions/${params.sessionId}/attendance`);
-    setRows(data);
+    try {
+      const data = await apiFetch<AttendanceRow[]>(`/class-sessions/${params.sessionId}/attendance`);
+      setRows(data);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(err instanceof ApiError ? err.message : "Couldn't load attendance");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -70,11 +87,14 @@ export default function AttendancePage() {
 
   async function recompute() {
     setRecomputing(true);
+    setRecomputeError(null);
     try {
       await apiFetch(`/class-sessions/${params.sessionId}/attendance/recompute`, {
         method: "POST",
       });
       await refresh();
+    } catch (err) {
+      setRecomputeError(err instanceof ApiError ? err.message : "Couldn't recompute attendance");
     } finally {
       setRecomputing(false);
     }
@@ -124,45 +144,52 @@ export default function AttendancePage() {
               </a>
             </div>
           </div>
+          {recomputeError && <p className="mt-2 text-right text-xs text-danger">{recomputeError}</p>}
           {exportError && <p className="mt-2 text-right text-xs text-danger">{exportError}</p>}
         </div>
 
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-surface-border text-left text-xs uppercase text-ink-muted">
-              <th className="py-2">Student</th>
-              <th className="py-2">Joined</th>
-              <th className="py-2">Left</th>
-              <th className="py-2">Duration</th>
-              <th className="py-2">Rejoins</th>
-              <th className="py-2">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.userId} className="border-b border-surface-border/50">
-                <td className="py-2 text-white">{r.user.displayName}</td>
-                <td className="py-2 text-ink-muted">
-                  {r.joinedAt ? new Date(r.joinedAt).toLocaleTimeString() : "—"}
-                </td>
-                <td className="py-2 text-ink-muted">
-                  {r.leftAt ? new Date(r.leftAt).toLocaleTimeString() : "—"}
-                </td>
-                <td className="py-2 text-ink-muted">{Math.round(r.durationSeconds / 60)} min</td>
-                <td className="py-2 text-ink-muted">{r.rejoinCount}</td>
-                <td className={`py-2 font-medium ${STATUS_COLOR[r.status]}`}>{r.status}</td>
+        {loadError ? (
+          <p className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-6 text-center text-sm text-danger">
+            {loadError}
+          </p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-surface-border text-left text-xs uppercase text-ink-muted">
+                <th className="py-2">Student</th>
+                <th className="py-2">Joined</th>
+                <th className="py-2">Left</th>
+                <th className="py-2">Duration</th>
+                <th className="py-2">Rejoins</th>
+                <th className="py-2">Status</th>
               </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={6} className="py-6 text-center text-ink-muted">
-                  No attendance data yet — click Recompute after the session has had participants
-                  join.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.userId} className="border-b border-surface-border/50">
+                  <td className="py-2 text-white">{r.user.displayName}</td>
+                  <td className="py-2 text-ink-muted">
+                    {r.joinedAt ? new Date(r.joinedAt).toLocaleTimeString() : "—"}
+                  </td>
+                  <td className="py-2 text-ink-muted">
+                    {r.leftAt ? new Date(r.leftAt).toLocaleTimeString() : "—"}
+                  </td>
+                  <td className="py-2 text-ink-muted">{Math.round(r.durationSeconds / 60)} min</td>
+                  <td className="py-2 text-ink-muted">{r.rejoinCount}</td>
+                  <td className={`py-2 font-medium ${STATUS_COLOR[r.status]}`}>{r.status}</td>
+                </tr>
+              ))}
+              {!loading && rows.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-6 text-center text-ink-muted">
+                    No attendance data yet — click Recompute after the session has had participants
+                    join.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
       </div>
     </AppShell>
   );
