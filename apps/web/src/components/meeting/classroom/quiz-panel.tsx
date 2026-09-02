@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { WS_EVENTS } from "@arutech/types";
-import { apiFetch } from "@/lib/api-client";
+import { apiFetch, ApiError } from "@/lib/api-client";
 
 type QuestionType = "MULTIPLE_CHOICE" | "TRUE_FALSE" | "SHORT_ANSWER";
 
@@ -84,6 +84,7 @@ export function QuizPanel({
   const [shortAnswerCorrect, setShortAnswerCorrect] = useState("");
   const [points, setPoints] = useState(1);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Catch-up fetch — without this, only whoever already had this tab open
   // at the exact moment a question was published (or a late joiner) ever
@@ -125,11 +126,22 @@ export function QuizPanel({
   }, [socket]);
 
   async function createQuiz() {
-    if (!question.trim()) return;
+    // L-3: every one of these was a silent `return` before — a Publish
+    // click that visibly did nothing, no error text, no indication
+    // anything had even registered. Same missing-feedback gap PollsPanel's
+    // own createPoll had.
+    setCreateError(null);
+    if (!question.trim()) {
+      setCreateError("Enter a question first.");
+      return;
+    }
     let body: Record<string, unknown>;
     if (questionType === "MULTIPLE_CHOICE") {
       const cleanOptions = options.map((o) => o.trim()).filter(Boolean);
-      if (cleanOptions.length < 2) return;
+      if (cleanOptions.length < 2) {
+        setCreateError("Add at least 2 options.");
+        return;
+      }
       body = {
         type: "MULTIPLE_CHOICE",
         question: question.trim(),
@@ -139,7 +151,10 @@ export function QuizPanel({
     } else if (questionType === "TRUE_FALSE") {
       body = { type: "TRUE_FALSE", question: question.trim(), points, correctAnswer: trueFalseAnswer };
     } else {
-      if (!shortAnswerCorrect.trim()) return;
+      if (!shortAnswerCorrect.trim()) {
+        setCreateError("Enter the correct answer.");
+        return;
+      }
       body = {
         type: "SHORT_ANSWER",
         question: question.trim(),
@@ -160,6 +175,8 @@ export function QuizPanel({
       setTrueFalseAnswer(true);
       setShortAnswerCorrect("");
       setPoints(1);
+    } catch (err) {
+      setCreateError(err instanceof ApiError ? err.message : "Failed to publish question");
     } finally {
       setCreating(false);
     }
@@ -279,12 +296,13 @@ export function QuizPanel({
               className="input w-16"
             />
           </label>
+          {createError && <p className="text-xs text-danger">{createError}</p>}
           <button
             onClick={createQuiz}
             disabled={creating}
             className="w-full rounded bg-brand-500 py-2 text-xs font-medium text-white disabled:opacity-50"
           >
-            Publish question
+            {creating ? "Publishing…" : "Publish question"}
           </button>
         </div>
       )}

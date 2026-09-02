@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { WS_EVENTS } from "@arutech/types";
-import { apiFetch } from "@/lib/api-client";
+import { apiFetch, ApiError } from "@/lib/api-client";
 
 interface PollOption {
   id: string;
@@ -41,6 +41,7 @@ export function PollsPanel({
   const [options, setOptions] = useState(["", ""]);
   const [multi, setMulti] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<Poll[]>(`/meetings/${meetingId}/polls`).then(setPolls);
@@ -67,8 +68,19 @@ export function PollsPanel({
   }, [socket]);
 
   async function createPoll() {
+    // L-3: this used to just `return` here — a click that visibly did
+    // nothing at all, no error text, no indication anything had even
+    // registered. Same missing-feedback gap QuizPanel's own createQuiz had.
+    setCreateError(null);
     const cleanOptions = options.map((o) => o.trim()).filter(Boolean);
-    if (!question.trim() || cleanOptions.length < 2) return;
+    if (!question.trim()) {
+      setCreateError("Enter a question first.");
+      return;
+    }
+    if (cleanOptions.length < 2) {
+      setCreateError("Add at least 2 options.");
+      return;
+    }
     setCreating(true);
     try {
       await apiFetch(`/meetings/${meetingId}/polls`, {
@@ -83,6 +95,8 @@ export function PollsPanel({
       setQuestion("");
       setOptions(["", ""]);
       setMulti(false);
+    } catch (err) {
+      setCreateError(err instanceof ApiError ? err.message : "Failed to publish poll");
     } finally {
       setCreating(false);
     }
@@ -140,12 +154,13 @@ export function PollsPanel({
               Multiple choice
             </label>
           </div>
+          {createError && <p className="text-xs text-danger">{createError}</p>}
           <button
             onClick={createPoll}
             disabled={creating}
             className="w-full rounded bg-brand-500 py-2 text-xs font-medium text-white disabled:opacity-50"
           >
-            Publish poll
+            {creating ? "Publishing…" : "Publish poll"}
           </button>
         </div>
       )}
