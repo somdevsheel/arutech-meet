@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, usePathname } from "next/navigation";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
@@ -52,6 +53,7 @@ function formatBytes(s: string) {
  * email, see who's pending, change roles, remove people. */
 export default function OrganizationDetailPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const params = useParams<{ id: string }>();
   const orgId = params.id;
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
@@ -112,7 +114,7 @@ export default function OrganizationDetailPage() {
   useEffect(() => {
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     refresh();

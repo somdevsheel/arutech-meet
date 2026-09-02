@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
@@ -40,6 +41,7 @@ function greeting(hour: number) {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -63,7 +65,7 @@ export default function DashboardPage() {
     // user to /login every time they reload this page.
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     refresh();

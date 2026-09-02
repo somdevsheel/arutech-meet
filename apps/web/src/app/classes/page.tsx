@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
@@ -17,6 +18,7 @@ interface ClassSummary {
 
 export default function ClassesPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
   const [classes, setClasses] = useState<ClassSummary[]>([]);
   const [title, setTitle] = useState("");
@@ -29,11 +31,11 @@ export default function ClassesPage() {
     // must wait for it before treating a fresh page load as "logged out".
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     apiFetch<ClassSummary[]>("/classes").then(setClasses);
-  }, [hasHydrated, accessToken, router]);
+  }, [hasHydrated, accessToken, router, pathname]);
 
   async function createClass() {
     if (!title.trim()) return;

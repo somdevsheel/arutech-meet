@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 import type { CalendarEvent } from "@arutech/types";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
@@ -63,6 +64,7 @@ function eventTime(iso: string) {
  * display — every occurrence still opens the exact same meeting room. */
 export default function CalendarPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
   const [view, setView] = useState<ViewMode>("month");
   const [cursor, setCursor] = useState<Date | null>(null);
@@ -78,9 +80,9 @@ export default function CalendarPage() {
   useEffect(() => {
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
     }
-  }, [hasHydrated, accessToken, router]);
+  }, [hasHydrated, accessToken, router, pathname]);
 
   useEffect(() => {
     if (!cursor || !accessToken) return;

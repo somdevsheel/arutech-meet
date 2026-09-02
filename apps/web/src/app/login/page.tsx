@@ -14,6 +14,8 @@ function LoginPage() {
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const redirectParam = searchParams.get("redirect");
+  const registerHref = redirectParam ? `/register?redirect=${encodeURIComponent(redirectParam)}` : "/register";
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -84,7 +86,14 @@ function LoginPage() {
 
         <p className="text-center text-sm text-slate-400">
           Don&apos;t have an account?{" "}
-          <Link href="/register" className="text-brand-300 hover:text-brand-200">
+          {/* M-9: carries the same `redirect` this page itself arrived with
+              — someone who followed a deep link but doesn't have an account
+              yet shouldn't lose it just for clicking through to register
+              first. */}
+          <Link
+            href={registerHref}
+            className="text-brand-300 hover:text-brand-200"
+          >
             Create one
           </Link>
         </p>

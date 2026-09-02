@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 import type { UserPresenceStatus } from "@arutech/types";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
@@ -76,6 +77,7 @@ function initialsOf(name: string) {
  * layered on top of that derived list. */
 export default function ContactsPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
   const [contacts, setContacts] = useState<Contact[] | null>(null);
   const [blocked, setBlocked] = useState<BlockedContact[] | null>(null);
@@ -105,7 +107,7 @@ export default function ContactsPage() {
   useEffect(() => {
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     refreshContacts();

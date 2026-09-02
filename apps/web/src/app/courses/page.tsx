@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
@@ -18,6 +19,7 @@ interface CourseSummary {
 
 export default function CoursesPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
   const [courses, setCourses] = useState<CourseSummary[]>([]);
   const [title, setTitle] = useState("");
@@ -28,11 +30,11 @@ export default function CoursesPage() {
   useEffect(() => {
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     apiFetch<CourseSummary[]>("/courses").then(setCourses);
-  }, [hasHydrated, accessToken, router]);
+  }, [hasHydrated, accessToken, router, pathname]);
 
   async function createCourse() {
     if (!title.trim()) return;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   WS_EVENTS,
   type ChatMessagePayload,
@@ -20,6 +20,7 @@ import { formatLastSeen, formatLastSeenPhrase } from "@/lib/format-last-seen";
 import { PRESENCE_STATUS_META } from "@/lib/presence";
 import { FullPageLoading } from "@/components/full-page-loading";
 import { Avatar } from "@/components/avatar";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const TYPING_STOP_DELAY_MS = 2500;
@@ -122,6 +123,7 @@ async function uploadRoomAttachment(chatRoomId: string, file: File): Promise<str
 
 function TeamChatPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
   const [rooms, setRooms] = useState<RoomSummary[] | null>(null);
@@ -168,7 +170,7 @@ function TeamChatPage() {
   useEffect(() => {
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     apiFetch<RoomSummary[]>("/chat-rooms").then((data) => {

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
@@ -28,6 +29,7 @@ function formatDuration(seconds: number | null) {
 
 export default function RecordingsPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
   const [recordings, setRecordings] = useState<Recording[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,13 +38,13 @@ export default function RecordingsPage() {
   useEffect(() => {
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     apiFetch<Recording[]>("/recordings")
       .then(setRecordings)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load recordings"));
-  }, [hasHydrated, accessToken, router]);
+  }, [hasHydrated, accessToken, router, pathname]);
 
   async function play(rec: Recording) {
     setOpeningId(rec.id);

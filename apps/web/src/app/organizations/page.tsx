@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
@@ -20,6 +21,7 @@ interface OrgSummary {
  * user can create one and invite real people into it by email. */
 export default function OrganizationsPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
   const [orgs, setOrgs] = useState<OrgSummary[] | null>(null);
   const [creating, setCreating] = useState(false);
@@ -34,7 +36,7 @@ export default function OrganizationsPage() {
   useEffect(() => {
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     refresh();

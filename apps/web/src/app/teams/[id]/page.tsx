@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, usePathname } from "next/navigation";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 import { WS_EVENTS } from "@arutech/types";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
@@ -31,6 +32,7 @@ interface TeamMemberRow {
  * client-side pattern Stage 23 already shipped for Team Chat groups). */
 export default function TeamDetailPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const params = useParams<{ id: string }>();
   const teamId = params.id;
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
@@ -61,7 +63,7 @@ export default function TeamDetailPage() {
   useEffect(() => {
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     refresh();

@@ -22,6 +22,11 @@ function RegisterPage() {
   });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // M-9: same as LoginPage's own registerHref, the other direction — someone
+  // who followed a deep link, landed here first (or bounced back to sign in
+  // to an existing account instead), shouldn't lose it either.
+  const redirectParam = searchParams.get("redirect");
+  const loginHref = redirectParam ? `/login?redirect=${encodeURIComponent(redirectParam)}` : "/login";
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -101,7 +106,7 @@ function RegisterPage() {
 
         <p className="text-center text-sm text-slate-400">
           Already have an account?{" "}
-          <Link href="/login" className="text-brand-300 hover:text-brand-200">
+          <Link href={loginHref} className="text-brand-300 hover:text-brand-200">
             Sign in
           </Link>
         </p>

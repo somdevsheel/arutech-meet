@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 import { changePasswordSchema } from "@arutech/validation";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
@@ -20,6 +21,7 @@ interface Session {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, accessToken, clear, hasHydrated, setSession } = useAuthStore();
   const [displayName, setDisplayName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
@@ -42,7 +44,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     if (user) {
@@ -52,7 +54,7 @@ export default function SettingsPage() {
     apiFetch<Session[]>("/users/me/sessions")
       .then(setSessions)
       .catch(() => setSessions([]));
-  }, [hasHydrated, accessToken, user, router]);
+  }, [hasHydrated, accessToken, user, router, pathname]);
 
   async function save() {
     if (!user || !accessToken) return;

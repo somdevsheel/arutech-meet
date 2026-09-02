@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
 import { FullPageLoading } from "@/components/full-page-loading";
+import { loginRedirectUrl } from "@/lib/login-redirect";
 
 const NAV = [
   { href: "/admin", label: "Dashboard" },
@@ -38,13 +39,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     // hard refresh on /admin would otherwise always bounce a real admin out.
     if (!hasHydrated) return;
     if (!accessToken) {
-      router.replace("/login");
+      router.replace(loginRedirectUrl(pathname));
       return;
     }
     if (user && user.systemRole !== "ADMIN") {
       router.replace("/dashboard");
     }
-  }, [hasHydrated, user, accessToken, router]);
+  }, [hasHydrated, user, accessToken, router, pathname]);
 
   if (!hasHydrated || !user || user.systemRole !== "ADMIN") return <FullPageLoading />;
 
