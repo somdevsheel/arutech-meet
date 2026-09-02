@@ -74,6 +74,29 @@ export function LocalRecordingProvider({
     };
   }, []);
 
+  // M-6: closing the tab (or hard-refreshing, or quitting the browser) mid-
+  // recording gave no warning at all — the buffered chunks live only in
+  // `chunksRef` and are only ever turned into a downloadable file by
+  // MediaRecorder's `onstop` handler, which needs a live JS/DOM context to
+  // run; an actual tab close destroys that context before it gets the
+  // chance, silently losing everything recorded so far. This is distinct
+  // from leaving the meeting via the in-app Leave button, which unmounts
+  // this provider and already runs `stopInternal()` (and therefore a real
+  // `recorder.stop()` → `onstop` → download) through React's normal cleanup
+  // — only an actual browser-level unload skips that. `beforeunload` is the
+  // one hook that can still intervene at that point, via the browser's own
+  // native "leave site?" confirmation (browsers ignore any custom message
+  // and show their own wording — `returnValue` merely triggers it).
+  useEffect(() => {
+    if (state !== "recording") return;
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [state]);
+
   function drawFrame() {
     const canvas = canvasRef.current;
     const root = document.querySelector("[data-video-grid-root]");
