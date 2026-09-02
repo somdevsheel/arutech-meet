@@ -135,6 +135,11 @@ function TeamChatPage() {
   const [startingMeeting, setStartingMeeting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [forwardingId, setForwardingId] = useState<string | null>(null);
+  // CS-3: forwarding a message actually worked — the request landed
+  // correctly server-side — but the picker just closed with nothing telling
+  // the user their click had done anything. This flashes a real, brief
+  // confirmation right on the message that was forwarded.
+  const [justForwardedId, setJustForwardedId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   // H-6: leaving a group used to be able to orphan it (the sole admin
   // leaving with no guard at all, no error, nothing) — the server now
@@ -663,12 +668,17 @@ function TeamChatPage() {
                     currentUserId={user.id}
                     isEditing={editingId === m.id}
                     isForwarding={forwardingId === m.id}
+                    justForwarded={justForwardedId === m.id}
                     onStartEdit={() => setEditingId(m.id)}
                     onCancelEdit={() => setEditingId(null)}
                     onSaveEdit={(body) => editMessage(m.id, body)}
                     onDelete={() => deleteMessage(m.id)}
                     onStartForward={() => setForwardingId((cur) => (cur === m.id ? null : m.id))}
-                    onForwarded={() => setForwardingId(null)}
+                    onForwarded={() => {
+                      setForwardingId(null);
+                      setJustForwardedId(m.id);
+                      setTimeout(() => setJustForwardedId((cur) => (cur === m.id ? null : cur)), 2000);
+                    }}
                   />
                 ))}
                 {typingUserIds.size > 0 && (
@@ -819,6 +829,7 @@ function RoomChatMessage({
   currentUserId,
   isEditing,
   isForwarding,
+  justForwarded,
   onStartEdit,
   onCancelEdit,
   onSaveEdit,
@@ -831,6 +842,7 @@ function RoomChatMessage({
   currentUserId: string;
   isEditing: boolean;
   isForwarding: boolean;
+  justForwarded: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onSaveEdit: (body: string) => Promise<void>;
@@ -912,6 +924,21 @@ function RoomChatMessage({
               downloadPath={`/chat-rooms/${chatRoomId}/files/${message.attachment.fileId}/download`}
               attachment={message.attachment}
             />
+          )}
+
+          {/* CS-3: deliberately OUTSIDE the opacity-0 hover-only actions row
+              below — a confirmation that only shows up while already
+              hovering (which the cursor may well have left, having just
+              clicked a room in the forward picker) wouldn't actually
+              confirm anything. This is visible unconditionally for its
+              brief 2s window, then removes itself. */}
+          {justForwarded && (
+            <p className="mt-1 flex items-center gap-1 text-[10px] text-success">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="m5 12 5 5 9-9" />
+              </svg>
+              Forwarded
+            </p>
           )}
 
           <div className="mt-1 flex gap-2 text-[10px] text-ink-muted2 opacity-0 transition group-hover:opacity-100">
