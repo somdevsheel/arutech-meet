@@ -101,8 +101,19 @@ export function useMeetingSocket(meetingId: string | null, authToken: string | n
       setLastModeration({ type: "camera_disable", participantId: p.participantId });
     const onRemove = (p: { participantId: string }) =>
       setLastModeration({ type: "remove", participantId: p.participantId });
-    const onRoleChange = (p: { participantId: string; role: string }) =>
+    // M-7: this used to only ever set `lastModeration` (which nothing here
+    // reads for role changes — only "remove" is checked anywhere) and never
+    // touched `participants` at all, unlike every other per-participant
+    // moderation event (see onHandRaise/onHandLower just below). The
+    // Participants panel reads `p.role` straight off this same array, so a
+    // promotion never showed up there — or anywhere else derived from a
+    // participant's role — until that participant left and rejoined.
+    const onRoleChange = (p: { participantId: string; role: string }) => {
       setLastModeration({ type: "role_change", participantId: p.participantId, role: p.role });
+      setParticipants((prev) =>
+        prev.map((x) => (x.participantId === p.participantId ? { ...x, role: p.role } : x)),
+      );
+    };
     const onMeetingEnded = () => setMeetingEnded(true);
     const onWaitingRoomAdmit = (p: { participantId: string }) =>
       setWaitingAdmitted(p.participantId);

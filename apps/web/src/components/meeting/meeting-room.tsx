@@ -93,37 +93,6 @@ export function MeetingRoom({
   const [reportingParticipant, setReportingParticipant] =
     useState<ParticipantPresencePayload | null>(null);
   const [reportSent, setReportSent] = useState(false);
-  const isModerator = MODERATOR_ROLES.has(role);
-  // Narrower than isModerator on purpose — CO_HOST is a moderator role but
-  // doesn't hold `meeting.end` in the permissions matrix (only OWNER/HOST/
-  // TEACHER do), and PermissionService enforces that same check server-side
-  // (see MeetingsController's POST /:id/end) — this only decides whether to
-  // render the button, not whether the action is allowed.
-  const canEndMeeting = can(role as ParticipantRole, "meeting.end");
-  // Not gated by featureFlags.LIVE_CAPTIONS here on purpose: this only
-  // decides whether the *start* control shows. If captions are somehow
-  // already running (started before an admin flipped the flag off
-  // mid-meeting), captionsActive alone still lets every participant see the
-  // real, live hide/show toggle below — the flag only blocks starting a new
-  // session, never hides a genuinely active one.
-  const canManageCaptions =
-    can(role as ParticipantRole, "captions.manage") && featureFlags.LIVE_CAPTIONS;
-  // Broader than isModerator on purpose, the other direction from
-  // canEndMeeting above: whiteboard.edit is granted to STUDENT/PARTICIPANT
-  // too, only GUEST lacks it. See ClassroomPanel's own comment on this prop
-  // for what breaks if this is hardcoded true instead.
-  const canEditWhiteboard = can(role as ParticipantRole, "whiteboard.edit");
-
-  async function endMeeting() {
-    try {
-      await apiFetch(`/meetings/${meetingId}/end`, { method: "POST" });
-    } catch {
-      // Ending genuinely failed server-side (network/permission/already-ended)
-      // — don't navigate the host away from a meeting that's still running.
-      return;
-    }
-    onLeave();
-  }
 
   const {
     participants,
@@ -143,6 +112,50 @@ export function MeetingRoom({
     dismissReaction,
     socket,
   } = useMeetingSocket(meetingId, authToken);
+
+  // M-7: `role` above is a one-time snapshot from the join response — it
+  // never updated when someone (including this participant themselves) was
+  // promoted/demoted mid-meeting, so a freshly-promoted co-host couldn't
+  // actually use any of the moderator controls this same render is about to
+  // gate behind `isModerator`/`can(...)` without leaving and rejoining.
+  // `participants` (from useMeetingSocket) already carries this
+  // participant's own live row — including role — and now stays correct in
+  // real time (see that hook's onRoleChange), so it's the one source of
+  // truth for "what can I actually do right now", falling back to the
+  // join-time snapshot only for the brief window before that first
+  // self-presence event arrives.
+  const effectiveRole = participants.find((p) => p.participantId === participantId)?.role ?? role;
+  const isModerator = MODERATOR_ROLES.has(effectiveRole);
+  // Narrower than isModerator on purpose — CO_HOST is a moderator role but
+  // doesn't hold `meeting.end` in the permissions matrix (only OWNER/HOST/
+  // TEACHER do), and PermissionService enforces that same check server-side
+  // (see MeetingsController's POST /:id/end) — this only decides whether to
+  // render the button, not whether the action is allowed.
+  const canEndMeeting = can(effectiveRole as ParticipantRole, "meeting.end");
+  // Not gated by featureFlags.LIVE_CAPTIONS here on purpose: this only
+  // decides whether the *start* control shows. If captions are somehow
+  // already running (started before an admin flipped the flag off
+  // mid-meeting), captionsActive alone still lets every participant see the
+  // real, live hide/show toggle below — the flag only blocks starting a new
+  // session, never hides a genuinely active one.
+  const canManageCaptions =
+    can(effectiveRole as ParticipantRole, "captions.manage") && featureFlags.LIVE_CAPTIONS;
+  // Broader than isModerator on purpose, the other direction from
+  // canEndMeeting above: whiteboard.edit is granted to STUDENT/PARTICIPANT
+  // too, only GUEST lacks it. See ClassroomPanel's own comment on this prop
+  // for what breaks if this is hardcoded true instead.
+  const canEditWhiteboard = can(effectiveRole as ParticipantRole, "whiteboard.edit");
+
+  async function endMeeting() {
+    try {
+      await apiFetch(`/meetings/${meetingId}/end`, { method: "POST" });
+    } catch {
+      // Ending genuinely failed server-side (network/permission/already-ended)
+      // — don't navigate the host away from a meeting that's still running.
+      return;
+    }
+    onLeave();
+  }
 
   // Derived from the server-broadcast presence list, not separate local state,
   // so it stays correct whether the toggle came from this tab or a host
