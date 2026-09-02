@@ -40,6 +40,13 @@ export function ScheduleMeetingModal({
   // too (unchanged behavior for anyone who doesn't touch it), but now it's
   // an actual, visible choice instead of an invisible one.
   const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(true);
+  // H-11: meeting passwords are fully built and enforced server-side
+  // (createMeetingSchema already takes one, join-time verification already
+  // works end to end) but no UI anywhere ever let a host actually set one —
+  // confirmed by grepping every settings component in the app for
+  // `password`. This is the fix, alongside the same field in Personal Room
+  // Settings.
+  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,6 +64,7 @@ export function ScheduleMeetingModal({
           scheduledStart: scheduledStart.toISOString(),
           scheduledEnd: scheduledEnd.toISOString(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          password: password.trim() || undefined,
           settings: { waitingRoomEnabled },
         }),
       });
@@ -109,6 +117,17 @@ export function ScheduleMeetingModal({
           checked={waitingRoomEnabled}
           onChange={setWaitingRoomEnabled}
         />
+
+        <Field label="Password (optional)">
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Leave blank for no password"
+            className="input"
+            autoComplete="new-password"
+          />
+        </Field>
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 

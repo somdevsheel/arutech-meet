@@ -26,14 +26,18 @@ const MEETING = {
 function makeService(overrides?: {
   meeting?: Partial<Omit<typeof MEETING, "settings">> & { settings?: Partial<typeof MEETING.settings> };
   hasBlocked?: boolean;
+  listMineResult?: unknown[];
+  personalRoomExisting?: unknown;
 }) {
   const meeting = { ...MEETING, ...overrides?.meeting, settings: { ...MEETING.settings, ...overrides?.meeting?.settings } };
   const prisma = {
     client: {
       meeting: {
         findUnique: jest.fn().mockResolvedValue(meeting),
-        update: jest.fn().mockResolvedValue({ ...meeting, status: "ENDED" }),
-        create: jest.fn().mockResolvedValue({ ...meeting, code: "abc-def-ghi" }),
+        findFirst: jest.fn().mockResolvedValue(overrides?.personalRoomExisting ?? null),
+        findMany: jest.fn().mockResolvedValue(overrides?.listMineResult ?? [meeting]),
+        update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...meeting, ...data, status: data.status ?? "ENDED" })),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...meeting, ...data, code: "abc-def-ghi" })),
       },
       membership: {
         findUnique: jest.fn().mockResolvedValue({ orgId: "org-1", userId: "user-1", role: "MEMBER" }),
@@ -105,6 +109,24 @@ describe("MeetingsService", () => {
       (prisma.client.membership.findUnique as jest.Mock).mockResolvedValue(null);
       await service.create("user-1", BASE_DTO);
       expect(organizations.assertMeetingConcurrencyOk).not.toHaveBeenCalled();
+    });
+
+    // H-11's actual bug was "no UI to set one", but fixing that required
+    // knowing whether a password is currently set without ever sending the
+    // hash itself to the client — every meeting object returned from an
+    // authenticated endpoint must go through sanitizeMeeting.
+    it("never returns the password hash, and reports requiresPassword: true when one is set", async () => {
+      const { service } = makeService();
+      const result = await service.create("user-1", { ...BASE_DTO, password: "secret123" });
+      expect(result).not.toHaveProperty("passwordHash");
+      expect(result.requiresPassword).toBe(true);
+    });
+
+    it("reports requiresPassword: false when no password is set", async () => {
+      const { service } = makeService();
+      const result = await service.create("user-1", BASE_DTO);
+      expect(result).not.toHaveProperty("passwordHash");
+      expect(result.requiresPassword).toBe(false);
     });
 
     it("propagates a concurrency-limit rejection instead of creating the meeting", async () => {
@@ -179,6 +201,16 @@ describe("MeetingsService", () => {
       expect(data.passwordHash).toBeUndefined();
     });
 
+    it("never returns the password hash in its own response either", async () => {
+      const { service } = makeService();
+      const result = await service.updateSettings(MEETING.id, "owner-1", {
+        ...BASE_DTO,
+        password: "newSecret1",
+      });
+      expect(result).not.toHaveProperty("passwordHash");
+      expect(result.requiresPassword).toBe(true);
+    });
+
     it("writes timezone and recurrence fields through to the update", async () => {
       const { service, prisma } = makeService();
       await service.updateSettings(MEETING.id, "owner-1", {
@@ -213,6 +245,22 @@ describe("MeetingsService", () => {
       const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
       expect(data).not.toHaveProperty("type");
       expect(data).not.toHaveProperty("orgId");
+    });
+  });
+
+  describe("listMine", () => {
+    it("strips the password hash from every meeting in the list", async () => {
+      const { service, prisma } = makeService({
+        listMineResult: [
+          { ...MEETING, id: "meeting-a", passwordHash: "hash-a" },
+          { ...MEETING, id: "meeting-b", passwordHash: null },
+        ],
+      });
+      const result = await service.listMine("user-1");
+      expect(prisma.client.meeting.findMany).toHaveBeenCalled();
+      expect(result.every((m) => !("passwordHash" in m))).toBe(true);
+      expect(result.find((m) => m.id === "meeting-a")?.requiresPassword).toBe(true);
+      expect(result.find((m) => m.id === "meeting-b")?.requiresPassword).toBe(false);
     });
   });
 

@@ -22,6 +22,7 @@ interface Meeting {
   createdAt: string;
   scheduledStart: string | null;
   scheduledEnd: string | null;
+  requiresPassword?: boolean;
   settings?: {
     waitingRoomEnabled: boolean;
     allowChat: boolean;
@@ -229,9 +230,10 @@ export default function DashboardPage() {
           <PersonalRoomSettingsModal
             meetingId={personalRoom.id}
             initial={personalRoom.settings}
+            requiresPassword={personalRoom.requiresPassword ?? false}
             onClose={() => setShowRoomSettings(false)}
-            onSaved={(settings) => {
-              setPersonalRoom((prev) => (prev ? { ...prev, settings } : prev));
+            onSaved={(settings, requiresPassword) => {
+              setPersonalRoom((prev) => (prev ? { ...prev, settings, requiresPassword } : prev));
               setShowRoomSettings(false);
             }}
           />

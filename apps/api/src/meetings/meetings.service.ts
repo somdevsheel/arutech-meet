@@ -46,6 +46,18 @@ export class MeetingsService {
     private readonly tokens: TokenService,
   ) {}
 
+  /** Never send the password hash itself to a client — every meeting object
+   * returned from an authenticated endpoint (as opposed to used internally,
+   * e.g. to verify a join attempt) must go through this first. Mirrors the
+   * shape the public join-preview endpoint (findByCode) already exposes:
+   * `requiresPassword`, not the hash. */
+  private sanitizeMeeting<T extends { passwordHash: string | null }>(
+    meeting: T,
+  ): Omit<T, "passwordHash"> & { requiresPassword: boolean } {
+    const { passwordHash, ...rest } = meeting;
+    return { ...rest, requiresPassword: Boolean(passwordHash) };
+  }
+
   async create(userId: string, dto: CreateMeetingDto) {
     if (dto.orgId) {
       const membership = await this.prisma.client.membership.findUnique({
@@ -95,7 +107,7 @@ export class MeetingsService {
       include: { settings: true },
     });
 
-    return meeting;
+    return this.sanitizeMeeting(meeting);
   }
 
   /** "My personal meeting room" — a Meeting that's created once per user and
@@ -107,10 +119,10 @@ export class MeetingsService {
       where: { ownerId: userId, isPersonalRoom: true, deletedAt: null },
       include: { settings: true },
     });
-    if (existing) return existing;
+    if (existing) return this.sanitizeMeeting(existing);
 
     const code = generateMeetingCode();
-    return this.prisma.client.meeting.create({
+    const created = await this.prisma.client.meeting.create({
       data: {
         code,
         title: "Personal meeting room",
@@ -136,6 +148,7 @@ export class MeetingsService {
       },
       include: { settings: true },
     });
+    return this.sanitizeMeeting(created);
   }
 
   async findByCode(code: string) {
@@ -160,7 +173,7 @@ export class MeetingsService {
   }
 
   async listMine(userId: string) {
-    return this.prisma.client.meeting.findMany({
+    const meetings = await this.prisma.client.meeting.findMany({
       where: {
         deletedAt: null,
         OR: [{ ownerId: userId }, { participants: { some: { userId } } }],
@@ -169,6 +182,7 @@ export class MeetingsService {
       orderBy: { createdAt: "desc" },
       take: 50,
     });
+    return meetings.map((m) => this.sanitizeMeeting(m));
   }
 
   async updateSettings(meetingId: string, userId: string, dto: UpdateMeetingDto) {
@@ -196,7 +210,7 @@ export class MeetingsService {
     // would need `status` (computed from `type` at creation) reconciled
     // too. Neither of those belongs silently bolted onto a "settings" update
     // — they'd need their own explicit endpoint if ever needed.
-    return this.prisma.client.meeting.update({
+    const updated = await this.prisma.client.meeting.update({
       where: { id: meeting.id },
       data: {
         title: dto.title,
@@ -214,6 +228,7 @@ export class MeetingsService {
       },
       include: { settings: true },
     });
+    return this.sanitizeMeeting(updated);
   }
 
   async end(meetingId: string, userId: string) {
