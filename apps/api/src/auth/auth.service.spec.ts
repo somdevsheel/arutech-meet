@@ -239,4 +239,48 @@ describe("AuthService", () => {
       });
     });
   });
+
+  // M-2: Settings had no way to change your password — this is the actual
+  // fix, so it gets real coverage, mirroring resetPassword's tests above.
+  describe("changePassword", () => {
+    it("rejects an incorrect current password", async () => {
+      const prisma = makePrismaMock();
+      const passwordHash = await argon2.hash("CorrectPassword1");
+      (prisma.client.user.findUnique as jest.Mock).mockResolvedValue({ id: "u1", passwordHash });
+      const service = new AuthService(prisma, makeTokensMock(), makeMailMock(), makeEnv());
+
+      await expect(service.changePassword("u1", "WrongPassword1", "NewPassword1")).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(prisma.client.user.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unknown user", async () => {
+      const prisma = makePrismaMock();
+      (prisma.client.user.findUnique as jest.Mock).mockResolvedValue(null);
+      const service = new AuthService(prisma, makeTokensMock(), makeMailMock(), makeEnv());
+
+      await expect(service.changePassword("nobody", "whatever", "NewPassword1")).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+    });
+
+    it("updates the password and revokes every session given the correct current password", async () => {
+      const prisma = makePrismaMock();
+      const passwordHash = await argon2.hash("CorrectPassword1");
+      (prisma.client.user.findUnique as jest.Mock).mockResolvedValue({ id: "u1", passwordHash });
+      const service = new AuthService(prisma, makeTokensMock(), makeMailMock(), makeEnv());
+
+      await service.changePassword("u1", "CorrectPassword1", "NewPassword1");
+
+      expect(prisma.client.user.update).toHaveBeenCalledWith({
+        where: { id: "u1" },
+        data: { passwordHash: expect.any(String) },
+      });
+      expect(prisma.client.session.updateMany).toHaveBeenCalledWith({
+        where: { userId: "u1", revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+    });
+  });
 });

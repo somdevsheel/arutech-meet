@@ -224,6 +224,29 @@ export class AuthService {
     await this.logoutAll(resetToken.userId);
   }
 
+  /** M-2: Settings had no way to change your password at all. Unlike
+   * resetPassword above (proves identity via an emailed token, for when
+   * you're signed out), this proves identity with the current password —
+   * same check login itself makes. Revokes every session afterward
+   * (including the caller's own), matching resetPassword's "sign out
+   * everywhere" precedent; the client is expected to sign itself out and
+   * send the user back to /login immediately on success rather than wait
+   * for that to surface as a failed refresh later. */
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const user = await this.prisma.client.user.findUnique({ where: { id: userId } });
+    if (!user || !user.passwordHash) {
+      throw new UnauthorizedException("Current password is incorrect");
+    }
+    const valid = await argon2.verify(user.passwordHash, currentPassword);
+    if (!valid) {
+      throw new UnauthorizedException("Current password is incorrect");
+    }
+
+    const passwordHash = await argon2.hash(newPassword);
+    await this.prisma.client.user.update({ where: { id: userId }, data: { passwordHash } });
+    await this.logoutAll(userId);
+  }
+
   private async issueTokens(
     userId: string,
     req: { userAgent?: string; ip?: string },

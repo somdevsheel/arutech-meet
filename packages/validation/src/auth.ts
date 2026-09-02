@@ -57,6 +57,15 @@ export const resetPasswordSchema = z.object({
 });
 export type ResetPasswordDto = z.infer<typeof resetPasswordSchema>;
 
+// M-2: Settings' self-service password change. Distinct from
+// resetPasswordSchema above — this one proves identity with the current
+// password instead of an emailed token, so it needs that field instead.
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: passwordSchema,
+});
+export type ChangePasswordDto = z.infer<typeof changePasswordSchema>;
+
 export const verifyEmailSchema = z.object({
   token: z.string().min(1),
 });

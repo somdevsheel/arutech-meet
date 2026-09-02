@@ -8,7 +8,11 @@ import type { AuthenticatedUser } from "../common/types/authenticated-user";
 
 const updateProfileSchema = z.object({
   displayName: z.string().min(1).max(100).optional(),
-  avatarUrl: z.string().url().optional(),
+  // .nullable() so a client can explicitly clear a previously-set avatar
+  // (send `avatarUrl: null`) rather than only ever being able to replace it
+  // with another URL — same convention already used for chat rooms' photo
+  // (see @arutech/validation's updateChatRoomSchema).
+  avatarUrl: z.string().url().nullable().optional(),
   timezone: z.string().max(64).optional(),
   locale: z.string().max(16).optional(),
 });

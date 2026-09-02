@@ -8,11 +8,13 @@ import { CurrentUser } from "../common/decorators/current-user.decorator";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe";
 import type { AuthenticatedUser } from "../common/types/authenticated-user";
 import {
+  changePasswordSchema,
   loginSchema,
   refreshSchema,
   registerSchema,
   requestPasswordResetSchema,
   resetPasswordSchema,
+  type ChangePasswordDto,
   type LoginDto,
   type RefreshDto,
   type RegisterDto,
@@ -92,6 +94,21 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async resetPassword(@Body(new ZodValidationPipe(resetPasswordSchema)) dto: ResetPasswordDto) {
     await this.authService.resetPassword(dto.token, dto.password);
+    return { ok: true };
+  }
+
+  // M-2: Settings' self-service password change. Authenticated (no
+  // @Public()) — proves identity via the current password instead, and
+  // throttled the same as login/reset-password since it's another
+  // password-guessing surface.
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post("change-password")
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(changePasswordSchema)) dto: ChangePasswordDto,
+  ) {
+    await this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
     return { ok: true };
   }
 }

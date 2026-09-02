@@ -10,6 +10,7 @@ import { apiFetch } from "@/lib/api-client";
 import { getSocket } from "@/lib/socket";
 import { PRESENCE_STATUS_META, usePresenceHeartbeat } from "@/lib/presence";
 import { CallOverlay } from "@/components/calls/call-overlay";
+import { Avatar } from "@/components/avatar";
 
 export type ActiveNav =
   | "home"
@@ -31,18 +32,6 @@ export interface AppShellProps {
   onSignOut: () => void;
   rail?: React.ReactNode;
   children: React.ReactNode;
-}
-
-function initialsOf(name: string) {
-  return (
-    name
-      .split(" ")
-      .map((p) => p[0])
-      .filter(Boolean)
-      .slice(0, 2)
-      .join("")
-      .toUpperCase() || "?"
-  );
 }
 
 interface SearchResults {
@@ -393,9 +382,7 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
               className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 hover:bg-surface-field"
             >
               <span className="relative flex-none">
-                <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-500 text-xs font-semibold text-white">
-                  {initialsOf(user.displayName)}
-                </span>
+                <Avatar name={user.displayName} avatarUrl={user.avatarUrl} size={32} />
                 <span
                   aria-label={`Your status: ${PRESENCE_STATUS_META[myStatus].label}`}
                   className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface-raised ${PRESENCE_STATUS_META[myStatus].dotClass}`}
