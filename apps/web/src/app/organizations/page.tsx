@@ -6,6 +6,7 @@ import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
 import { ModalShell } from "@/components/dashboard/schedule-meeting-modal";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 interface OrgSummary {
   id: string;
@@ -59,7 +60,7 @@ export default function OrganizationsPage() {
     }
   }
 
-  if (!user) return null;
+  if (!user) return <FullPageLoading />;
 
   return (
     <AppShell

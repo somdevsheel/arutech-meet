@@ -8,6 +8,7 @@ import { useAuthStore } from "@/lib/auth-store";
 import { getSocket } from "@/lib/socket";
 import { AppShell } from "@/components/layout/app-shell";
 import { TeamChatPanel } from "@/components/teams/team-chat-panel";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 interface TeamDetail {
   id: string;
@@ -166,7 +167,7 @@ export default function TeamDetailPage() {
     }
   }
 
-  if (!user) return null;
+  if (!user) return <FullPageLoading />;
 
   return (
     <AppShell

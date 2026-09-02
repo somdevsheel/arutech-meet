@@ -6,6 +6,7 @@ import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
+import { FullPageLoading } from "@/components/full-page-loading";
 import { AssignmentsSection } from "@/components/classes/assignments-section";
 import { StudyMaterialsSection } from "@/components/classes/study-materials-section";
 
@@ -73,7 +74,7 @@ export default function ClassDetailPage() {
     }
   }
 
-  if (!user || !klass) return null;
+  if (!user || !klass) return <FullPageLoading />;
 
   return (
     <AppShell

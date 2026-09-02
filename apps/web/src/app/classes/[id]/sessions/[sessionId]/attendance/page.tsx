@@ -8,6 +8,7 @@ import { env } from "@/lib/env";
 import { useAuthStore } from "@/lib/auth-store";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 interface AttendanceRow {
   userId: string;
@@ -79,7 +80,7 @@ export default function AttendancePage() {
     }
   }
 
-  if (!user) return null;
+  if (!user) return <FullPageLoading />;
 
   return (
     <AppShell

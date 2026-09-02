@@ -6,6 +6,7 @@ import type { CalendarEvent } from "@arutech/types";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 type ViewMode = "month" | "week" | "day";
 
@@ -117,7 +118,7 @@ export default function CalendarPage() {
     }
   }
 
-  if (!user || !cursor) return null;
+  if (!user || !cursor) return <FullPageLoading />;
 
   const label =
     view === "day"

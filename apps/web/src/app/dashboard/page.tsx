@@ -11,6 +11,7 @@ import { JoinMeetingModal } from "@/components/dashboard/join-meeting-modal";
 import { TodayRail } from "@/components/dashboard/today-rail";
 import { RecordingsRow } from "@/components/dashboard/recordings-row";
 import { PersonalRoomSettingsModal } from "@/components/dashboard/personal-room-settings-modal";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 interface Meeting {
   id: string;
@@ -111,7 +112,7 @@ export default function DashboardPage() {
     }
   }
 
-  if (!user) return null;
+  if (!user) return <FullPageLoading />;
 
   const now = Date.now();
   const upcoming = meetings

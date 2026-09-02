@@ -6,6 +6,7 @@ import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 interface Batch {
   id: string;
@@ -69,7 +70,7 @@ export default function CourseDetailPage() {
     }
   }
 
-  if (!user) return null;
+  if (!user) return <FullPageLoading />;
 
   if (loadError) {
     return (
@@ -78,7 +79,7 @@ export default function CourseDetailPage() {
       </AppShell>
     );
   }
-  if (!course) return null;
+  if (!course) return <FullPageLoading />;
 
   return (
     <AppShell

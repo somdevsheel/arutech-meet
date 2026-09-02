@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 interface AppTile {
   href: string;
@@ -82,7 +83,7 @@ export default function AppsPage() {
   const router = useRouter();
   const { user, accessToken, clear } = useAuthStore();
 
-  if (!user) return null;
+  if (!user) return <FullPageLoading />;
 
   return (
     <AppShell

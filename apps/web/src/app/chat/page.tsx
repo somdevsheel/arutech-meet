@@ -18,6 +18,7 @@ import { ChatAttachmentView } from "@/components/chat/chat-attachment-view";
 import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
 import { formatLastSeen, formatLastSeenPhrase } from "@/lib/format-last-seen";
 import { PRESENCE_STATUS_META } from "@/lib/presence";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const TYPING_STOP_DELAY_MS = 2500;
@@ -457,7 +458,7 @@ function TeamChatPage() {
     }
   }
 
-  if (!user) return null;
+  if (!user) return <FullPageLoading />;
 
   const otherMember =
     selected?.type === "DIRECT" ? selected.members.find((m) => m.userId !== user.id) : null;

@@ -9,6 +9,7 @@ import { useCallStore } from "@/lib/call-store";
 import { AppShell } from "@/components/layout/app-shell";
 import { formatLastSeen, formatLastSeenPhrase } from "@/lib/format-last-seen";
 import { PRESENCE_STATUS_META } from "@/lib/presence";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 const PRESENCE_POLL_MS = 20_000;
 
@@ -214,7 +215,7 @@ export default function ContactsPage() {
     await Promise.all([refreshGroups(), refreshContacts()]);
   }
 
-  if (!user) return null;
+  if (!user) return <FullPageLoading />;
 
   const groupById = new Map((groups ?? []).map((g) => [g.id, g]));
 

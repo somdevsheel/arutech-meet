@@ -6,6 +6,7 @@ import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 interface ClassSummary {
   id: string;
@@ -51,7 +52,7 @@ export default function ClassesPage() {
     }
   }
 
-  if (!user) return null;
+  if (!user) return <FullPageLoading />;
 
   return (
     <AppShell

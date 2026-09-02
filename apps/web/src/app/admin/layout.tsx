@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/lib/auth-store";
 import { AppShell } from "@/components/layout/app-shell";
+import { FullPageLoading } from "@/components/full-page-loading";
 
 const NAV = [
   { href: "/admin", label: "Dashboard" },
@@ -45,7 +46,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
   }, [hasHydrated, user, accessToken, router]);
 
-  if (!hasHydrated || !user || user.systemRole !== "ADMIN") return null;
+  if (!hasHydrated || !user || user.systemRole !== "ADMIN") return <FullPageLoading />;
 
   return (
     <AppShell
