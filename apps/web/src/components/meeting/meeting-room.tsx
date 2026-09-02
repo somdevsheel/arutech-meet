@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { LiveKitRoom } from "@livekit/components-react";
+import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
 import "@livekit/components-styles";
 import {
   WS_EVENTS,
@@ -15,11 +15,11 @@ import { ChatPanel } from "./chat-panel";
 import { ParticipantsPanel } from "./participants-panel";
 import { ReportParticipantModal } from "./report-participant-modal";
 import { WaitingRoomPanel } from "./waiting-room-panel";
-import { ClassroomPanel } from "./classroom/classroom-panel";
+import { ClassroomPanel, type ClassroomTab } from "./classroom/classroom-panel";
 import { BreakoutProvider } from "./classroom/breakout-panel";
 import { RecordingsPanel } from "./recordings-panel";
 import { LocalRecordingProvider } from "./local-recording-control";
-import { WhiteboardProvider } from "./classroom/whiteboard-canvas";
+import { WhiteboardProvider, WhiteboardCanvas } from "./classroom/whiteboard-canvas";
 import { MeetingInfoPanel } from "./meeting-info-panel";
 import { ReactionsOverlay } from "./reactions-overlay";
 import { CaptionBar } from "./caption-bar";
@@ -72,6 +72,12 @@ export function MeetingRoom({
   onLeave,
 }: MeetingRoomProps) {
   const [panel, setPanel] = useState<PanelKind | null>(null);
+  // Which sub-tab of the "Tools" panel (Whiteboard/Polls/Quiz/Breakout) is
+  // active — lifted here (rather than owned inside ClassroomPanel) so this
+  // component can tell when the whiteboard specifically is the one on
+  // screen and swap the main stage over to it. See `isWhiteboardOpen` below
+  // and ClassroomPanel's own `whiteboardOnMainStage` prop doc comment.
+  const [classroomTab, setClassroomTab] = useState<ClassroomTab>("whiteboard");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingBanner, setRecordingBanner] = useState(false);
   const [captionsActive, setCaptionsActive] = useState(false);
@@ -145,6 +151,13 @@ export function MeetingRoom({
   // too, only GUEST lacks it. See ClassroomPanel's own comment on this prop
   // for what breaks if this is hardcoded true instead.
   const canEditWhiteboard = can(effectiveRole as ParticipantRole, "whiteboard.edit");
+  // Requested layout: whiteboard should take the main stage full-size, with
+  // participant video moved to one side, whenever the whiteboard is what's
+  // actually open — i.e. the Tools panel is open AND its active tab is
+  // Whiteboard. Automatic, not a separate manual toggle: switching to any
+  // other Tools sub-tab, or closing the side panel, hands the main stage
+  // back to the video grid on its own, simply because this stops being true.
+  const isWhiteboardOpen = panel === "tools" && classroomTab === "whiteboard";
 
   async function endMeeting() {
     try {
@@ -413,6 +426,13 @@ export function MeetingRoom({
             data-lk-theme="default"
             className="flex h-screen flex-col overflow-hidden bg-surface"
           >
+            {/* Unconditional and outside the whiteboard/video-grid swap below
+                on purpose — see VideoGrid's own doc comment for why this
+                used to live inside it and had to move: remote audio would
+                otherwise briefly cut out every time the whiteboard opens or
+                closes, since VideoGrid itself does unmount/remount as it
+                relocates between the main stage and the side panel. */}
+            <RoomAudioRenderer />
             <header className="flex h-14 flex-none items-center justify-between gap-4 border-b border-surface-border px-5">
               <div className="flex items-center gap-2">
                 <Pill>
@@ -452,8 +472,26 @@ export function MeetingRoom({
             )}
 
             <div className="flex min-h-0 flex-1 overflow-hidden">
-              <div data-video-grid-root className="relative min-h-0 min-w-0 flex-1 p-3">
-                <VideoGrid />
+              {/* Requested layout: when the whiteboard is open, it takes the
+                  main stage full-size and the video grid moves to the Tools
+                  panel's side strip instead (see ClassroomPanel's
+                  `whiteboardOnMainStage` prop) — a straight swap of which
+                  content occupies which slot, not a new third layout.
+                  `data-video-grid-root` follows VideoGrid to wherever it
+                  currently lives (LocalRecordingProvider's capture loop
+                  queries this selector for real `<video>` elements to
+                  composite — it must never end up pointed at a div that
+                  doesn't actually contain any, which is what a fixed
+                  placement here would do the moment this swap happens). */}
+              <div
+                {...(!isWhiteboardOpen ? { "data-video-grid-root": true } : {})}
+                className="relative min-h-0 min-w-0 flex-1 p-3"
+              >
+                {isWhiteboardOpen ? (
+                  <WhiteboardCanvas canEdit={canEditWhiteboard} />
+                ) : (
+                  <VideoGrid />
+                )}
                 <ReactionsOverlay reactions={reactions} onDismiss={dismissReaction} />
                 {captionsActive && !captionsHidden && (
                   <CaptionBar onHide={() => setCaptionsHidden(true)} />
@@ -521,7 +559,10 @@ export function MeetingRoom({
                     </button>
                   </div>
 
-                  <div className="min-h-0 flex-1 overflow-y-auto">
+                  <div
+                    className="min-h-0 flex-1 overflow-y-auto"
+                    {...(isWhiteboardOpen ? { "data-video-grid-root": true } : {})}
+                  >
                     {panel === "info" && (
                       <MeetingInfoPanel meetingCode={meetingCode} isRecording={isRecording} />
                     )}
@@ -560,6 +601,9 @@ export function MeetingRoom({
                         isModerator={isModerator}
                         canEditWhiteboard={canEditWhiteboard}
                         featureFlags={featureFlags}
+                        activeTab={classroomTab}
+                        onTabChange={setClassroomTab}
+                        whiteboardOnMainStage={isWhiteboardOpen}
                       />
                     )}
                     {panel === "recordings" && (

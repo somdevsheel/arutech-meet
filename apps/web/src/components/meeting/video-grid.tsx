@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useTracks, RoomAudioRenderer, isTrackReference } from "@livekit/components-react";
+import { useTracks, isTrackReference } from "@livekit/components-react";
 import type { TrackReferenceOrPlaceholder } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import { CAPTIONS_AGENT_IDENTITY } from "@arutech/types";
@@ -21,6 +21,14 @@ function trackId(t: TrackReferenceOrPlaceholder): string {
  * entirely on real `@livekit/components-react` track subscriptions — every
  * tile is a real published camera/screen-share track, never a placeholder
  * standing in for a fake stream.
+ *
+ * `<RoomAudioRenderer>` deliberately does NOT live here (moved out to
+ * meeting-room.tsx, rendered unconditionally there) — this component now
+ * gets relocated in the tree between the main stage and the Tools panel's
+ * side strip depending on whether the whiteboard has taken over the main
+ * stage (see meeting-room.tsx's `isWhiteboardOpen`), which unmounts and
+ * remounts it. Keeping the audio renderer here would have meant everyone's
+ * remote audio briefly cutting out on every whiteboard open/close.
  */
 export function VideoGrid() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -152,8 +160,6 @@ export function VideoGrid() {
           )}
         </div>
       )}
-
-      <RoomAudioRenderer />
     </div>
   );
 }
