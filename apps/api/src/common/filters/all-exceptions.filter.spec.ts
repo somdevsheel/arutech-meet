@@ -65,4 +65,19 @@ describe("AllExceptionsFilter", () => {
     expect(json.mock.calls[0][0].error.code).toBe("VALIDATION_ERROR");
     expect(json.mock.calls[0][0].error.message[0]).toContain("email");
   });
+
+  // M-3: a ZodError thrown directly (not via ZodValidationPipe — e.g. a
+  // manual .parse() call) went through this branch with the raw camelCase
+  // field path ("avatarUrl: Invalid url") shown to the end user verbatim.
+  it("humanizes a ZodError's field name instead of showing the raw camelCase path", () => {
+    const filter = new AllExceptionsFilter();
+    const { host, json } = makeHost();
+    const schema = z.object({ avatarUrl: z.string().url() });
+    const result = schema.safeParse({ avatarUrl: "not-a-url" });
+
+    filter.catch(result.error, host);
+
+    expect(json.mock.calls[0][0].error.message[0]).toBe("Avatar URL: Invalid url");
+    expect(json.mock.calls[0][0].error.message[0]).not.toContain("avatarUrl");
+  });
 });

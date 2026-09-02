@@ -10,6 +10,7 @@ import { ThrottlerException } from "@nestjs/throttler";
 import type { Request, Response } from "express";
 import { ZodError } from "zod";
 import { Sentry } from "../../observability/sentry";
+import { formatZodIssues } from "../lib/format-zod-issues";
 
 /**
  * Converts every thrown error into a structured, client-safe JSON error body.
@@ -30,9 +31,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let code = "INTERNAL_ERROR";
 
     if (exception instanceof ZodError) {
+      // M-3: same raw-field-name issue as ZodValidationPipe (see
+      // format-zod-issues.ts) — this branch catches a ZodError thrown
+      // directly (e.g. a manual `.parse()` call) rather than via the pipe.
       status = HttpStatus.BAD_REQUEST;
       code = "VALIDATION_ERROR";
-      message = exception.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+      message = formatZodIssues(exception.issues);
     } else if (exception instanceof ThrottlerException) {
       // H-10: ThrottlerException's own default message is the literal string
       // "ThrottlerException: Too Many Requests" — with no override, that's

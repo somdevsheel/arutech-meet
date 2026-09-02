@@ -1,5 +1,6 @@
 import { BadRequestException, PipeTransform } from "@nestjs/common";
 import type { ZodSchema } from "zod";
+import { formatZodIssues } from "../lib/format-zod-issues";
 
 /**
  * Validates+transforms a request body/query against a Zod schema from
@@ -13,9 +14,12 @@ export class ZodValidationPipe implements PipeTransform {
   transform(value: unknown) {
     const result = this.schema.safeParse(value);
     if (!result.success) {
-      throw new BadRequestException({
-        message: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
-      });
+      // M-3: this used to join the raw field path in verbatim (e.g.
+      // "avatarUrl: Invalid url") — internal camelCase names a client never
+      // chose, going straight into a form's error banner. See
+      // format-zod-issues.ts for why this is fixed at the source rather
+      // than in each page that happens to display it.
+      throw new BadRequestException({ message: formatZodIssues(result.error.issues) });
     }
     return result.data;
   }

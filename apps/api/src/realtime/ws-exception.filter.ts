@@ -2,6 +2,7 @@ import { ArgumentsHost, Catch, ExceptionFilter, Logger } from "@nestjs/common";
 import type { Socket } from "socket.io";
 import { ZodError } from "zod";
 import { WS_EVENTS } from "@arutech/types";
+import { formatZodIssues } from "../common/lib/format-zod-issues";
 
 /** Converts thrown errors in gateway message handlers into a client-safe `error` event
  * instead of crashing the socket connection or leaking internals. */
@@ -13,9 +14,8 @@ export class WsExceptionFilter implements ExceptionFilter {
     const client = host.switchToWs().getClient<Socket>();
 
     if (exception instanceof ZodError) {
-      client.emit(WS_EVENTS.ERROR, {
-        message: exception.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
-      });
+      // M-3: same raw-field-name issue as the REST paths — see format-zod-issues.ts.
+      client.emit(WS_EVENTS.ERROR, { message: formatZodIssues(exception.issues) });
       return;
     }
 
