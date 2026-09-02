@@ -51,7 +51,10 @@ const PANEL_TABS: { key: PanelKind; label: string }[] = [
   { key: "chat", label: "Chat" },
   { key: "tools", label: "Tools" },
   { key: "recordings", label: "Record" },
-  { key: "whiteboard", label: "Whiteboard" },
+  // Whiteboard deliberately isn't listed here — it's opened only via its own
+  // dedicated button in the bottom toolbar (meeting-toolbar.tsx), not as a
+  // tab in this row. `panel` can still be "whiteboard" (set by that button)
+  // even though no tab here matches it as active; that's intentional.
 ];
 
 interface ActiveConnection {
@@ -73,17 +76,6 @@ export function MeetingRoom({
   onLeave,
 }: MeetingRoomProps) {
   const [panel, setPanel] = useState<PanelKind | null>(null);
-  // The top tab row scrolls horizontally now (six tabs don't fit the fixed
-  // 320px aside) — when a panel is opened from the bottom toolbar instead of
-  // by clicking its tab directly (e.g. the new dedicated Whiteboard button),
-  // the row itself doesn't move, so the now-active tab can end up scrolled
-  // out of view with nothing on screen indicating it's selected. Scroll it
-  // into view whenever the active panel changes.
-  const tabRowRef = useRef<HTMLDivElement | null>(null);
-  const activeTabRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [panel]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingBanner, setRecordingBanner] = useState(false);
   const [captionsActive, setCaptionsActive] = useState(false);
@@ -542,36 +534,26 @@ export function MeetingRoom({
 
               {panel && (
                 <aside className="flex w-[320px] flex-none flex-col border-l border-surface-border bg-surface-raised">
-                  <div className="flex items-start gap-1 border-b border-surface-border px-3 pt-3">
-                    {/* Six tabs (was five, before Whiteboard moved up here
-                        from being nested under Tools) genuinely don't fit a
-                        fixed 320px panel without either this or wrapping to
-                        a second line — a grandparent container up the tree
-                        has `overflow-hidden`, so without this the tab label
-                        just gets silently clipped mid-word instead of
-                        wrapping or scrolling into view. */}
-                    <div ref={tabRowRef} className="flex flex-1 gap-1 overflow-x-auto">
-                      {PANEL_TABS.map((tab) => (
-                        <button
-                          key={tab.key}
-                          ref={panel === tab.key ? activeTabRef : undefined}
-                          onClick={() => setPanel(tab.key)}
-                          className={`flex-none whitespace-nowrap border-b-2 px-1 pb-2.5 text-[13px] font-medium transition ${
-                            panel === tab.key
-                              ? "border-brand-500 text-white"
-                              : "border-transparent text-ink-muted hover:text-ink-2"
-                          }`}
-                        >
-                          {tab.label === "Participants"
-                            ? `Participants (${participants.length})`
-                            : tab.label}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="flex gap-1 border-b border-surface-border px-3 pt-3">
+                    {PANEL_TABS.map((tab) => (
+                      <button
+                        key={tab.key}
+                        onClick={() => setPanel(tab.key)}
+                        className={`border-b-2 px-1 pb-2.5 text-[13px] font-medium transition ${
+                          panel === tab.key
+                            ? "border-brand-500 text-white"
+                            : "border-transparent text-ink-muted hover:text-ink-2"
+                        }`}
+                      >
+                        {tab.label === "Participants"
+                          ? `Participants (${participants.length})`
+                          : tab.label}
+                      </button>
+                    ))}
                     <button
                       onClick={() => setPanel(null)}
                       aria-label="Close panel"
-                      className="mb-2.5 flex-none self-start text-ink-muted hover:text-white"
+                      className="mb-2.5 self-start text-ink-muted hover:text-white"
                     >
                       ✕
                     </button>
