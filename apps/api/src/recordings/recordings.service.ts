@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { WS_EVENTS } from "@arutech/types";
@@ -46,11 +47,23 @@ export class RecordingsService {
     if (existing) throw new BadRequestException("A recording is already in progress");
 
     const filepath = `recordings/${meetingId}/${Date.now()}-${randomUUID()}.mp4`;
-    const egress = await this.liveKit.startRoomRecording(
-      meeting.livekitRoomName,
-      filepath,
-      this.storage.s3Config,
-    );
+    // M-5: LiveKit's egress request blocks (its SDK's own client-side
+    // timeout is ~10s) waiting to hand off to an available egress worker.
+    // With none registered/reachable, this reliably reproduces as a real
+    // ~10s wait followed by a raw `TimeoutError` — not an HttpException, so
+    // it fell through to AllExceptionsFilter's generic catch-all and came
+    // back as a bare "Internal server error" with no indication this was
+    // the recording infrastructure specifically. Catch it here and surface
+    // something the caller can actually act on.
+    let egress;
+    try {
+      egress = await this.liveKit.startRoomRecording(meeting.livekitRoomName, filepath, this.storage.s3Config);
+    } catch (err) {
+      this.logger.error(`Failed to start egress for meeting ${meetingId}: ${String(err)}`);
+      throw new ServiceUnavailableException(
+        "Couldn't start recording — the recording service didn't respond. Please try again in a moment.",
+      );
+    }
 
     const recording = await this.prisma.client.meetingRecording.create({
       data: {
@@ -76,7 +89,17 @@ export class RecordingsService {
     }
     if (!recording.egressId) throw new BadRequestException("Recording has no associated egress job");
 
-    await this.liveKit.stopEgress(recording.egressId);
+    // Same failure class as start() above — a slow/unreachable egress
+    // worker can make this hang and then throw a raw, non-HttpException
+    // error too.
+    try {
+      await this.liveKit.stopEgress(recording.egressId);
+    } catch (err) {
+      this.logger.error(`Failed to stop egress ${recording.egressId} for meeting ${meetingId}: ${String(err)}`);
+      throw new ServiceUnavailableException(
+        "Couldn't stop recording — the recording service didn't respond. Please try again in a moment.",
+      );
+    }
     const updated = await this.prisma.client.meetingRecording.update({
       where: { id: recordingId },
       data: { status: "PROCESSING", processingStartedAt: new Date() },

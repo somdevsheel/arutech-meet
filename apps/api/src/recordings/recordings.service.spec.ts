@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import { RecordingsService } from "./recordings.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { LiveKitService } from "../livekit/livekit.service";
@@ -82,6 +82,65 @@ describe("RecordingsService.start", () => {
     );
     expect(recording).toMatchObject({ status: "RECORDING", egressId: "egress-1" });
     expect(deps.broadcast.publish).toHaveBeenCalled();
+  });
+
+  // M-5: a slow/unreachable egress worker made this hang for LiveKit's own
+  // client-side timeout (~10s) and then throw a raw, non-HttpException
+  // error — that used to reach AllExceptionsFilter's generic catch-all and
+  // come back as a bare "Internal server error" with zero indication this
+  // was the recording infrastructure. Real coverage for the actual fix.
+  it("turns a LiveKit egress failure into a clear, actionable error instead of a raw one", async () => {
+    const deps = makeDeps();
+    (deps.liveKit.startRoomRecording as jest.Mock).mockRejectedValue(new Error("TimeoutError"));
+    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast, deps.auditLog);
+
+    const result = service.start("meeting-1", "host-1");
+
+    await expect(result).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(result).rejects.toThrow(/recording service didn't respond/i);
+    expect(deps.prisma.client.meetingRecording.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("RecordingsService.stop", () => {
+  function makeActiveRecording(overrides?: Partial<{ status: string; egressId: string | null }>) {
+    return {
+      id: "rec-1",
+      meetingId: "meeting-1",
+      status: "RECORDING",
+      egressId: "egress-1",
+      ...overrides,
+    };
+  }
+
+  it("stops egress and marks the recording PROCESSING", async () => {
+    const deps = makeDeps();
+    (deps.prisma.client.meetingRecording.findUnique as jest.Mock).mockResolvedValue(makeActiveRecording());
+    (deps.prisma.client.meetingRecording.update as jest.Mock).mockImplementation(({ data }) =>
+      Promise.resolve({ ...makeActiveRecording(), ...data }),
+    );
+    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast, deps.auditLog);
+
+    const result = await service.stop("meeting-1", "host-1", "rec-1");
+
+    expect(deps.liveKit.stopEgress).toHaveBeenCalledWith("egress-1");
+    expect(result.status).toBe("PROCESSING");
+    expect(deps.broadcast.publish).toHaveBeenCalled();
+  });
+
+  // M-5: same failure class as start() above — stopEgress can hang and
+  // throw the same raw error.
+  it("turns a LiveKit stopEgress failure into a clear, actionable error instead of a raw one", async () => {
+    const deps = makeDeps();
+    (deps.prisma.client.meetingRecording.findUnique as jest.Mock).mockResolvedValue(makeActiveRecording());
+    (deps.liveKit.stopEgress as jest.Mock).mockRejectedValue(new Error("TimeoutError"));
+    const service = new RecordingsService(deps.prisma, deps.liveKit, deps.storage, deps.permissions, deps.broadcast, deps.auditLog);
+
+    const result = service.stop("meeting-1", "host-1", "rec-1");
+
+    await expect(result).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(result).rejects.toThrow(/recording service didn't respond/i);
+    expect(deps.prisma.client.meetingRecording.update).not.toHaveBeenCalled();
   });
 });
 

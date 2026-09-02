@@ -117,9 +117,16 @@ export function RecordingsPanel({
   async function stop() {
     if (!active) return;
     setBusy(true);
+    setError(null);
     try {
       await apiFetch(`/meetings/${meetingId}/recordings/${active.id}/stop`, { method: "POST" });
       await refresh();
+    } catch (err) {
+      // Same gap as start() until now — stop() had no error handling at
+      // all, so the exact "egress didn't respond" failure this fix's
+      // backend half now specifically raises here would otherwise still
+      // vanish as an unhandled rejection with the button just re-enabling.
+      setError(err instanceof ApiError ? err.message : "Failed to stop recording");
     } finally {
       setBusy(false);
     }
@@ -164,7 +171,7 @@ export function RecordingsPanel({
                 disabled={busy}
                 className="w-full rounded bg-danger-strong py-2 text-xs font-medium text-white disabled:opacity-50"
               >
-                Stop recording
+                {busy ? "Stopping…" : "Stop recording"}
               </button>
             ) : (
               <button
@@ -172,7 +179,11 @@ export function RecordingsPanel({
                 disabled={busy}
                 className="w-full rounded bg-brand-500 py-2 text-xs font-medium text-white disabled:opacity-50"
               >
-                Start recording
+                {/* M-5: starting a server-side recording can take several
+                    real seconds (LiveKit dispatching to an egress worker) —
+                    the button used to just go disabled with no label change,
+                    which read as frozen/unresponsive for that whole wait. */}
+                {busy ? "Starting…" : "Start recording"}
               </button>
             )}
             {error && <p className="mt-2 text-xs text-danger">{error}</p>}
