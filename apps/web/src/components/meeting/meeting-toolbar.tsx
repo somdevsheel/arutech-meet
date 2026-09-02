@@ -6,7 +6,7 @@ import { REACTION_EMOJIS, type ReactionEmoji } from "@arutech/types";
 import { VirtualBackgroundPanel } from "./virtual-background-panel";
 import { useVirtualBackground } from "@/hooks/use-virtual-background";
 
-export type PanelKind = "participants" | "chat" | "tools" | "recordings" | "info";
+export type PanelKind = "participants" | "chat" | "tools" | "recordings" | "info" | "whiteboard";
 
 interface Props {
   activePanel: PanelKind | null;
@@ -222,6 +222,18 @@ export function MeetingToolbar({
         >
           <circle cx="12" cy="12" r="9" />
           <circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none" />
+        </Control>
+        {/* A direct, top-level entry point next to Record — previously
+            Whiteboard was two levels deep (open Tools, then pick the
+            Whiteboard sub-tab among Polls/Quiz/Breakout), which buried a
+            frequently-used feature behind an unrelated one. */}
+        <Control
+          label="Whiteboard"
+          active={activePanel === "whiteboard"}
+          onClick={() => onTogglePanel("whiteboard")}
+        >
+          <path d="M4 4h16v12H4z" />
+          <path d="M9 20h6M12 16v4M7 8l3 3 2-2 3 3" />
         </Control>
         <Control
           label="Tools"

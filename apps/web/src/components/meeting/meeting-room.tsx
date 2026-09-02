@@ -15,7 +15,7 @@ import { ChatPanel } from "./chat-panel";
 import { ParticipantsPanel } from "./participants-panel";
 import { ReportParticipantModal } from "./report-participant-modal";
 import { WaitingRoomPanel } from "./waiting-room-panel";
-import { ClassroomPanel, type ClassroomTab } from "./classroom/classroom-panel";
+import { ClassroomPanel } from "./classroom/classroom-panel";
 import { BreakoutProvider } from "./classroom/breakout-panel";
 import { RecordingsPanel } from "./recordings-panel";
 import { LocalRecordingProvider } from "./local-recording-control";
@@ -51,6 +51,7 @@ const PANEL_TABS: { key: PanelKind; label: string }[] = [
   { key: "chat", label: "Chat" },
   { key: "tools", label: "Tools" },
   { key: "recordings", label: "Record" },
+  { key: "whiteboard", label: "Whiteboard" },
 ];
 
 interface ActiveConnection {
@@ -72,12 +73,17 @@ export function MeetingRoom({
   onLeave,
 }: MeetingRoomProps) {
   const [panel, setPanel] = useState<PanelKind | null>(null);
-  // Which sub-tab of the "Tools" panel (Whiteboard/Polls/Quiz/Breakout) is
-  // active — lifted here (rather than owned inside ClassroomPanel) so this
-  // component can tell when the whiteboard specifically is the one on
-  // screen and swap the main stage over to it. See `isWhiteboardOpen` below
-  // and ClassroomPanel's own `whiteboardOnMainStage` prop doc comment.
-  const [classroomTab, setClassroomTab] = useState<ClassroomTab>("whiteboard");
+  // The top tab row scrolls horizontally now (six tabs don't fit the fixed
+  // 320px aside) — when a panel is opened from the bottom toolbar instead of
+  // by clicking its tab directly (e.g. the new dedicated Whiteboard button),
+  // the row itself doesn't move, so the now-active tab can end up scrolled
+  // out of view with nothing on screen indicating it's selected. Scroll it
+  // into view whenever the active panel changes.
+  const tabRowRef = useRef<HTMLDivElement | null>(null);
+  const activeTabRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [panel]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingBanner, setRecordingBanner] = useState(false);
   const [captionsActive, setCaptionsActive] = useState(false);
@@ -151,13 +157,14 @@ export function MeetingRoom({
   // too, only GUEST lacks it. See ClassroomPanel's own comment on this prop
   // for what breaks if this is hardcoded true instead.
   const canEditWhiteboard = can(effectiveRole as ParticipantRole, "whiteboard.edit");
-  // Requested layout: whiteboard should take the main stage full-size, with
-  // participant video moved to one side, whenever the whiteboard is what's
-  // actually open — i.e. the Tools panel is open AND its active tab is
-  // Whiteboard. Automatic, not a separate manual toggle: switching to any
-  // other Tools sub-tab, or closing the side panel, hands the main stage
-  // back to the video grid on its own, simply because this stops being true.
-  const isWhiteboardOpen = panel === "tools" && classroomTab === "whiteboard";
+  // Requested layout: Whiteboard is its own top-level panel (next to Record
+  // in the toolbar — see meeting-toolbar.tsx — not nested inside Tools
+  // anymore), and whenever it's the open one, it takes the main stage
+  // full-size with participant video moved to the side panel instead. No
+  // separate manual toggle: switching to any other panel, or closing this
+  // one, hands the main stage back to the video grid simply because this
+  // stops being true.
+  const isWhiteboardOpen = panel === "whiteboard";
 
   async function endMeeting() {
     try {
@@ -472,11 +479,12 @@ export function MeetingRoom({
             )}
 
             <div className="flex min-h-0 flex-1 overflow-hidden">
-              {/* Requested layout: when the whiteboard is open, it takes the
-                  main stage full-size and the video grid moves to the Tools
-                  panel's side strip instead (see ClassroomPanel's
-                  `whiteboardOnMainStage` prop) — a straight swap of which
-                  content occupies which slot, not a new third layout.
+              {/* Requested layout: Whiteboard is its own top-level panel
+                  (meeting-toolbar.tsx, next to Record) — when it's open, it
+                  takes the main stage full-size and the video grid moves to
+                  this panel's side strip instead (see the
+                  `panel === "whiteboard" && <VideoGrid />` branch below) —
+                  a straight swap of which content occupies which slot.
                   `data-video-grid-root` follows VideoGrid to wherever it
                   currently lives (LocalRecordingProvider's capture loop
                   queries this selector for real `<video>` elements to
@@ -534,26 +542,36 @@ export function MeetingRoom({
 
               {panel && (
                 <aside className="flex w-[320px] flex-none flex-col border-l border-surface-border bg-surface-raised">
-                  <div className="flex gap-1 border-b border-surface-border px-3 pt-3">
-                    {PANEL_TABS.map((tab) => (
-                      <button
-                        key={tab.key}
-                        onClick={() => setPanel(tab.key)}
-                        className={`border-b-2 px-1 pb-2.5 text-[13px] font-medium transition ${
-                          panel === tab.key
-                            ? "border-brand-500 text-white"
-                            : "border-transparent text-ink-muted hover:text-ink-2"
-                        }`}
-                      >
-                        {tab.label === "Participants"
-                          ? `Participants (${participants.length})`
-                          : tab.label}
-                      </button>
-                    ))}
+                  <div className="flex items-start gap-1 border-b border-surface-border px-3 pt-3">
+                    {/* Six tabs (was five, before Whiteboard moved up here
+                        from being nested under Tools) genuinely don't fit a
+                        fixed 320px panel without either this or wrapping to
+                        a second line — a grandparent container up the tree
+                        has `overflow-hidden`, so without this the tab label
+                        just gets silently clipped mid-word instead of
+                        wrapping or scrolling into view. */}
+                    <div ref={tabRowRef} className="flex flex-1 gap-1 overflow-x-auto">
+                      {PANEL_TABS.map((tab) => (
+                        <button
+                          key={tab.key}
+                          ref={panel === tab.key ? activeTabRef : undefined}
+                          onClick={() => setPanel(tab.key)}
+                          className={`flex-none whitespace-nowrap border-b-2 px-1 pb-2.5 text-[13px] font-medium transition ${
+                            panel === tab.key
+                              ? "border-brand-500 text-white"
+                              : "border-transparent text-ink-muted hover:text-ink-2"
+                          }`}
+                        >
+                          {tab.label === "Participants"
+                            ? `Participants (${participants.length})`
+                            : tab.label}
+                        </button>
+                      ))}
+                    </div>
                     <button
                       onClick={() => setPanel(null)}
                       aria-label="Close panel"
-                      className="ml-auto mb-2.5 self-start text-ink-muted hover:text-white"
+                      className="mb-2.5 flex-none self-start text-ink-muted hover:text-white"
                     >
                       ✕
                     </button>
@@ -599,11 +617,7 @@ export function MeetingRoom({
                         meetingId={meetingId}
                         socket={socket}
                         isModerator={isModerator}
-                        canEditWhiteboard={canEditWhiteboard}
                         featureFlags={featureFlags}
-                        activeTab={classroomTab}
-                        onTabChange={setClassroomTab}
-                        whiteboardOnMainStage={isWhiteboardOpen}
                       />
                     )}
                     {panel === "recordings" && (
@@ -613,6 +627,13 @@ export function MeetingRoom({
                         isModerator={isModerator}
                       />
                     )}
+                    {/* Whiteboard is now its own top-level panel — whenever
+                        it's open, the real <WhiteboardCanvas> lives on the
+                        main stage instead (see isWhiteboardOpen above), so
+                        this side panel shows the compact video grid here
+                        the whole time this tab is selected, unconditionally
+                        (there's no other state to gate it on anymore). */}
+                    {panel === "whiteboard" && <VideoGrid />}
                   </div>
                 </aside>
               )}
