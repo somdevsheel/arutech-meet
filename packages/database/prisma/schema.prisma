@@ -286,6 +286,7 @@ model User {
 
   identities           AuthIdentity[]
   sessions             Session[]
+  passwordResetTokens  PasswordResetToken[]
   devices              Device[]
   memberships          Membership[]
   ownedOrganizations   Organization[]           @relation("OrgOwner")
@@ -367,6 +368,30 @@ model Session {
   @@index([userId])
   @@index([expiresAt])
   @@map("sessions")
+}
+
+// M-1: requestPasswordResetSchema/resetPasswordSchema already existed in
+// packages/validation, referenced only by a unit test — no route, no
+// service method, no storage for the token they imply. This is that
+// storage. Deliberately stores a HASH of the token, not the raw value
+// (unlike OrganizationInvite/MeetingInvite's plaintext `token` column) —
+// this grants a full password change, a materially higher-stakes secret
+// than an org/meeting invite, so it gets the same treatment
+// Session.refreshTokenHash already gets rather than the invite pattern.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  // Set the moment it's redeemed — checked alongside expiresAt so a token
+  // can't be replayed a second time within its own validity window.
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 model Device {

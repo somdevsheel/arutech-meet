@@ -11,9 +11,13 @@ import {
   loginSchema,
   refreshSchema,
   registerSchema,
+  requestPasswordResetSchema,
+  resetPasswordSchema,
   type LoginDto,
   type RefreshDto,
   type RegisterDto,
+  type RequestPasswordResetDto,
+  type ResetPasswordDto,
 } from "@arutech/validation";
 
 @ApiTags("auth")
@@ -64,5 +68,30 @@ export class AuthController {
   @Get("me")
   me(@CurrentUser() user: AuthenticatedUser) {
     return user;
+  }
+
+  // M-1: throttled the same as login — this is the other endpoint an
+  // unauthenticated caller can hammer to either brute-force something or
+  // spam someone's inbox with reset emails. Always 200s with the same body
+  // regardless of whether the email matches an account (see
+  // AuthService.requestPasswordReset's own comment on why).
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post("request-password-reset")
+  @HttpCode(HttpStatus.OK)
+  async requestPasswordReset(
+    @Body(new ZodValidationPipe(requestPasswordResetSchema)) dto: RequestPasswordResetDto,
+  ) {
+    await this.authService.requestPasswordReset(dto.email);
+    return { ok: true };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post("reset-password")
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body(new ZodValidationPipe(resetPasswordSchema)) dto: ResetPasswordDto) {
+    await this.authService.resetPassword(dto.token, dto.password);
+    return { ok: true };
   }
 }

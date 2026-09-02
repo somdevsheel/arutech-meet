@@ -5,13 +5,20 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import * as argon2 from "argon2";
+import { nanoid } from "nanoid";
 import type { Request } from "express";
 import { PrismaService } from "../prisma/prisma.service";
 import { TokenService } from "../common/lib/tokens";
 import { sha256Hex } from "../common/lib/hash";
 import { parseDurationMs } from "../common/lib/duration";
+import { MailService } from "../mail/mail.service";
 import type { Env } from "@arutech/config";
 import type { LoginDto, RegisterDto } from "@arutech/validation";
+
+/** How long a password-reset link stays valid. Short enough that a leaked/
+ * intercepted email is only a narrow window of risk, long enough that
+ * someone doesn't have to drop everything the instant they request one. */
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
 
 export interface AuthTokens {
   accessToken: string;
@@ -51,6 +58,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tokens: TokenService,
+    private readonly mail: MailService,
     @Inject("ENV") private readonly env: Env,
   ) {}
 
@@ -155,6 +163,65 @@ export class AuthService {
       where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+  }
+
+  /** M-1: requestPasswordResetSchema existed but was never wired to
+   * anything. Always resolves the same way regardless of whether the email
+   * belongs to a real account — the controller returns an identical "check
+   * your email" response either way, since telling a caller "no such
+   * account" would let this endpoint enumerate registered emails one probe
+   * at a time. */
+  async requestPasswordReset(email: string): Promise<void> {
+    const user = await this.prisma.client.user.findUnique({ where: { email } });
+    if (!user) return;
+
+    const rawToken = nanoid(32);
+    await this.prisma.client.passwordResetToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: sha256Hex(rawToken),
+        expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+      },
+    });
+
+    const resetUrl = `${this.env.WEB_URL}/reset-password?token=${rawToken}`;
+    // Same reasoning as OrganizationsService's own invite email: a delivery
+    // failure shouldn't turn into a 500 for what's fundamentally a
+    // best-effort notification — the token row already exists either way,
+    // and (unlike an invite) there's no in-app fallback path to fall back
+    // to for a signed-out visitor, so this is genuinely the only channel,
+    // but failing loudly here would also leak account-existence via timing/
+    // error-shape differences that the DB lookup above was just careful to
+    // avoid.
+    await this.mail.sendPasswordReset({ to: user.email, resetUrl }).catch(() => {});
+  }
+
+  /** M-1: the redemption side. A token is single-use (usedAt) and
+   * time-boxed (expiresAt) — either makes it invalid, and both failure
+   * modes return the same generic message so a client can't distinguish
+   * "expired" from "already used" from "never existed" (nothing useful
+   * either way, and distinguishing them narrows a guessing attack). */
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    const resetToken = await this.prisma.client.passwordResetToken.findUnique({
+      where: { tokenHash: sha256Hex(token) },
+    });
+    if (!resetToken || resetToken.usedAt || resetToken.expiresAt < new Date()) {
+      throw new UnauthorizedException("Invalid or expired reset link");
+    }
+
+    const passwordHash = await argon2.hash(newPassword);
+    await this.prisma.client.$transaction([
+      this.prisma.client.user.update({ where: { id: resetToken.userId }, data: { passwordHash } }),
+      this.prisma.client.passwordResetToken.update({
+        where: { id: resetToken.id },
+        data: { usedAt: new Date() },
+      }),
+    ]);
+
+    // Whoever had the old (leaked/guessed/forgotten) password no longer has
+    // a live session either — the same real-world expectation "sign out
+    // everywhere" already exists for elsewhere in this app.
+    await this.logoutAll(resetToken.userId);
   }
 
   private async issueTokens(

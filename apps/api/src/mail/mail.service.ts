@@ -62,6 +62,25 @@ export class MailService {
         `<p style="color:#888;font-size:12px">If you weren't expecting this, you can ignore this email.</p>`,
     });
   }
+
+  /** M-1: the actual reset link a user clicks. Never reveals whether the
+   * address it's sent to has an account — AuthService.requestPasswordReset
+   * only ever calls this once it's already confirmed one does, so this
+   * method itself has nothing to decide about that. */
+  async sendPasswordReset(opts: { to: string; resetUrl: string }): Promise<void> {
+    await this.send({
+      to: opts.to,
+      subject: "Reset your Arutech Meet password",
+      text:
+        `Someone requested a password reset for this account.\n\n` +
+        `Reset your password: ${opts.resetUrl}\n\n` +
+        `This link expires in 1 hour. If you didn't request this, you can ignore this email — your password won't be changed.`,
+      html:
+        `<p>Someone requested a password reset for this account.</p>` +
+        `<p><a href="${opts.resetUrl}">Reset your password</a></p>` +
+        `<p style="color:#888;font-size:12px">This link expires in 1 hour. If you didn't request this, you can ignore this email — your password won't be changed.</p>`,
+    });
+  }
 }
 
 function escapeHtml(s: string): string {

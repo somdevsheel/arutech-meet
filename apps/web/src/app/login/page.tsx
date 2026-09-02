@@ -57,7 +57,12 @@ function LoginPage() {
           />
         </label>
         <label className="block space-y-1.5">
-          <span className="text-sm text-slate-300">Password</span>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-300">Password</span>
+            <Link href="/forgot-password" className="text-xs text-brand-300 hover:text-brand-200">
+              Forgot password?
+            </Link>
+          </div>
           <input
             type="password"
             className="input"
