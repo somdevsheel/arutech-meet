@@ -942,7 +942,7 @@ function RoomChatMessage({
           )}
 
           <div className="mt-1 flex gap-2 text-[10px] text-ink-muted2 opacity-0 transition group-hover:opacity-100">
-            {message.body && (
+            {message.body ? (
               <div className="relative">
                 <button onClick={onStartForward} className="hover:text-white">
                   Forward
@@ -957,6 +957,23 @@ function RoomChatMessage({
                   />
                 )}
               </div>
+            ) : (
+              // CS-4: this is a real, intentional restriction, not a bug —
+              // ChatService.forwardMessage's own check requires a text body
+              // (an attachment's download permissions are scoped to its
+              // original room, so forwarding just the reference wouldn't
+              // work for whoever received it). Hiding the button entirely
+              // was correct in that it never let anyone hit that error, but
+              // gave no indication *why* the option was simply missing here
+              // and nowhere else. A disabled control with the real reason
+              // in its tooltip is honest about the restriction instead of
+              // silently omitting it.
+              <span
+                title="Only text messages can be forwarded — photos and voice messages stay in their original conversation"
+                className="cursor-not-allowed text-ink-muted2/50"
+              >
+                Forward
+              </span>
             )}
             {isMine && (
               <button onClick={onStartEdit} className="hover:text-white">
