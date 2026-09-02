@@ -152,6 +152,22 @@ function TeamChatPage() {
 
   const selected = rooms?.find((r) => r.id === selectedId) ?? null;
 
+  // L-4: clicking a room in the sidebar only ever updated local state — the
+  // URL never changed, so refreshing the page fell back to whichever
+  // conversation happened to load first (not the one actually open), and a
+  // conversation couldn't be bookmarked or shared by URL at all. The
+  // notification deep-link path (app-shell.tsx's own
+  // router.push(`/chat?room=${id}`), referenced in the comment just below)
+  // was the one exception that already got this right; this is the same fix
+  // for every other way a conversation gets opened. `replace`, not `push` —
+  // switching between conversations already open on this page is a within-
+  // page state change, not a new place to visit, so it shouldn't spam the
+  // back button with one history entry per room clicked.
+  function selectRoom(roomId: string) {
+    setSelectedId(roomId);
+    router.replace(`${pathname}?room=${roomId}`);
+  }
+
   // `selectedId`'s useState initializer above only ever reads searchParams
   // once, at mount. A notification/search-result deep link to a *different*
   // room while already sitting on /chat (app-shell.tsx's
@@ -175,7 +191,10 @@ function TeamChatPage() {
     }
     apiFetch<RoomSummary[]>("/chat-rooms").then((data) => {
       setRooms(data);
-      if (!selectedId && data[0]) setSelectedId(data[0].id);
+      // Same fix as selectRoom() above — whichever room ends up open,
+      // including this default "no ?room= yet, land on the first one"
+      // case, the URL should reflect it.
+      if (!selectedId && data[0]) selectRoom(data[0].id);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasHydrated, accessToken]);
@@ -538,7 +557,7 @@ function TeamChatPage() {
                 <li key={room.id}>
                   <button
                     onClick={() => {
-                      setSelectedId(room.id);
+                      selectRoom(room.id);
                       setLeaveError(null);
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition ${
@@ -772,7 +791,7 @@ function TeamChatPage() {
               const withoutDup = (prev ?? []).filter((r) => r.id !== room.id);
               return [{ ...room, messages: [] }, ...withoutDup];
             });
-            setSelectedId(room.id);
+            selectRoom(room.id);
             setShowNewRoom(false);
           }}
         />
