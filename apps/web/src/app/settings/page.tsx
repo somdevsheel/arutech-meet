@@ -140,7 +140,7 @@ export default function SettingsPage() {
   return (
     <AppShell
       user={user}
-      active="home"
+      active="settings"
       accessToken={accessToken}
       onSignOut={() => {
         clear();

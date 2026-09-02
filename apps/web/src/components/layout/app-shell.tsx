@@ -23,7 +23,13 @@ export type ActiveNav =
   | "organizations"
   | "notes"
   | "apps"
-  | "admin";
+  | "admin"
+  // CS-1: Settings has no sidebar link of its own (it's reached via the
+  // topbar gear icon / account menu only) — this exists purely so a caller
+  // can say so explicitly and correctly get NO sidebar item highlighted,
+  // instead of the nearest-available value being reused and wrongly
+  // implying you're looking at that other page.
+  | "settings";
 
 export interface AppShellProps {
   user: AuthUser;
