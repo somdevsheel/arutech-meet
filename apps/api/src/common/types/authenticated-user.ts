@@ -15,4 +15,12 @@ export interface AuthenticatedUser {
   email: string;
   systemRole: SystemRole;
   isGuest?: boolean;
+  /** L-1: the Session row this specific access token was issued under —
+   * present for a real user (absent for a guest, who has no Session row at
+   * all). Lets a route distinguish "the device you're using right now" from
+   * every other listed session, e.g. Settings' Active Sessions list marking
+   * which one is "this device" and refusing to let it be revoked through
+   * the same "sign out another device" control a real Sign Out button
+   * already exists for. */
+  sessionId?: string;
 }

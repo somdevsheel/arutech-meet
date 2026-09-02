@@ -29,6 +29,10 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[] | null>(null);
+  // L-1: Active Sessions used to be purely read-only — no way to sign out
+  // any device but the one you're currently using.
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
   // M-2: Settings' "Change password" section — separate state/flow from the
   // profile form above since it hits a different endpoint (auth/change-
@@ -115,6 +119,19 @@ export default function SettingsPage() {
       setPwError(err instanceof ApiError ? err.message : "Failed to change password");
     } finally {
       setPwSaving(false);
+    }
+  }
+
+  async function revokeSession(sessionId: string) {
+    setRevokingId(sessionId);
+    setRevokeError(null);
+    try {
+      await apiFetch(`/users/me/sessions/${sessionId}`, { method: "DELETE" });
+      setSessions((prev) => prev?.filter((s) => s.id !== sessionId) ?? prev);
+    } catch (err) {
+      setRevokeError(err instanceof ApiError ? err.message : "Failed to sign out that device");
+    } finally {
+      setRevokingId(null);
     }
   }
 
@@ -245,13 +262,35 @@ export default function SettingsPage() {
           <h2 className="text-sm font-semibold">Active sessions</h2>
           {sessions === null && <p className="text-xs text-ink-muted">Loading…</p>}
           {sessions?.length === 0 && <p className="text-xs text-ink-muted">No other active sessions.</p>}
+          {revokeError && <p className="text-xs text-danger">{revokeError}</p>}
           <ul className="flex flex-col gap-2">
             {sessions?.map((s) => (
-              <li key={s.id} className="rounded-lg border border-surface-border px-3 py-2.5 text-xs">
-                <p className="text-ink-2">{s.userAgent ?? "Unknown device"}</p>
-                <p className="mt-0.5 text-ink-muted">
-                  {s.ip ?? "Unknown IP"} · last used {new Date(s.lastUsedAt).toLocaleString()}
-                </p>
+              <li
+                key={s.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-surface-border px-3 py-2.5 text-xs"
+              >
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1.5 text-ink-2">
+                    {s.userAgent ?? "Unknown device"}
+                    {s.current && (
+                      <span className="rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] font-medium text-brand-300">
+                        This device
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-0.5 text-ink-muted">
+                    {s.ip ?? "Unknown IP"} · last used {new Date(s.lastUsedAt).toLocaleString()}
+                  </p>
+                </div>
+                {!s.current && (
+                  <button
+                    onClick={() => revokeSession(s.id)}
+                    disabled={revokingId === s.id}
+                    className="flex-none rounded-lg px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
+                  >
+                    {revokingId === s.id ? "Signing out…" : "Sign out"}
+                  </button>
+                )}
               </li>
             ))}
           </ul>

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
@@ -52,8 +52,12 @@ export class UsersService {
     return user;
   }
 
-  async listSessions(userId: string) {
-    return this.prisma.client.session.findMany({
+  /** L-1: `currentSessionId` (the caller's own Session id, from their access
+   * token — see JwtAuthGuard) marks which listed row is "this device", so
+   * the client can render every OTHER row with a real revoke control
+   * instead of the read-only list this used to be. */
+  async listSessions(userId: string, currentSessionId?: string) {
+    const sessions = await this.prisma.client.session.findMany({
       where: { userId, revokedAt: null },
       select: {
         id: true,
@@ -64,6 +68,27 @@ export class UsersService {
         expiresAt: true,
       },
       orderBy: { lastUsedAt: "desc" },
+    });
+    return sessions.map((s) => ({ ...s, current: s.id === currentSessionId }));
+  }
+
+  /** L-1: the actual fix — Active Sessions was purely read-only before this.
+   * Deliberately refuses to revoke the caller's OWN current session here:
+   * doing so would invalidate the very session making this request (their
+   * next call would need a refresh that itself then fails, since the
+   * session backing it is now revoked) — Settings' existing Sign Out button
+   * is the correct, already-working way to end your own current session. */
+  async revokeSession(userId: string, sessionId: string, currentSessionId?: string): Promise<void> {
+    if (sessionId === currentSessionId) {
+      throw new BadRequestException("Use Sign out to end your own current session");
+    }
+    const session = await this.prisma.client.session.findUnique({ where: { id: sessionId } });
+    if (!session || session.userId !== userId) {
+      throw new NotFoundException("Session not found");
+    }
+    await this.prisma.client.session.update({
+      where: { id: sessionId },
+      data: { revokedAt: new Date() },
     });
   }
 }

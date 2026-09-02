@@ -46,7 +46,12 @@ export class JwtAuthGuard implements CanActivate {
       // their actual participant row and role, exactly like everyone else.
       (request as Request & { user: unknown }).user = isGuestTokenPayload(payload)
         ? { id: payload.sub, email: "", systemRole: "USER", isGuest: true }
-        : { id: payload.sub, email: payload.email, systemRole: payload.systemRole };
+        : {
+            id: payload.sub,
+            email: payload.email,
+            systemRole: payload.systemRole,
+            sessionId: payload.sessionId,
+          };
       return true;
     } catch {
       throw new UnauthorizedException("Invalid or expired access token");

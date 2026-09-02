@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { z } from "zod";
 import { UsersService } from "./users.service";
@@ -37,7 +37,15 @@ export class UsersController {
 
   @Get("me/sessions")
   sessions(@CurrentUser() user: AuthenticatedUser) {
-    return this.usersService.listSessions(user.id);
+    return this.usersService.listSessions(user.id, user.sessionId);
+  }
+
+  // L-1: Active Sessions was purely read-only — no way to sign out any
+  // device but the one you're currently using.
+  @Delete("me/sessions/:sessionId")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  revokeSession(@CurrentUser() user: AuthenticatedUser, @Param("sessionId") sessionId: string) {
+    return this.usersService.revokeSession(user.id, sessionId, user.sessionId);
   }
 
   @Get("by-email/:email")

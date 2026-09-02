@@ -52,7 +52,7 @@ describe("JwtAuthGuard", () => {
     expect(() => guard.canActivate(context)).toThrow(UnauthorizedException);
   });
 
-  it("attaches a real user's id/email/systemRole from an access token payload", () => {
+  it("attaches a real user's id/email/systemRole/sessionId from an access token payload", () => {
     const payload: AccessTokenPayload = {
       sub: "user-1",
       email: "a@b.com",
@@ -64,7 +64,14 @@ describe("JwtAuthGuard", () => {
     const { context, request } = makeContext("Bearer real-token");
 
     expect(guard.canActivate(context)).toBe(true);
-    expect(request.user).toEqual({ id: "user-1", email: "a@b.com", systemRole: "USER" });
+    // L-1: sessionId is what lets a route (e.g. Active Sessions) tell "this
+    // device" apart from every other listed session.
+    expect(request.user).toEqual({
+      id: "user-1",
+      email: "a@b.com",
+      systemRole: "USER",
+      sessionId: "session-1",
+    });
   });
 
   // The security-critical branch: a guest token must never be able to make
