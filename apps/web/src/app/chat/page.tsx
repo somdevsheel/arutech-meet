@@ -19,6 +19,7 @@ import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
 import { formatLastSeen, formatLastSeenPhrase } from "@/lib/format-last-seen";
 import { PRESENCE_STATUS_META } from "@/lib/presence";
 import { FullPageLoading } from "@/components/full-page-loading";
+import { Avatar } from "@/components/avatar";
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const TYPING_STOP_DELAY_MS = 2500;
@@ -45,22 +46,23 @@ interface RoomSummary {
   messages: { id: string; body: string | null; createdAt: string }[];
 }
 
-function initialsOf(name: string) {
-  return (
-    name
-      .split(" ")
-      .map((p) => p[0])
-      .filter(Boolean)
-      .slice(0, 2)
-      .join("")
-      .toUpperCase() || "?"
-  );
-}
-
 function roomTitle(room: RoomSummary, myUserId: string) {
   if (room.type === "GROUP") return room.name || "Group chat";
   const other = room.members.find((m) => m.userId !== myUserId);
   return other?.user.displayName ?? "Direct message";
+}
+
+// M-8: GroupSettingsModal has always been able to set (and clear) a group's
+// photoUrl, and the PATCH round-trips it to the DB correctly — but nothing
+// in this page ever read it back. Every room avatar rendered initials
+// unconditionally, exactly the same gap M-2 found (and fixed, for the
+// topbar) in the user-profile avatar — this is the group/DM-room side of
+// that same pattern. A DIRECT room has no photo of its own; the other
+// member's own avatarUrl is the natural equivalent there.
+function roomAvatarUrl(room: RoomSummary, myUserId: string): string | null {
+  if (room.type === "GROUP") return room.photoUrl;
+  const other = room.members.find((m) => m.userId !== myUserId);
+  return other?.user.avatarUrl ?? null;
 }
 
 function renderBody(text: string) {
@@ -542,9 +544,7 @@ function TeamChatPage() {
                     }`}
                   >
                     <span className="relative flex-none">
-                      <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-500 text-[10px] font-semibold text-white">
-                        {initialsOf(roomTitle(room, user.id))}
-                      </span>
+                      <Avatar name={roomTitle(room, user.id)} avatarUrl={roomAvatarUrl(room, user.id)} size={32} />
                       {otherPresence && otherPresence !== "OFFLINE" && (
                         <span
                           title={PRESENCE_STATUS_META[otherPresence].label}
@@ -576,23 +576,30 @@ function TeamChatPage() {
           {selected ? (
             <>
               <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
-                <div>
-                  <p className="text-sm font-semibold text-white">{roomTitle(selected, user.id)}</p>
-                  {selected.type === "GROUP" && (
-                    <p className="text-xs text-ink-muted">{selected.members.length} members</p>
-                  )}
-                  {otherMember && (
-                    <p className="text-xs text-ink-muted">
-                      {(() => {
-                        const status = presenceByUserId[otherMember.userId];
-                        if (status && status !== "OFFLINE")
-                          return PRESENCE_STATUS_META[status].label;
-                        if (status === "OFFLINE")
-                          return formatLastSeenPhrase(otherMember.user.lastSeenAt);
-                        return formatLastSeen(otherMember.user.lastSeenAt);
-                      })()}
-                    </p>
-                  )}
+                <div className="flex items-center gap-2.5">
+                  <Avatar
+                    name={roomTitle(selected, user.id)}
+                    avatarUrl={roomAvatarUrl(selected, user.id)}
+                    size={36}
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-white">{roomTitle(selected, user.id)}</p>
+                    {selected.type === "GROUP" && (
+                      <p className="text-xs text-ink-muted">{selected.members.length} members</p>
+                    )}
+                    {otherMember && (
+                      <p className="text-xs text-ink-muted">
+                        {(() => {
+                          const status = presenceByUserId[otherMember.userId];
+                          if (status && status !== "OFFLINE")
+                            return PRESENCE_STATUS_META[status].label;
+                          if (status === "OFFLINE")
+                            return formatLastSeenPhrase(otherMember.user.lastSeenAt);
+                          return formatLastSeen(otherMember.user.lastSeenAt);
+                        })()}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 {selected.type === "GROUP" && (
                   <div className="flex items-center gap-2">

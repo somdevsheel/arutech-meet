@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { ModalShell } from "@/components/dashboard/schedule-meeting-modal";
+import { Avatar } from "@/components/avatar";
 
 interface RoomMember {
   userId: string;
@@ -169,26 +170,32 @@ export function GroupSettingsModal({
               </span>
               <input value={name} onChange={(e) => setName(e.target.value)} className="input" />
             </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="flex items-center justify-between text-xs font-medium uppercase tracking-wide text-ink-muted">
-                Photo URL (optional)
-                {photoUrl && (
-                  <button
-                    type="button"
-                    onClick={() => setPhotoUrl("")}
-                    className="text-[10px] font-medium normal-case tracking-normal text-danger hover:underline"
-                  >
-                    Remove photo
-                  </button>
-                )}
-              </span>
-              <input
-                value={photoUrl}
-                onChange={(e) => setPhotoUrl(e.target.value)}
-                placeholder="https://…"
-                className="input"
-              />
-            </label>
+            <div className="flex items-center gap-3">
+              {/* M-8: this field always PATCHed photoUrl correctly, but
+                  nothing anywhere — including this very form — ever showed
+                  what it actually looked like once saved. */}
+              <Avatar name={name || room.name || "Group chat"} avatarUrl={photoUrl} size={48} />
+              <label className="flex flex-1 flex-col gap-1.5">
+                <span className="flex items-center justify-between text-xs font-medium uppercase tracking-wide text-ink-muted">
+                  Photo URL (optional)
+                  {photoUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setPhotoUrl("")}
+                      className="text-[10px] font-medium normal-case tracking-normal text-danger hover:underline"
+                    >
+                      Remove photo
+                    </button>
+                  )}
+                </span>
+                <input
+                  value={photoUrl}
+                  onChange={(e) => setPhotoUrl(e.target.value)}
+                  placeholder="https://…"
+                  className="input"
+                />
+              </label>
+            </div>
             <button
               onClick={saveDetails}
               disabled={saving}
