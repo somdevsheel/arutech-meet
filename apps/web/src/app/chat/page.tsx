@@ -222,12 +222,36 @@ function TeamChatPage() {
     apiFetch<ChatMessagePayload[]>(`/chat-rooms/${selectedId}/messages`).then((history) => {
       setMessages([...history].reverse());
     });
-    apiFetch(`/chat-rooms/${selectedId}/read`, { method: "POST" }).catch(() => {});
+    // H-12: this correctly marks the room read on the server, but the
+    // sidebar's own unread dot is computed from this component's local
+    // `rooms` state (mine.lastReadMessageId vs. the latest message id) —
+    // nothing ever refreshed that after the POST resolved, so it stayed lit
+    // until a full reload even though the server-side read state was
+    // already correct. Mirror the write locally instead of waiting for a
+    // refetch that never happens.
+    apiFetch(`/chat-rooms/${selectedId}/read`, { method: "POST" })
+      .then(() => {
+        setRooms((prev) =>
+          prev?.map((room) => {
+            if (room.id !== selectedId) return room;
+            const latest = room.messages[0];
+            if (!latest) return room;
+            return {
+              ...room,
+              members: room.members.map((m) =>
+                m.userId === user?.id ? { ...m, lastReadMessageId: latest.id } : m,
+              ),
+            };
+          }) ?? null,
+        );
+      })
+      .catch(() => {});
     setTypingUserIds(new Set());
 
     return () => {
       socket.emit(WS_EVENTS.ROOM_LEAVE, { chatRoomId: selectedId });
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- user.id is stable for the life of a session; re-running this on it would just re-emit ROOM_JOIN/LEAVE for no reason
   }, [selectedId, accessToken]);
 
   // Live incoming messages for the open room; refresh the room list's preview

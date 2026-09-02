@@ -48,7 +48,14 @@ export class NotificationsService {
    * sidebar's notification-driven unread badge and the room list's own
    * read-receipt-driven badge stay consistent — without this, reading a
    * room's messages wouldn't clear the CHAT_MESSAGE notifications that led
-   * you there, leaving a stale badge count. */
+   * you there, leaving a stale badge count.
+   *
+   * H-12: that DB update alone isn't enough — useNotifications (the topbar
+   * bell/nav badge) holds its own client-side cached copy of these
+   * notifications and never re-fetches on its own, so without a live push
+   * it stayed stale until a full reload. Same fan-out mechanism
+   * NOTIFICATION_CREATED already uses, so every open tab/device (not just
+   * the one that opened the room) picks it up. */
   async markChatRoomNotificationsRead(userId: string, chatRoomId: string) {
     await this.prisma.client.notification.updateMany({
       where: {
@@ -58,6 +65,9 @@ export class NotificationsService {
         data: { path: ["chatRoomId"], equals: chatRoomId },
       },
       data: { readAt: new Date() },
+    });
+    await this.broadcast.publishToRoom(`user:${userId}`, WS_EVENTS.NOTIFICATION_CHAT_ROOM_READ, {
+      chatRoomId,
     });
   }
 

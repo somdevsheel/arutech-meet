@@ -107,6 +107,15 @@ export const WS_EVENTS = {
   // Notifications (personal channel — every socket auto-joins `user:{id}` on
   // connect, see RealtimeGateway.handleConnection)
   NOTIFICATION_CREATED: "notification:created",
+  // H-12: opening a Team Chat room already correctly marks its CHAT_MESSAGE
+  // notifications read server-side (NotificationsService.
+  // markChatRoomNotificationsRead), but nothing ever told this — or any
+  // other open tab/device's — topbar bell that happened, so its cached
+  // unread count and notification list stayed stale until a full reload.
+  // Payload is just the room whose notifications were cleared; the client
+  // marks its own matching cached notifications read and recomputes count
+  // locally rather than needing a full re-fetch.
+  NOTIFICATION_CHAT_ROOM_READ: "notification:chat_room_read",
 
   // Team chat (standing chat rooms outside any meeting — GROUP/DIRECT
   // ChatRoom types; distinct from CHAT_MESSAGE above, which is meeting-scoped)
@@ -196,6 +205,10 @@ export type SettablePresenceStatus = (typeof SETTABLE_PRESENCE_STATUSES)[number]
 export interface UserPresenceUpdatedPayload {
   userId: string;
   status: UserPresenceStatus;
+}
+
+export interface NotificationChatRoomReadPayload {
+  chatRoomId: string;
 }
 
 export interface ParticipantPresencePayload {
