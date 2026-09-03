@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocalParticipant } from "@livekit/components-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { REACTION_EMOJIS, type ReactionEmoji } from "@arutech/types";
 import { VirtualBackgroundPanel } from "./virtual-background-panel";
 import { useVirtualBackground } from "@/hooks/use-virtual-background";
@@ -55,6 +55,26 @@ export function MeetingToolbar({
   const [busy, setBusy] = useState(false);
   const [reactionsOpen, setReactionsOpen] = useState(false);
   const [backgroundOpen, setBackgroundOpen] = useState(false);
+  // Drives the mobile-only scroll-hint fade below — only actually shown
+  // while there's real content still off to the right, so it doesn't sit
+  // there implying more controls exist once you've already scrolled all the
+  // way to Captions. Starts true (most phones open with everything
+  // scrolled to the start, i.e. something IS cut off) and gets corrected by
+  // the first real measurement a moment after mount.
+  const [hasMoreControlsToScroll, setHasMoreControlsToScroll] = useState(true);
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const update = () => setHasMoreControlsToScroll(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    update();
+    el.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => {
+      el.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
   // Called here rather than inside VirtualBackgroundPanel itself: that panel
   // only exists in the DOM while its popover is open, so `mode`/`imagePath`/
   // the processor ref all used to live and die with every open/close — the
@@ -108,7 +128,16 @@ export function MeetingToolbar({
     // that scroller so the one action you always need is never the part
     // that's hidden.
     <footer className="flex h-20 flex-none items-center gap-2 border-t border-surface-border bg-surface-raised pl-3 pr-3 md:justify-between md:gap-4 md:px-6">
-      <div className="flex flex-1 items-center gap-3 overflow-x-auto md:flex-none md:gap-4 md:overflow-visible">
+      {/* The scroll itself was the fix above — this wrapper is a second,
+          separate fix: swiping a row of icons with no visual hint it
+          scrolls doesn't read as "more controls over here," it reads as a
+          layout bug (a button's label cut off mid-word at the edge). The
+          fade + chevron make the affordance actually visible, mobile only. */}
+      <div className="relative min-w-0 flex-1 md:flex-none">
+        <div
+          ref={scrollerRef}
+          className="flex items-center gap-3 overflow-x-auto pr-7 md:gap-4 md:overflow-visible md:pr-0"
+        >
       <div className="flex flex-none items-center gap-1.5">
         <Control
           label={isMicrophoneEnabled ? "Mute" : "Unmute"}
@@ -288,6 +317,17 @@ export function MeetingToolbar({
           </Control>
         )}
       </div>
+        </div>
+        {hasMoreControlsToScroll && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 right-0 flex w-7 items-center justify-end bg-gradient-to-l from-surface-raised to-transparent md:hidden"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-ink-3">
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-none items-center gap-2">

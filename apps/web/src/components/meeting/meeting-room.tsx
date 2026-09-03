@@ -497,7 +497,7 @@ export function MeetingRoom({
                 className="min-w-0 rounded-lg px-2 py-1 text-center transition hover:bg-surface-field"
               >
                 <h1 className="truncate text-sm font-semibold text-white">{title}</h1>
-                <p className="text-[11px] text-ink-muted">Code: {meetingCode}</p>
+                <p className="truncate text-[11px] text-ink-muted">Code: {meetingCode}</p>
               </button>
               <div className="flex items-center justify-end gap-3" style={{ minWidth: 120 }}>
                 <span className="font-mono text-[13px] tabular-nums text-ink-muted">
