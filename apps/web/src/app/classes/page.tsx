@@ -70,7 +70,7 @@ export default function ClassesPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Classes</h1>
 
         <div className="flex flex-col gap-3 rounded-xl border border-surface-border bg-surface-raised p-5">
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}

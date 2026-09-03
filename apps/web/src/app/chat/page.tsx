@@ -128,6 +128,18 @@ function TeamChatPage() {
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
   const [rooms, setRooms] = useState<RoomSummary[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get("room"));
+  // Below `md`, the list and the open conversation can't sit side by side
+  // the way they do on desktop (a 288px list plus this pane leaves next to
+  // nothing for messages on a phone-width screen) — so on mobile only one
+  // is shown at a time, and this tracks which. Starts true only when a
+  // specific room was already in the URL at mount (a direct link to a
+  // conversation should open straight into it); the "no ?room= yet, default
+  // to the first conversation" fallback a few effects down deliberately
+  // does NOT flip this — that default shouldn't yank a mobile visitor past
+  // the list into a chat they never asked to open.
+  const [mobileShowConversation, setMobileShowConversation] = useState(() =>
+    Boolean(searchParams.get("room")),
+  );
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
   const [draft, setDraft] = useState("");
   const [showNewRoom, setShowNewRoom] = useState(false);
@@ -168,9 +180,29 @@ function TeamChatPage() {
   // switching between conversations already open on this page is a within-
   // page state change, not a new place to visit, so it shouldn't spam the
   // back button with one history entry per room clicked.
-  function selectRoom(roomId: string) {
+  // `router.replace` below feeds back into the `roomParam`-watching effect
+  // just under this (it updates the very `room` URL param that effect
+  // watches) — this ref is how that effect tells "the URL changed because
+  // OUR OWN code just called applyRoomSelection" apart from "the URL
+  // changed because something external navigated here" (app-shell.tsx's
+  // own deep link, e.g.). Without it, the auto-default-to-first-room
+  // fallback below — which deliberately calls `applyRoomSelection` instead
+  // of `selectRoom` specifically to skip the mobile reveal — would still
+  // trigger that reveal indirectly, one render later, the moment its own
+  // router.replace call lands and the effect sees `roomParam` change.
+  const lastAppliedRoomIdRef = useRef<string | null>(null);
+  // Shared by every "open this specific room" path (explicit click, deep
+  // link) below — NOT by the auto-default-to-first-room fallback, which
+  // calls `applyRoomSelection` directly instead so it can skip the mobile
+  // reveal (see `mobileShowConversation`'s own comment above).
+  function applyRoomSelection(roomId: string) {
     setSelectedId(roomId);
+    lastAppliedRoomIdRef.current = roomId;
     router.replace(`${pathname}?room=${roomId}`);
+  }
+  function selectRoom(roomId: string) {
+    applyRoomSelection(roomId);
+    setMobileShowConversation(true);
   }
 
   // `selectedId`'s useState initializer above only ever reads searchParams
@@ -185,7 +217,14 @@ function TeamChatPage() {
   // re-fires when the URL's room id genuinely changes).
   const roomParam = searchParams.get("room");
   useEffect(() => {
-    if (roomParam) setSelectedId(roomParam);
+    // Only an external change — see `lastAppliedRoomIdRef` above.
+    if (roomParam && roomParam !== lastAppliedRoomIdRef.current) {
+      setSelectedId(roomParam);
+      // A deep link is exactly the "user asked for this specific
+      // conversation" case `mobileShowConversation` exists for.
+      setMobileShowConversation(true);
+      lastAppliedRoomIdRef.current = roomParam;
+    }
   }, [roomParam]);
 
   useEffect(() => {
@@ -198,8 +237,10 @@ function TeamChatPage() {
       setRooms(data);
       // Same fix as selectRoom() above — whichever room ends up open,
       // including this default "no ?room= yet, land on the first one"
-      // case, the URL should reflect it.
-      if (!selectedId && data[0]) selectRoom(data[0].id);
+      // case, the URL should reflect it. `applyRoomSelection`, not
+      // `selectRoom` — this default pick is not something a mobile visitor
+      // asked for, so it shouldn't jump them past the conversation list.
+      if (!selectedId && data[0]) applyRoomSelection(data[0].id);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasHydrated, accessToken]);
@@ -526,7 +567,9 @@ function TeamChatPage() {
       }}
     >
       <div className="flex h-full min-h-0 gap-4">
-        <div className="flex w-72 flex-none flex-col gap-2 overflow-y-auto">
+        <div
+          className={`${mobileShowConversation ? "hidden" : "flex"} w-full flex-none flex-col gap-2 overflow-y-auto md:flex md:w-72`}
+        >
           <div className="flex items-center justify-between">
             <h1 className="text-lg font-semibold tracking-tight">Team Chat</h1>
             <button
@@ -598,11 +641,22 @@ function TeamChatPage() {
           </ul>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col rounded-xl border border-surface-border bg-surface-raised">
+        <div
+          className={`${mobileShowConversation ? "flex" : "hidden"} min-w-0 flex-1 flex-col rounded-xl border border-surface-border bg-surface-raised md:flex`}
+        >
           {selected ? (
             <>
               <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
                 <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={() => setMobileShowConversation(false)}
+                    aria-label="Back to conversations"
+                    className="grid h-8 w-8 flex-none place-items-center rounded-lg text-ink-3 hover:bg-surface-field md:hidden"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M15 18l-6-6 6-6" />
+                    </svg>
+                  </button>
                   <Avatar
                     name={roomTitle(selected, user.id)}
                     avatarUrl={roomAvatarUrl(selected, user.id)}

@@ -97,8 +97,19 @@ export function MeetingToolbar({
   }
 
   return (
-    <footer className="flex h-20 flex-none items-center justify-between gap-4 border-t border-surface-border bg-surface-raised px-6">
-      <div className="flex items-center gap-1.5">
+    // Every control between Mute and Captions can genuinely outgrow a phone-
+    // width screen (mic/cam/background + hand/react/participants/chat/share/
+    // record/whiteboard/tools/captions is 9-12 buttons at once) — on desktop
+    // that's fine at `justify-between` width, but on mobile it used to just
+    // silently clip past the visible edge with no way to scroll to it,
+    // making Whiteboard/Tools/Captions — and worse, End meeting/Leave —
+    // completely unreachable. Both control groups now scroll together as one
+    // unit (`overflow-x-auto`); End meeting/Leave stay `flex-none` outside
+    // that scroller so the one action you always need is never the part
+    // that's hidden.
+    <footer className="flex h-20 flex-none items-center gap-2 border-t border-surface-border bg-surface-raised pl-3 pr-3 md:justify-between md:gap-4 md:px-6">
+      <div className="flex flex-1 items-center gap-3 overflow-x-auto md:flex-none md:gap-4 md:overflow-visible">
+      <div className="flex flex-none items-center gap-1.5">
         <Control
           label={isMicrophoneEnabled ? "Mute" : "Unmute"}
           off={!isMicrophoneEnabled}
@@ -120,7 +131,7 @@ export function MeetingToolbar({
           <rect x="3" y="6" width="12" height="12" rx="2" />
           <path d="m15 11 6-4v10l-6-4" />
         </Control>
-        <div className="relative">
+        <div className="relative flex-none">
           <Control
             label="Background"
             active={backgroundOpen}
@@ -139,7 +150,7 @@ export function MeetingToolbar({
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-none items-center gap-1.5">
         <Control
           label={handRaised ? "Lower hand" : "Raise hand"}
           active={handRaised}
@@ -147,7 +158,7 @@ export function MeetingToolbar({
         >
           <path d="M8 13V6a1.5 1.5 0 0 1 3 0v5M11 11V4a1.5 1.5 0 0 1 3 0v7M14 11.5V6a1.5 1.5 0 0 1 3 0v8c0 3.3-2.7 6-6 6h-1a6 6 0 0 1-5-2.7L3 13.5a1.4 1.4 0 0 1 2.2-1.7L8 15" />
         </Control>
-        <div className="relative">
+        <div className="relative flex-none">
           <Control label="React" active={reactionsOpen} onClick={() => setReactionsOpen((v) => !v)}>
             <circle cx="12" cy="12" r="9" />
             <path d="M8.5 10.5h.01M15.5 10.5h.01M8 14.5c.9 1.2 2.3 2 4 2s3.1-.8 4-2" />
@@ -194,7 +205,7 @@ export function MeetingToolbar({
           <button
             onClick={() => toggle("screen")}
             disabled={busy}
-            className={`flex flex-col items-center gap-1.5 rounded-lg px-4 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+            className={`flex flex-none flex-col items-center gap-1.5 rounded-lg px-4 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
               isScreenShareEnabled
                 ? "bg-success text-white"
                 : "bg-success-bg text-success hover:brightness-110"
@@ -277,6 +288,7 @@ export function MeetingToolbar({
           </Control>
         )}
       </div>
+      </div>
 
       <div className="flex flex-none items-center gap-2">
         {canEndMeeting && (
@@ -324,7 +336,7 @@ function Control({
       onClick={onClick}
       disabled={disabled}
       aria-pressed={active}
-      className={`relative flex flex-col items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium transition disabled:opacity-50 ${
+      className={`relative flex flex-none flex-col items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium transition disabled:opacity-50 ${
         active ? "bg-surface-field text-white" : "text-ink-3 hover:bg-surface-field"
       }`}
     >

@@ -117,7 +117,7 @@ export default function CourseDetailPage() {
 
           {showNewBatchForm && (
             <div className="mb-3 flex flex-col gap-2 rounded-lg border border-surface-border2 bg-surface-field p-3">
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <input
                   value={batchTitle}
                   onChange={(e) => setBatchTitle(e.target.value)}

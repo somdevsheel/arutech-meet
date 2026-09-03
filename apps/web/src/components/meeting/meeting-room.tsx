@@ -510,7 +510,7 @@ export function MeetingRoom({
               <WaitingRoomPanel meetingId={meetingId} refreshSignal={waitingRoomCount} />
             )}
 
-            <div className="flex min-h-0 flex-1 overflow-hidden">
+            <div className="relative flex min-h-0 flex-1 overflow-hidden">
               {/* Requested layout: Whiteboard is its own top-level panel
                   (meeting-toolbar.tsx, next to Record) — when it's open, it
                   takes the main stage full-size and the video grid moves to
@@ -573,7 +573,26 @@ export function MeetingRoom({
               </div>
 
               {panel && (
-                <aside className="flex w-[320px] flex-none flex-col border-l border-surface-border bg-surface-raised">
+                // Full-screen overlay below `md` (matches AppShell's own
+                // mobile breakpoint) — the fixed 320px sidebar this is on
+                // desktop otherwise squeezes the main video area down to a
+                // barely-visible sliver on a phone-width screen (a 375px
+                // viewport minus 320px leaves ~55px for the whole main
+                // stage). `md:` reverts to the normal side-by-side panel
+                // unchanged. The wrapping flex row above is `relative`
+                // specifically so this can anchor to it with `inset-0`.
+                //
+                // Whiteboard is the one exception: it's not a side panel at
+                // all, it's the main stage's own content (isWhiteboardOpen
+                // swaps WhiteboardCanvas in below) — this aside only exists
+                // for THAT panel to show the video grid alongside it. On
+                // mobile there's no room for both at once, and the
+                // whiteboard is the reason you opened this in the first
+                // place, so it wins: skip the overlay entirely below `md`
+                // rather than have it cover the canvas you just asked for.
+                <aside
+                  className={`${isWhiteboardOpen ? "hidden md:flex" : "flex"} absolute inset-0 z-10 w-full flex-none flex-col border-l border-surface-border bg-surface-raised md:static md:inset-auto md:z-auto md:flex md:w-[320px]`}
+                >
                   <div className="flex gap-1 border-b border-surface-border px-3 pt-3">
                     {PANEL_TABS.map((tab) => (
                       <button
