@@ -114,6 +114,32 @@ describe("TeamsService", () => {
     });
   });
 
+  describe("addMember", () => {
+    it("requires LEAD", async () => {
+      const { service } = makeService({ teamMembers: { "user-2": null } });
+      await expect(service.addMember("team-1", "member-1", "user-2")).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it("refuses to add someone who isn't a member of the parent org", async () => {
+      const { service } = makeService({ orgMembership: null, teamMembers: { "user-2": null } });
+      await expect(service.addMember("team-1", "lead-1", "user-2")).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it("refuses to add someone already on the team", async () => {
+      const { service } = makeService();
+      await expect(service.addMember("team-1", "lead-1", "member-1")).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it("adds both a TeamMember and a ChatMember together, as a regular MEMBER", async () => {
+      const { service, prisma } = makeService({ teamMembers: { "user-2": null } });
+      await service.addMember("team-1", "lead-1", "user-2");
+      expect(prisma.client.$transaction).toHaveBeenCalled();
+      expect(prisma.client.teamMember.create).toHaveBeenCalledWith({
+        data: { teamId: "team-1", userId: "user-2", role: "MEMBER" },
+      });
+    });
+  });
+
   describe("member management", () => {
     it("removeMember requires LEAD", async () => {
       const { service } = makeService();

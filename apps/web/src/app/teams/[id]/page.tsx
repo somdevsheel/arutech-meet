@@ -25,6 +25,11 @@ interface TeamMemberRow {
   user: { id: string; displayName: string; username: string; avatarUrl: string | null };
 }
 
+interface OrgMemberRow {
+  userId: string;
+  user: { id: string; displayName: string; username: string };
+}
+
 /** A Team's home — chat + meetings + membership, the same relationship
  * shape `ChatRoom`/`Meeting` already have to a `Class`. See
  * docs/roadmap.md's Teams stage for the full design (including why "Start a
@@ -45,6 +50,19 @@ export default function TeamDetailPage() {
 
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+
+  // Teams were deliberately "self-serve" — any org member can freely join
+  // one themselves, no invite-gated flow of its own (see TeamsService's own
+  // class doc comment). In practice that left a lead with no way to get a
+  // specific person in at all beyond telling them out-of-band "go to this
+  // URL and click Join" — no team directory anyone would stumble across, no
+  // notification a new team even exists. This adds the direct-add a lead
+  // actually needs, the same way OrganizationsService offers both an
+  // invite-by-email flow AND a direct addMember for "I already know who I
+  // want" — self-serve join stays exactly as it was.
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [orgMembers, setOrgMembers] = useState<OrgMemberRow[] | null>(null);
+  const [addBusy, setAddBusy] = useState<string | null>(null);
 
   const me = members?.find((m) => m.userId === user?.id);
   const isMember = Boolean(me);
@@ -80,6 +98,28 @@ export default function TeamDetailPage() {
       setError(err instanceof ApiError ? err.message : "Failed to join team");
     } finally {
       setBusy(null);
+    }
+  }
+
+  function openAddMember() {
+    setShowAddMember(true);
+    if (!orgMembers && team) {
+      apiFetch<OrgMemberRow[]>(`/organizations/${team.orgId}/members`)
+        .then(setOrgMembers)
+        .catch(() => setOrgMembers([]));
+    }
+  }
+
+  async function addMember(userId: string) {
+    setAddBusy(userId);
+    setError(null);
+    try {
+      await apiFetch(`/teams/${teamId}/members`, { method: "POST", body: JSON.stringify({ userId }) });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to add member");
+    } finally {
+      setAddBusy(null);
     }
   }
 
@@ -275,7 +315,52 @@ export default function TeamDetailPage() {
               </div>
 
               <div className="w-[260px] flex-none overflow-y-auto rounded-xl border border-surface-border bg-surface-raised p-3">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-muted">Members</p>
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">Members</p>
+                  {isLead && (
+                    <button
+                      onClick={() => (showAddMember ? setShowAddMember(false) : openAddMember())}
+                      className="text-[11px] font-medium text-brand-300 hover:underline"
+                    >
+                      {showAddMember ? "Cancel" : "+ Add"}
+                    </button>
+                  )}
+                </div>
+
+                {showAddMember && (
+                  <div className="mb-3 flex flex-col gap-1 border-b border-surface-border pb-3">
+                    {orgMembers === null && <p className="text-[11px] text-ink-muted">Loading…</p>}
+                    {orgMembers &&
+                      (() => {
+                        const addable = orgMembers.filter(
+                          (om) => !members?.some((m) => m.userId === om.userId),
+                        );
+                        if (addable.length === 0) {
+                          return (
+                            <p className="text-[11px] text-ink-muted">
+                              Every organization member is already on this team.
+                            </p>
+                          );
+                        }
+                        return addable.map((om) => (
+                          <div
+                            key={om.userId}
+                            className="flex items-center justify-between gap-2 rounded-lg bg-surface-field px-2.5 py-1.5"
+                          >
+                            <span className="truncate text-xs text-ink-2">{om.user.displayName}</span>
+                            <button
+                              onClick={() => addMember(om.userId)}
+                              disabled={addBusy === om.userId}
+                              className="flex-none text-[10px] font-medium text-brand-300 hover:underline disabled:opacity-50"
+                            >
+                              {addBusy === om.userId ? "Adding…" : "Add"}
+                            </button>
+                          </div>
+                        ));
+                      })()}
+                  </div>
+                )}
+
                 <ul aria-label="Team members" className="flex flex-col gap-1.5">
                   {members?.map((m) => (
                     <li key={m.userId} className="flex items-center justify-between rounded-lg bg-surface-field px-2.5 py-1.5 text-xs">

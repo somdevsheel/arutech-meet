@@ -1,8 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import {
+  addTeamMemberSchema,
   updateTeamSchema,
   updateTeamMemberRoleSchema,
+  type AddTeamMemberDto,
   type UpdateTeamDto,
   type UpdateTeamMemberRoleDto,
 } from "@arutech/validation";
@@ -43,6 +45,15 @@ export class TeamsController {
   @Post(":id/join")
   join(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.teams.join(id, user.id);
+  }
+
+  @Post(":id/members")
+  addMember(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(addTeamMemberSchema)) dto: AddTeamMemberDto,
+  ) {
+    return this.teams.addMember(id, user.id, dto.userId);
   }
 
   @Post(":id/leave")

@@ -140,6 +140,41 @@ export class TeamsService {
     return membership;
   }
 
+  // The class doc comment above calls teams "self-serve" by design — any
+  // org member can freely join one themselves, deliberately not another
+  // invite-gated flow to duplicate the org's own. In practice that meant a
+  // lead had genuinely no way to get a specific person in at all beyond
+  // telling them out-of-band "go to this URL and click Join": there's no
+  // team directory anyone would stumble across, no notification a new team
+  // exists, nothing. Self-serve join stays (it's still the lighter path for
+  // someone who already knows they want in), but a lead can now also just
+  // add someone directly — the same direct-add OrganizationsService.
+  // addMember already offers alongside its own invite-by-email flow, for
+  // exactly this "I already know who I want, skip the ceremony" case.
+  async addMember(teamId: string, callerUserId: string, targetUserId: string) {
+    const team = await this.getTeamOrThrow(teamId);
+    await this.requireLead(teamId, callerUserId);
+    // Can't add someone who isn't even in the parent org — a team is a
+    // sub-group of org members, not its own independent invite surface.
+    const orgMembership = await this.prisma.client.membership.findUnique({
+      where: { orgId_userId: { orgId: team.orgId, userId: targetUserId } },
+    });
+    if (!orgMembership) throw new ForbiddenException("That person isn't a member of this organization");
+
+    const existing = await this.prisma.client.teamMember.findUnique({
+      where: { teamId_userId: { teamId, userId: targetUserId } },
+    });
+    if (existing) throw new ConflictException("Already a member of this team");
+
+    const [membership] = await this.prisma.client.$transaction([
+      this.prisma.client.teamMember.create({ data: { teamId, userId: targetUserId, role: "MEMBER" } }),
+      this.prisma.client.chatMember.create({
+        data: { chatRoomId: team.chatRoom!.id, userId: targetUserId },
+      }),
+    ]);
+    return membership;
+  }
+
   async leave(teamId: string, callerUserId: string) {
     const team = await this.getTeamOrThrow(teamId);
     await this.assertNotSoleLeadRemoval(teamId, callerUserId, "left");
