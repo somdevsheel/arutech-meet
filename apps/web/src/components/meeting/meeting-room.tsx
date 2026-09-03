@@ -158,6 +158,46 @@ export function MeetingRoom({
   // stops being true.
   const isWhiteboardOpen = panel === "whiteboard";
 
+  // Opening/closing the whiteboard is otherwise a purely local `panel`
+  // toggle — nothing told anyone else it happened, so a host opening it
+  // wasn't actually visible to participants at all; they'd stay on
+  // whatever panel or video view they already had. This makes it behave
+  // like starting a screen share instead: broadcast the transition
+  // whenever `panel` crosses into/out of "whiteboard" (covers every way
+  // that can happen — the toolbar button, switching straight to another
+  // tab while it's open, or closing the panel outright — since they all
+  // just change this one piece of state), and force every other client's
+  // `panel` to follow, below. Only emitted when this participant can
+  // actually edit the whiteboard (server would reject it otherwise) — a
+  // viewer-only participant opening it locally to look shouldn't be able
+  // to swap everyone else's screen.
+  const prevPanelRef = useRef<PanelKind | null>(null);
+  useEffect(() => {
+    const prev = prevPanelRef.current;
+    prevPanelRef.current = panel;
+    if (!socket || !canEditWhiteboard) return;
+    if (panel === "whiteboard" && prev !== "whiteboard") {
+      socket.emit(WS_EVENTS.WHITEBOARD_OPENED, { meetingId });
+    } else if (prev === "whiteboard" && panel !== "whiteboard") {
+      socket.emit(WS_EVENTS.WHITEBOARD_CLOSED, { meetingId });
+    }
+  }, [panel, socket, canEditWhiteboard, meetingId]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onOpened = () => setPanel("whiteboard");
+    // Only snap back if this client was actually following the shared
+    // whiteboard view — if they'd already navigated to Chat/Tools/etc.
+    // themselves in the meantime, leave them where they are.
+    const onClosed = () => setPanel((cur) => (cur === "whiteboard" ? null : cur));
+    socket.on(WS_EVENTS.WHITEBOARD_OPENED, onOpened);
+    socket.on(WS_EVENTS.WHITEBOARD_CLOSED, onClosed);
+    return () => {
+      socket.off(WS_EVENTS.WHITEBOARD_OPENED, onOpened);
+      socket.off(WS_EVENTS.WHITEBOARD_CLOSED, onClosed);
+    };
+  }, [socket]);
+
   async function endMeeting() {
     try {
       await apiFetch(`/meetings/${meetingId}/end`, { method: "POST" });

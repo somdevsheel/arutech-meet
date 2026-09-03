@@ -48,6 +48,17 @@ export const WS_EVENTS = {
   // Whiteboard
   WHITEBOARD_OP: "whiteboard:op",
   WHITEBOARD_PAGE_SYNC: "whiteboard:page_sync",
+  // Presentation-style visibility, distinct from WHITEBOARD_OP's drawing sync
+  // above: opening the whiteboard is a local-only UI toggle on its own (each
+  // client's `panel` state), so without this, a host opening it had no way
+  // to make it actually appear for anyone else — they'd stay on whatever
+  // panel/video view they already had, with no indication the whiteboard
+  // was even in use. Mirrors how starting a screen share becomes visible to
+  // everyone automatically, not just something you'd have to go looking for.
+  // Gated server-side by the same `whiteboard.edit` capability WHITEBOARD_OP
+  // uses, so only someone who can actually present it can force it open.
+  WHITEBOARD_OPENED: "whiteboard:opened",
+  WHITEBOARD_CLOSED: "whiteboard:closed",
 
   // Polls / quizzes
   POLL_PUBLISHED: "poll:published",
@@ -231,6 +242,10 @@ export interface ReactionPayload {
 }
 
 export interface LocalRecordingPayload {
+  displayName: string;
+}
+
+export interface WhiteboardVisibilityPayload {
   displayName: string;
 }
 

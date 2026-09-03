@@ -21,6 +21,7 @@ import {
   type ReactionEmoji,
   type ReactionPayload,
   type LocalRecordingPayload,
+  type WhiteboardVisibilityPayload,
   type ChatReactionEmoji,
   type SettablePresenceStatus,
   type UserPresenceStatus,
@@ -544,6 +545,33 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       ...dto,
       fromUserId: userId,
     });
+  }
+
+  /** Presentation-style visibility for the whiteboard: opening/closing it is
+   * otherwise a purely local UI toggle (each client's own `panel` state), so
+   * without this broadcast, a host opening the whiteboard had no way to make
+   * it actually appear for anyone else — see WHITEBOARD_OPENED's doc comment
+   * in websocket-events.ts. Gated by the same `whiteboard.edit` capability
+   * WHITEBOARD_OP uses, so only someone who could actually draw on it can
+   * force it open for the room — a viewer-only participant peeking at it
+   * shouldn't be able to swap everyone else's screen. */
+  @SubscribeMessage(WS_EVENTS.WHITEBOARD_OPENED)
+  async onWhiteboardOpened(@ConnectedSocket() client: Socket, @MessageBody() body: { meetingId: string }) {
+    const data = client.data as SocketData;
+    await this.permissions.requireCapability(body.meetingId, data.userId, "whiteboard.edit");
+    if (!(await this.featureFlags.isEnabledForMeeting("WHITEBOARD", body.meetingId))) {
+      throw new ForbiddenException("Whiteboard is disabled for this meeting");
+    }
+    const payload: WhiteboardVisibilityPayload = { displayName: data.presence?.displayName ?? "A participant" };
+    client.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.WHITEBOARD_OPENED, payload);
+  }
+
+  @SubscribeMessage(WS_EVENTS.WHITEBOARD_CLOSED)
+  async onWhiteboardClosed(@ConnectedSocket() client: Socket, @MessageBody() body: { meetingId: string }) {
+    const data = client.data as SocketData;
+    await this.permissions.requireCapability(body.meetingId, data.userId, "whiteboard.edit");
+    const payload: WhiteboardVisibilityPayload = { displayName: data.presence?.displayName ?? "A participant" };
+    client.to(meetingRoom(body.meetingId)).emit(WS_EVENTS.WHITEBOARD_CLOSED, payload);
   }
 
   // ── Presence (online/away/busy/DND) ─────────────────────────────────────
