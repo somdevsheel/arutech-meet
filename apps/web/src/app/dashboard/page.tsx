@@ -51,6 +51,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<"schedule" | "join" | null>(null);
   const [inviteMeeting, setInviteMeeting] = useState<{ id: string; title: string } | null>(null);
+  const [editingMeeting, setEditingMeeting] = useState<Meeting | null>(null);
   const [hour, setHour] = useState<number | null>(null);
   const [personalRoom, setPersonalRoom] = useState<Meeting | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -277,6 +278,9 @@ export default function DashboardPage() {
                     ? () => setInviteMeeting({ id: m.id, title: m.title })
                     : undefined
                 }
+                onEdit={
+                  m.status === "SCHEDULED" && m.ownerId === user?.id ? () => setEditingMeeting(m) : undefined
+                }
               />
             ))}
           </ul>
@@ -310,6 +314,16 @@ export default function DashboardPage() {
           meetingId={inviteMeeting.id}
           meetingTitle={inviteMeeting.title}
           onClose={() => setInviteMeeting(null)}
+        />
+      )}
+      {editingMeeting && (
+        <ScheduleMeetingModal
+          editMeeting={editingMeeting}
+          onClose={() => setEditingMeeting(null)}
+          onScheduled={(meeting) => {
+            setMeetings((prev) => prev.map((m) => (m.id === meeting.id ? meeting : m)));
+            setEditingMeeting(null);
+          }}
         />
       )}
     </AppShell>
@@ -356,7 +370,15 @@ function ActionCard({
   );
 }
 
-function MeetingRow({ meeting, onInvite }: { meeting: Meeting; onInvite?: () => void }) {
+function MeetingRow({
+  meeting,
+  onInvite,
+  onEdit,
+}: {
+  meeting: Meeting;
+  onInvite?: () => void;
+  onEdit?: () => void;
+}) {
   return (
     <li className="flex items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-4 py-3 transition hover:border-brand-500">
       <Link href={`/meeting/${meeting.code}`} className="flex min-w-0 flex-1 items-center justify-between">
@@ -379,8 +401,22 @@ function MeetingRow({ meeting, onInvite }: { meeting: Meeting; onInvite?: () => 
       </Link>
       {/* Only ever shown for a scheduled meeting this user owns — see the
           dashboard's own render-site comment. There was previously no way
-          to invite a specific person to a meeting at all, only a copyable
-          link (meeting-info-panel.tsx's "Invite people"). */}
+          to edit a scheduled meeting at all once created (topic, time,
+          waiting room, password) even though PATCH /meetings/:id/settings
+          already handled every one of those fields — nor to invite a
+          specific person to it, only a copyable link (meeting-info-panel.
+          tsx's "Invite people"). */}
+      {onEdit && (
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            onEdit();
+          }}
+          className="flex-none rounded-lg border border-surface-border2 bg-surface-field px-3 py-1.5 text-xs font-medium text-ink-3 hover:brightness-110"
+        >
+          Edit
+        </button>
+      )}
       {onInvite && (
         <button
           onClick={(e) => {

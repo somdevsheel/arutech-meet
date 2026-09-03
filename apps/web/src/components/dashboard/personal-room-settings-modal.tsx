@@ -93,52 +93,13 @@ export function PersonalRoomSettingsModal({
           onChange={(v) => setSettings((s) => ({ ...s, allowRecording: v }))}
         />
 
-        <label className="flex flex-col gap-1.5">
-          <span className="flex items-center justify-between gap-2 text-sm font-medium text-white">
-            <span>
-              Meeting password{" "}
-              {requiresPassword && !removePassword && <span className="font-normal text-success">(currently set)</span>}
-              {removePassword && <span className="font-normal text-danger">(will be removed)</span>}
-            </span>
-            {requiresPassword &&
-              (removePassword ? (
-                <button
-                  type="button"
-                  onClick={() => setRemovePassword(false)}
-                  className="text-xs font-medium text-brand-300 hover:text-brand-200"
-                >
-                  Undo
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRemovePassword(true);
-                    setPassword("");
-                  }}
-                  className="rounded px-1.5 py-0.5 text-xs font-medium text-danger hover:bg-danger/10"
-                >
-                  Remove password
-                </button>
-              ))}
-          </span>
-          <span className="text-xs text-ink-muted">
-            {removePassword
-              ? "Anyone with the link will be able to join without a password once you save."
-              : requiresPassword
-                ? "Leave blank to keep the current password, or enter a new one to change it."
-                : "Leave blank for no password."}
-          </span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={requiresPassword ? "New password" : "e.g. lets-meet-2026"}
-            className="input disabled:opacity-50"
-            autoComplete="new-password"
-            disabled={removePassword}
-          />
-        </label>
+        <MeetingPasswordField
+          requiresPassword={requiresPassword}
+          password={password}
+          onPasswordChange={setPassword}
+          removePassword={removePassword}
+          onRemovePasswordChange={setRemovePassword}
+        />
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-white">Restrict by email domain</span>
@@ -170,6 +131,74 @@ export function PersonalRoomSettingsModal({
         </div>
       </div>
     </ModalShell>
+  );
+}
+
+/** Shared by PersonalRoomSettingsModal and ScheduleMeetingModal's edit mode
+ * — the exact same three-way password affordance (leave as-is / set a new
+ * one / explicitly remove it) applies to any meeting that already exists,
+ * not just the personal room. Extracted here rather than duplicated after
+ * the Schedule modal grew edit support and needed the identical UI. */
+export function MeetingPasswordField({
+  requiresPassword,
+  password,
+  onPasswordChange,
+  removePassword,
+  onRemovePasswordChange,
+}: {
+  requiresPassword: boolean;
+  password: string;
+  onPasswordChange: (v: string) => void;
+  removePassword: boolean;
+  onRemovePasswordChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="flex items-center justify-between gap-2 text-sm font-medium text-white">
+        <span>
+          Meeting password{" "}
+          {requiresPassword && !removePassword && <span className="font-normal text-success">(currently set)</span>}
+          {removePassword && <span className="font-normal text-danger">(will be removed)</span>}
+        </span>
+        {requiresPassword &&
+          (removePassword ? (
+            <button
+              type="button"
+              onClick={() => onRemovePasswordChange(false)}
+              className="text-xs font-medium text-brand-300 hover:text-brand-200"
+            >
+              Undo
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                onRemovePasswordChange(true);
+                onPasswordChange("");
+              }}
+              className="rounded px-1.5 py-0.5 text-xs font-medium text-danger hover:bg-danger/10"
+            >
+              Remove password
+            </button>
+          ))}
+      </span>
+      <span className="text-xs text-ink-muted">
+        {removePassword
+          ? "Anyone with the link will be able to join without a password once you save."
+          : requiresPassword
+            ? "Leave blank to keep the current password, or enter a new one to change it."
+            : "Leave blank for no password."}
+      </span>
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => onPasswordChange(e.target.value)}
+        placeholder={requiresPassword ? "New password" : "e.g. lets-meet-2026"}
+        className="input disabled:opacity-50"
+        autoComplete="new-password"
+        disabled={removePassword}
+      />
+    </label>
   );
 }
 
