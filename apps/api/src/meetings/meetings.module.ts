@@ -10,6 +10,8 @@ import { AuditLogModule } from "../audit/audit-log.module";
 import { FeatureFlagsModule } from "../feature-flags/feature-flags.module";
 import { OrganizationsModule } from "../organizations/organizations.module";
 import { ContactsModule } from "../contacts/contacts.module";
+import { MailModule } from "../mail/mail.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
   imports: [
@@ -20,6 +22,8 @@ import { ContactsModule } from "../contacts/contacts.module";
     FeatureFlagsModule,
     OrganizationsModule,
     ContactsModule,
+    MailModule,
+    NotificationsModule,
   ],
   controllers: [MeetingsController, ParticipantsController],
   providers: [MeetingsService, ParticipantsService],

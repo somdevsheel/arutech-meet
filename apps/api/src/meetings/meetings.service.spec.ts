@@ -7,6 +7,9 @@ import type { RealtimeBroadcastService } from "../realtime/realtime-broadcast.se
 import type { OrganizationsService } from "../organizations/organizations.service";
 import type { ContactsService } from "../contacts/contacts.service";
 import type { TokenService } from "../common/lib/tokens";
+import type { MailService } from "../mail/mail.service";
+import type { NotificationsService } from "../notifications/notifications.service";
+import type { Env } from "@arutech/config";
 
 const MEETING = {
   id: "meeting-1",
@@ -19,6 +22,9 @@ const MEETING = {
   passwordHash: null as string | null,
   livekitRoomName: "room-1",
   deletedAt: null,
+  title: "Test meeting",
+  scheduledStart: null as Date | null,
+  scheduledEnd: null as Date | null,
   // waitingRoomEnabled: true keeps a successful non-owner join in WAITING
   // status, which skips LiveKit token issuance entirely — lets these tests
   // exercise the real domain/block checks without mocking the whole LiveKit
@@ -31,6 +37,9 @@ function makeService(overrides?: {
   hasBlocked?: boolean;
   listMineResult?: unknown[];
   personalRoomExisting?: unknown;
+  existingUser?: { id: string; email: string; displayName: string } | null;
+  existingParticipantForInvitee?: unknown;
+  meetingInviteExisting?: unknown;
 }) {
   const meeting = { ...MEETING, ...overrides?.meeting, settings: { ...MEETING.settings, ...overrides?.meeting?.settings } };
   const prisma = {
@@ -46,7 +55,11 @@ function makeService(overrides?: {
         findUnique: jest.fn().mockResolvedValue({ orgId: "org-1", userId: "user-1", role: "MEMBER" }),
       },
       meetingParticipant: {
-        findFirst: jest.fn().mockResolvedValue(null),
+        // Overridden by `existingParticipantForInvitee` for
+        // inviteByEmail's "already part of this meeting" check — every
+        // join()-path test relies on the plain `null` default (no
+        // pre-existing participant) and never sets that override.
+        findFirst: jest.fn().mockResolvedValue(overrides?.existingParticipantForInvitee ?? null),
         // join()'s own create/update return is reused by issueToken's
         // subsequent findUnique lookup (admitAndIssueToken -> issueToken) —
         // both need `status: ADMITTED` for a real ("HOST") joiner to pass
@@ -73,6 +86,19 @@ function makeService(overrides?: {
       classTeacher: { findUnique: jest.fn().mockResolvedValue(null) },
       classStudent: { findUnique: jest.fn().mockResolvedValue(null) },
       meetingEvent: { create: jest.fn().mockResolvedValue(undefined) },
+      user: {
+        findUnique: jest.fn().mockResolvedValue(overrides?.existingUser ?? null),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "owner-1", displayName: "Real Owner Name" }),
+      },
+      meetingInvite: {
+        findFirst: jest.fn().mockResolvedValue(overrides?.meetingInviteExisting ?? null),
+        findUnique: jest.fn().mockImplementation(({ where: { id } }) =>
+          Promise.resolve(id === "invite-1" ? { id: "invite-1", meetingId: MEETING.id, status: "PENDING" } : null),
+        ),
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "invite-new", ...data })),
+        update: jest.fn().mockImplementation(({ where: { id }, data }) => Promise.resolve({ id, ...data })),
+      },
     },
   } as unknown as PrismaService;
   const liveKit = {
@@ -94,9 +120,27 @@ function makeService(overrides?: {
   const tokens = {
     signGuestToken: jest.fn().mockReturnValue("guest-token"),
   } as unknown as TokenService;
+  const mail = {
+    sendMeetingInvite: jest.fn().mockResolvedValue(undefined),
+  } as unknown as MailService;
+  const notifications = {
+    create: jest.fn().mockResolvedValue(undefined),
+  } as unknown as NotificationsService;
+  const env = { WEB_URL: "https://app.test" } as unknown as Env;
 
-  const service = new MeetingsService(prisma, liveKit, permissions, broadcast, organizations, contacts, tokens);
-  return { service, prisma, liveKit, permissions, broadcast, organizations, contacts, tokens };
+  const service = new MeetingsService(
+    prisma,
+    liveKit,
+    permissions,
+    broadcast,
+    organizations,
+    contacts,
+    tokens,
+    mail,
+    notifications,
+    env,
+  );
+  return { service, prisma, liveKit, permissions, broadcast, organizations, contacts, tokens, mail, notifications };
 }
 
 const BASE_DTO = { title: "Test meeting", type: "INSTANT" as const, timezone: "UTC" };
@@ -269,6 +313,130 @@ describe("MeetingsService", () => {
       const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
       expect(data).not.toHaveProperty("type");
       expect(data).not.toHaveProperty("orgId");
+    });
+  });
+
+  describe("inviteByEmail", () => {
+    it("requires the meeting.settings.update capability", async () => {
+      const { service, permissions } = makeService();
+      await service.inviteByEmail(MEETING.id, "user-1", "guest@example.com", "PARTICIPANT");
+      expect(permissions.requireOwnerOrCapability).toHaveBeenCalledWith(
+        MEETING.id,
+        "user-1",
+        "meeting.settings.update",
+      );
+    });
+
+    it("creates a real MeetingInvite row with a token and an expiry", async () => {
+      const { service, prisma } = makeService();
+      await service.inviteByEmail(MEETING.id, "owner-1", "guest@example.com", "PARTICIPANT");
+      const data = (prisma.client.meetingInvite.create as jest.Mock).mock.calls[0][0].data;
+      expect(data.meetingId).toBe(MEETING.id);
+      expect(data.email).toBe("guest@example.com");
+      expect(data.role).toBe("PARTICIPANT");
+      expect(data.invitedByUserId).toBe("owner-1");
+      expect(typeof data.token).toBe("string");
+      expect(data.token.length).toBeGreaterThan(10);
+      expect(data.expiresAt).toBeInstanceOf(Date);
+    });
+
+    it("expires the invite at the meeting's own scheduled end time when it has one, not the flat fallback", async () => {
+      const scheduledEnd = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+      const { service, prisma } = makeService({ meeting: { scheduledEnd } });
+      await service.inviteByEmail(MEETING.id, "owner-1", "guest@example.com", "PARTICIPANT");
+      const data = (prisma.client.meetingInvite.create as jest.Mock).mock.calls[0][0].data;
+      expect(data.expiresAt).toEqual(scheduledEnd);
+    });
+
+    it("sends a real invite email", async () => {
+      const { service, mail } = makeService();
+      await service.inviteByEmail(MEETING.id, "owner-1", "guest@example.com", "PARTICIPANT");
+      expect(mail.sendMeetingInvite).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "guest@example.com", meetingTitle: MEETING.title }),
+      );
+    });
+
+    it("refreshes an existing PENDING invite in place instead of creating a duplicate", async () => {
+      const { service, prisma } = makeService({
+        meetingInviteExisting: { id: "invite-existing", meetingId: MEETING.id, email: "guest@example.com" },
+      });
+      await service.inviteByEmail(MEETING.id, "owner-1", "guest@example.com", "CO_HOST");
+      expect(prisma.client.meetingInvite.create).not.toHaveBeenCalled();
+      expect(prisma.client.meetingInvite.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "invite-existing" },
+          data: expect.objectContaining({ role: "CO_HOST" }),
+        }),
+      );
+    });
+
+    it("refuses to invite someone who's already part of the meeting", async () => {
+      const { service } = makeService({
+        existingUser: { id: "existing-1", email: "guest@example.com", displayName: "Existing Person" },
+        existingParticipantForInvitee: { id: "participant-x", meetingId: MEETING.id, userId: "existing-1" },
+      });
+      await expect(
+        service.inviteByEmail(MEETING.id, "owner-1", "guest@example.com", "PARTICIPANT"),
+      ).rejects.toThrow("already part of this meeting");
+    });
+
+    it("notifies an existing account in-app, not just by email", async () => {
+      const { service, notifications } = makeService({
+        existingUser: { id: "existing-1", email: "guest@example.com", displayName: "Existing Person" },
+      });
+      await service.inviteByEmail(MEETING.id, "owner-1", "guest@example.com", "PARTICIPANT");
+      expect(notifications.create).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "existing-1", type: "MEETING_INVITE" }),
+      );
+    });
+
+    it("never sends an in-app notification for an email with no account", async () => {
+      const { service, notifications } = makeService();
+      await service.inviteByEmail(MEETING.id, "owner-1", "guest@example.com", "PARTICIPANT");
+      expect(notifications.create).not.toHaveBeenCalled();
+    });
+
+    it("still sends the email even if delivery throws — a real invite row already exists, that's not the caller's problem", async () => {
+      const { service, mail } = makeService();
+      (mail.sendMeetingInvite as jest.Mock).mockRejectedValueOnce(new Error("smtp down"));
+      await expect(
+        service.inviteByEmail(MEETING.id, "owner-1", "guest@example.com", "PARTICIPANT"),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe("revokeInvite", () => {
+    it("requires the meeting.settings.update capability", async () => {
+      const { service, permissions } = makeService();
+      await service.revokeInvite(MEETING.id, "user-1", "invite-1");
+      expect(permissions.requireOwnerOrCapability).toHaveBeenCalledWith(
+        MEETING.id,
+        "user-1",
+        "meeting.settings.update",
+      );
+    });
+
+    it("marks a real invite REVOKED", async () => {
+      const { service, prisma } = makeService();
+      await service.revokeInvite(MEETING.id, "owner-1", "invite-1");
+      expect(prisma.client.meetingInvite.update).toHaveBeenCalledWith({
+        where: { id: "invite-1" },
+        data: { status: "REVOKED" },
+      });
+    });
+
+    it("refuses to revoke an invite that belongs to a different meeting", async () => {
+      const { service } = makeService();
+      await expect(service.revokeInvite("some-other-meeting", "owner-1", "invite-1")).rejects.toThrow(
+        "Invite not found",
+      );
+    });
+
+    it("404s for an invite id that doesn't exist at all", async () => {
+      const { service } = makeService();
+      await expect(service.revokeInvite(MEETING.id, "owner-1", "no-such-invite")).rejects.toThrow(
+        "Invite not found",
+      );
     });
   });
 

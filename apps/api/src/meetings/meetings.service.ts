@@ -1,11 +1,14 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import * as argon2 from "argon2";
 import { nanoid } from "nanoid";
+import type { Env } from "@arutech/config";
 import { WS_EVENTS, type ParticipantRole } from "@arutech/types";
 import type { CreateMeetingDto, JoinMeetingDto, UpdateMeetingDto } from "@arutech/validation";
 import { PrismaService } from "../prisma/prisma.service";
@@ -16,6 +19,8 @@ import { generateLiveKitRoomName, generateMeetingCode } from "../common/lib/meet
 import { OrganizationsService } from "../organizations/organizations.service";
 import { ContactsService } from "../contacts/contacts.service";
 import { TokenService } from "../common/lib/tokens";
+import { MailService } from "../mail/mail.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 export interface JoinResult {
   participantId: string;
@@ -44,6 +49,9 @@ export class MeetingsService {
     private readonly organizations: OrganizationsService,
     private readonly contacts: ContactsService,
     private readonly tokens: TokenService,
+    private readonly mail: MailService,
+    private readonly notifications: NotificationsService,
+    @Inject("ENV") private readonly env: Env,
   ) {}
 
   /** Never send the password hash itself to a client — every meeting object
@@ -231,6 +239,120 @@ export class MeetingsService {
       include: { settings: true },
     });
     return this.sanitizeMeeting(updated);
+  }
+
+  // --- Invite by email ---------------------------------------------------
+  // `MeetingInvite` (and the MEETING_INVITE notification type) existed in
+  // the schema from the start but nothing ever created, read, or exposed a
+  // single row through it — real scaffolding waiting to be wired up, the
+  // same pattern this codebase already had for `FileAsset`, `MeetingInvite`
+  // (itself, ironically, called out by name in that very comment — see
+  // MailService's own class doc), and `ChatRoom.photoUrl` before each was
+  // fixed. There was genuinely no way to invite a specific person to a
+  // meeting at all, only a copyable link/code.
+  //
+  // Deliberately simpler than OrganizationInvite's flow: accepting an org
+  // invite actually grants membership, so it needs its own token-gated
+  // accept step. Joining a meeting is already a complete, well-tested flow
+  // on its own (waiting room, password, domain restriction — see `join()`
+  // below) that works the moment someone has the meeting's code, so the
+  // invite here is just a real notification (email + in-app) carrying a
+  // direct link to that existing join page — not a parallel access-control
+  // mechanism. `token` is still generated and stored for the same
+  // audit-trail reasons OrganizationInvite has one, and to keep the two
+  // models structurally consistent, even though nothing currently redeems
+  // it. A deliberate v1 scope line, not an oversight: this does NOT let an
+  // invited email skip the waiting room or an email-domain restriction —
+  // those stay exactly as strict as they are for anyone else.
+  private static readonly INVITE_TTL_DAYS = 7;
+
+  async listInvites(meetingId: string, actingUserId: string) {
+    await this.permissions.requireOwnerOrCapability(meetingId, actingUserId, "meeting.settings.update");
+    return this.prisma.client.meetingInvite.findMany({
+      where: { meetingId, status: "PENDING" },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  async inviteByEmail(
+    meetingId: string,
+    actingUserId: string,
+    email: string,
+    role: "CO_HOST" | "PARTICIPANT",
+  ) {
+    await this.permissions.requireOwnerOrCapability(meetingId, actingUserId, "meeting.settings.update");
+    const meeting = await this.findById(meetingId);
+    const inviter = await this.prisma.client.user.findUniqueOrThrow({ where: { id: actingUserId } });
+
+    const existingUser = await this.prisma.client.user.findUnique({ where: { email } });
+    const alreadyParticipant = existingUser
+      ? await this.prisma.client.meetingParticipant.findFirst({
+          where: { meetingId, userId: existingUser.id },
+        })
+      : null;
+    if (alreadyParticipant) throw new ConflictException("This person is already part of this meeting");
+
+    const token = nanoid(32);
+    // A meeting invite naturally stops mattering once the meeting it's for
+    // is over — expire it then rather than on a flat calendar TTL, when a
+    // scheduled end time actually exists. Instant/recurring-with-no-end
+    // meetings fall back to the same flat window OrganizationInvite uses.
+    const flatExpiry = new Date(Date.now() + MeetingsService.INVITE_TTL_DAYS * 24 * 60 * 60 * 1000);
+    const expiresAt = meeting.scheduledEnd && meeting.scheduledEnd > new Date() ? meeting.scheduledEnd : flatExpiry;
+
+    // A still-PENDING invite for the same email gets refreshed in place
+    // (new token, new expiry, resent) rather than erroring — same call
+    // OrganizationInvite.inviteByEmail makes, for the same reason: inviting
+    // someone twice before they've responded isn't a conflict worth
+    // blocking on.
+    const existingInvite = await this.prisma.client.meetingInvite.findFirst({
+      where: { meetingId, email, status: "PENDING" },
+    });
+    const invite = existingInvite
+      ? await this.prisma.client.meetingInvite.update({
+          where: { id: existingInvite.id },
+          data: { role, token, expiresAt, invitedByUserId: actingUserId },
+        })
+      : await this.prisma.client.meetingInvite.create({
+          data: { meetingId, email, role, token, expiresAt, invitedByUserId: actingUserId },
+        });
+
+    const joinUrl = `${this.env.WEB_URL}/meeting/${meeting.code}`;
+    // Email delivery failing shouldn't undo a real invite row that was
+    // already created — same reasoning as OrganizationInvite.inviteByEmail:
+    // log and continue rather than throwing through to the controller as a
+    // 500 for what's fundamentally a best-effort notification channel.
+    await this.mail
+      .sendMeetingInvite({
+        to: email,
+        meetingTitle: meeting.title,
+        inviterName: inviter.displayName,
+        joinUrl,
+        scheduledStart: meeting.scheduledStart,
+      })
+      .catch(() => {});
+
+    if (existingUser) {
+      await this.notifications.create({
+        userId: existingUser.id,
+        type: "MEETING_INVITE",
+        title: `Invited to "${meeting.title}"`,
+        body: `${inviter.displayName} invited you to a meeting${meeting.scheduledStart ? ` on ${meeting.scheduledStart.toLocaleDateString()}` : ""}.`,
+        data: { meetingCode: meeting.code, meetingId: meeting.id, meetingTitle: meeting.title },
+      });
+    }
+
+    return invite;
+  }
+
+  async revokeInvite(meetingId: string, actingUserId: string, inviteId: string) {
+    await this.permissions.requireOwnerOrCapability(meetingId, actingUserId, "meeting.settings.update");
+    const invite = await this.prisma.client.meetingInvite.findUnique({ where: { id: inviteId } });
+    if (!invite || invite.meetingId !== meetingId) throw new NotFoundException("Invite not found");
+    await this.prisma.client.meetingInvite.update({
+      where: { id: inviteId },
+      data: { status: "REVOKED" },
+    });
   }
 
   async end(meetingId: string, userId: string) {

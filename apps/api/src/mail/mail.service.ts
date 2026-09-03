@@ -63,6 +63,32 @@ export class MailService {
     });
   }
 
+  async sendMeetingInvite(opts: {
+    to: string;
+    meetingTitle: string;
+    inviterName: string;
+    joinUrl: string;
+    scheduledStart: Date | null;
+  }): Promise<void> {
+    const whenLine = opts.scheduledStart
+      ? `It's scheduled for ${opts.scheduledStart.toLocaleString("en-US", { dateStyle: "full", timeStyle: "short" })}.`
+      : "";
+    await this.send({
+      to: opts.to,
+      subject: `${opts.inviterName} invited you to "${opts.meetingTitle}" on Arutech Meet`,
+      text:
+        `${opts.inviterName} invited you to a meeting: ${opts.meetingTitle}\n\n` +
+        (whenLine ? `${whenLine}\n\n` : "") +
+        `Join the meeting: ${opts.joinUrl}\n\n` +
+        `If you weren't expecting this, you can ignore this email.`,
+      html:
+        `<p>${escapeHtml(opts.inviterName)} invited you to a meeting: <strong>${escapeHtml(opts.meetingTitle)}</strong></p>` +
+        (whenLine ? `<p>${escapeHtml(whenLine)}</p>` : "") +
+        `<p><a href="${opts.joinUrl}">Join the meeting</a></p>` +
+        `<p style="color:#888;font-size:12px">If you weren't expecting this, you can ignore this email.</p>`,
+    });
+  }
+
   /** M-1: the actual reset link a user clicks. Never reveals whether the
    * address it's sent to has an account — AuthService.requestPasswordReset
    * only ever calls this once it's already confirmed one does, so this

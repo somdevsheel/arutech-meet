@@ -12,6 +12,7 @@ import { JoinMeetingModal } from "@/components/dashboard/join-meeting-modal";
 import { TodayRail } from "@/components/dashboard/today-rail";
 import { RecordingsRow } from "@/components/dashboard/recordings-row";
 import { PersonalRoomSettingsModal } from "@/components/dashboard/personal-room-settings-modal";
+import { InviteToMeetingModal } from "@/components/dashboard/invite-to-meeting-modal";
 import { FullPageLoading } from "@/components/full-page-loading";
 
 interface Meeting {
@@ -24,6 +25,7 @@ interface Meeting {
   scheduledStart: string | null;
   scheduledEnd: string | null;
   requiresPassword?: boolean;
+  ownerId?: string;
   settings?: {
     waitingRoomEnabled: boolean;
     allowChat: boolean;
@@ -48,6 +50,7 @@ export default function DashboardPage() {
   const [hosting, setHosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<"schedule" | "join" | null>(null);
+  const [inviteMeeting, setInviteMeeting] = useState<{ id: string; title: string } | null>(null);
   const [hour, setHour] = useState<number | null>(null);
   const [personalRoom, setPersonalRoom] = useState<Meeting | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -266,7 +269,15 @@ export default function DashboardPage() {
           )}
           <ul className="flex flex-col gap-2">
             {upcoming.map((m) => (
-              <MeetingRow key={m.id} meeting={m} />
+              <MeetingRow
+                key={m.id}
+                meeting={m}
+                onInvite={
+                  m.status === "SCHEDULED" && m.ownerId === user?.id
+                    ? () => setInviteMeeting({ id: m.id, title: m.title })
+                    : undefined
+                }
+              />
             ))}
           </ul>
         </section>
@@ -294,6 +305,13 @@ export default function DashboardPage() {
         />
       )}
       {modal === "join" && <JoinMeetingModal onClose={() => setModal(null)} />}
+      {inviteMeeting && (
+        <InviteToMeetingModal
+          meetingId={inviteMeeting.id}
+          meetingTitle={inviteMeeting.title}
+          onClose={() => setInviteMeeting(null)}
+        />
+      )}
     </AppShell>
   );
 }
@@ -338,14 +356,11 @@ function ActionCard({
   );
 }
 
-function MeetingRow({ meeting }: { meeting: Meeting }) {
+function MeetingRow({ meeting, onInvite }: { meeting: Meeting; onInvite?: () => void }) {
   return (
-    <li>
-      <Link
-        href={`/meeting/${meeting.code}`}
-        className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised px-4 py-3 transition hover:border-brand-500"
-      >
-        <div>
+    <li className="flex items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-4 py-3 transition hover:border-brand-500">
+      <Link href={`/meeting/${meeting.code}`} className="flex min-w-0 flex-1 items-center justify-between">
+        <div className="min-w-0">
           <p className="text-sm font-medium text-white">{meeting.title}</p>
           <p className="text-xs text-ink-muted">
             {meeting.code}
@@ -362,6 +377,21 @@ function MeetingRow({ meeting }: { meeting: Meeting }) {
           </p>
         </div>
       </Link>
+      {/* Only ever shown for a scheduled meeting this user owns — see the
+          dashboard's own render-site comment. There was previously no way
+          to invite a specific person to a meeting at all, only a copyable
+          link (meeting-info-panel.tsx's "Invite people"). */}
+      {onInvite && (
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            onInvite();
+          }}
+          className="flex-none rounded-lg border border-surface-border2 bg-surface-field px-3 py-1.5 text-xs font-medium text-ink-3 hover:brightness-110"
+        >
+          Invite
+        </button>
+      )}
     </li>
   );
 }

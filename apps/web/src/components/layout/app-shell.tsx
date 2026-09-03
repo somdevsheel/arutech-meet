@@ -385,6 +385,8 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
                           const data = n.data as { meetingCode?: string; chatRoomId?: string; token?: string } | null;
                           if (n.type === "CALL_INCOMING" && data?.meetingCode) {
                             router.push(`/meeting/${data.meetingCode}`);
+                          } else if (n.type === "MEETING_INVITE" && data?.meetingCode) {
+                            router.push(`/meeting/${data.meetingCode}`);
                           } else if (n.type === "RECORDING_READY") {
                             router.push("/recordings");
                           } else if (n.type === "CHAT_MESSAGE" && data?.chatRoomId) {

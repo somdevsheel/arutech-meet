@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import {
   createMeetingSchema,
+  inviteMeetingParticipantSchema,
   joinMeetingSchema,
   updateMeetingSchema,
   type CreateMeetingDto,
+  type InviteMeetingParticipantDto,
   type JoinMeetingDto,
   type UpdateMeetingDto,
 } from "@arutech/validation";
@@ -91,6 +93,29 @@ export class MeetingsController {
   @Post(":id/end")
   end(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.meetingsService.end(id, user.id);
+  }
+
+  @Get(":id/invites")
+  listInvites(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.meetingsService.listInvites(id, user.id);
+  }
+
+  @Post(":id/invites")
+  inviteByEmail(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(inviteMeetingParticipantSchema)) dto: InviteMeetingParticipantDto,
+  ) {
+    return this.meetingsService.inviteByEmail(id, user.id, dto.email, dto.role);
+  }
+
+  @Delete(":id/invites/:inviteId")
+  revokeInvite(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+    @Param("inviteId") inviteId: string,
+  ) {
+    return this.meetingsService.revokeInvite(id, user.id, inviteId);
   }
 
   // Authenticated join. Guests use POST /meetings/:code/join-as-guest (below) instead,

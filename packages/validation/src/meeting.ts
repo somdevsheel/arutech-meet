@@ -70,6 +70,17 @@ export const promoteCoHostSchema = z.object({
 });
 export type PromoteCoHostDto = z.infer<typeof promoteCoHostSchema>;
 
+// Deliberately just CO_HOST/PARTICIPANT, not the full ParticipantRole enum —
+// OWNER/HOST aren't something an invite hands out, GUEST is what someone
+// with no account joining unauthenticated already gets automatically, and
+// TEACHER/STUDENT are class-session-derived (see MeetingsService.join),
+// never chosen at invite time.
+export const inviteMeetingParticipantSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(["CO_HOST", "PARTICIPANT"]).default("PARTICIPANT"),
+});
+export type InviteMeetingParticipantDto = z.infer<typeof inviteMeetingParticipantSchema>;
+
 export const sendChatMessageSchema = z
   .object({
     // Optional (not the min(1) it used to be) so a file/image can be sent on
