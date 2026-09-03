@@ -177,7 +177,7 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      <header className="flex h-16 flex-none items-center gap-6 border-b border-surface-border bg-surface-raised px-6">
+      <header className="flex h-16 flex-none items-center gap-3 border-b border-surface-border bg-surface-raised px-3 sm:gap-6 sm:px-6">
         <button
           onClick={() => setMobileNavOpen(true)}
           aria-label="Open navigation menu"
@@ -194,7 +194,13 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
               <path d="M3 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm14 3.2 3.4-2.4a1 1 0 0 1 1.6.8v6.8a1 1 0 0 1-1.6.8L17 13.8v-3.6Z" />
             </svg>
           </span>
-          Arutech Meet
+          {/* The wordmark next to the hamburger + this icon, plus the
+              right-side bell/settings/avatar cluster, genuinely doesn't fit
+              a phone-width header together — real-device testing showed the
+              avatar getting pushed half off-screen. The icon badge alone is
+              still a recognizable "home" link on its own; drop the text
+              below `sm` rather than let the row overflow. */}
+          <span className="hidden sm:inline">Arutech Meet</span>
         </Link>
 
         <div className="relative hidden max-w-md flex-1 sm:block">

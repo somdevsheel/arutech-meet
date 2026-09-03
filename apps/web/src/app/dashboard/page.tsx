@@ -188,43 +188,55 @@ export default function DashboardPage() {
         {error && <p className="text-sm text-danger">{error}</p>}
 
         {personalRoom && (
-          <section className="flex items-center gap-4 rounded-xl border border-surface-border bg-surface-raised px-5 py-4">
-            <span className="grid h-[38px] w-[38px] flex-none place-items-center rounded-lg bg-brand-tint2 text-brand-300">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <circle cx="12" cy="8" r="3.4" />
-                <path d="M5 20a7 7 0 0 1 14 0" />
-              </svg>
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-semibold">My personal meeting room</h3>
-              <p className="mt-0.5 text-xs text-ink-muted">Code: {personalRoom.code} — always the same link</p>
+          // The icon + text + three buttons genuinely don't fit one row on
+          // a phone-width screen — real-device testing showed the title and
+          // code wrapping one word per line down to almost nothing, with
+          // the buttons squeezed into whatever was left. Two rows below
+          // `sm` (icon/text on top, actions below) instead of one rigid row
+          // fighting for space.
+          <section className="flex flex-col gap-3 rounded-xl border border-surface-border bg-surface-raised px-5 py-4 sm:flex-row sm:items-center sm:gap-4">
+            <div className="flex min-w-0 items-center gap-3 sm:flex-1">
+              <span className="grid h-[38px] w-[38px] flex-none place-items-center rounded-lg bg-brand-tint2 text-brand-300">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <circle cx="12" cy="8" r="3.4" />
+                  <path d="M5 20a7 7 0 0 1 14 0" />
+                </svg>
+              </span>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold">My personal meeting room</h3>
+                <p className="mt-0.5 truncate text-xs text-ink-muted">
+                  Code: {personalRoom.code} — always the same link
+                </p>
+              </div>
             </div>
-            <button
-              onClick={() => setShowRoomSettings(true)}
-              aria-label="Personal room settings"
-              className="grid h-9 w-9 flex-none place-items-center rounded-lg text-ink-muted hover:bg-surface-field hover:text-ink-2"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7.9 19.4l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3 15H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 8.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 10 4.6V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1.3Z" />
-              </svg>
-            </button>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(`${window.location.origin}/meeting/${personalRoom.code}`);
-                setLinkCopied(true);
-                setTimeout(() => setLinkCopied(false), 2000);
-              }}
-              className="flex-none rounded-lg border border-surface-border2 bg-surface-field px-4 py-2 text-xs font-medium text-ink-3 hover:brightness-110"
-            >
-              {linkCopied ? "Copied!" : "Copy link"}
-            </button>
-            <button
-              onClick={() => router.push(`/meeting/${personalRoom.code}`)}
-              className="flex-none rounded-lg bg-brand-500 px-4 py-2 text-xs font-medium text-white hover:bg-brand-600"
-            >
-              Start
-            </button>
+            <div className="flex flex-none items-center gap-2">
+              <button
+                onClick={() => setShowRoomSettings(true)}
+                aria-label="Personal room settings"
+                className="grid h-9 w-9 flex-none place-items-center rounded-lg text-ink-muted hover:bg-surface-field hover:text-ink-2"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7.9 19.4l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3 15H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 8.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 10 4.6V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1.3Z" />
+                </svg>
+              </button>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(`${window.location.origin}/meeting/${personalRoom.code}`);
+                  setLinkCopied(true);
+                  setTimeout(() => setLinkCopied(false), 2000);
+                }}
+                className="flex-1 rounded-lg border border-surface-border2 bg-surface-field px-4 py-2 text-xs font-medium text-ink-3 hover:brightness-110 sm:flex-none"
+              >
+                {linkCopied ? "Copied!" : "Copy link"}
+              </button>
+              <button
+                onClick={() => router.push(`/meeting/${personalRoom.code}`)}
+                className="flex-1 rounded-lg bg-brand-500 px-4 py-2 text-xs font-medium text-white hover:bg-brand-600 sm:flex-none"
+              >
+                Start
+              </button>
+            </div>
           </section>
         )}
 
