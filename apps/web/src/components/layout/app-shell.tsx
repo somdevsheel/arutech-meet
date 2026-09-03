@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { WS_EVENTS, type SettablePresenceStatus } from "@arutech/types";
+import { WS_EVENTS, type SettablePresenceStatus, type UserPresenceStatus } from "@arutech/types";
 import type { AuthUser } from "@/lib/auth-store";
 import { useNotifications } from "@/hooks/use-notifications";
 import { apiFetch } from "@/lib/api-client";
@@ -72,12 +72,45 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications(accessToken);
   const chatUnreadCount = notifications.filter((n) => n.type === "CHAT_MESSAGE" && !n.readAt).length;
 
-  // Real presence (docs/roadmap.md's Presence stage). `myStatus` is
-  // optimistic, local-only client state — this socket is the one setting it,
-  // so there's no server round trip needed to know what it currently is. A
-  // second tab wouldn't reflect a status set from a first tab without its own
-  // refetch, a deliberate v1 scope trim (see the roadmap).
+  // Real presence (docs/roadmap.md's Presence stage). `myStatus` used to be
+  // purely optimistic, local-only client state on the reasoning that "this
+  // socket is the one setting it, so there's no server round trip needed to
+  // know what it currently is" — true only within one continuous page
+  // session, and silently wrong the instant AppShell remounts (a refresh, a
+  // fresh tab): the state always re-initialized to "ONLINE" regardless of
+  // whatever AWAY/BUSY/DND had actually been set before, since nothing ever
+  // asked the server what it really was. Seeded here from the real value
+  // instead (PresenceService now also actually preserves it across a quick
+  // reconnect — see that service's class doc comment). A second tab still
+  // wouldn't reflect a status set from a first tab without its own mount
+  // (no live push to yourself), a deliberate v1 scope trim.
   const [myStatus, setMyStatus] = useState<SettablePresenceStatus>("ONLINE");
+  useEffect(() => {
+    if (!accessToken) return;
+    const fetchMyStatus = () => {
+      apiFetch<Record<string, UserPresenceStatus>>(`/presence?userIds=${user.id}`)
+        .then((statuses) => {
+          const real = statuses[user.id];
+          // Real answer is "OFFLINE" only in the narrow window right after
+          // a reload where this fetch outraces the socket handshake that
+          // actually registers presence server-side — not a real status to
+          // show as your own, so leave the ONLINE default in that case
+          // rather than displaying yourself as offline. The `connect`
+          // listener below re-fetches once that handshake actually
+          // completes, closing the race properly instead of guessing at a
+          // retry delay.
+          if (real && real !== "OFFLINE") setMyStatus(real);
+        })
+        .catch(() => {});
+    };
+    fetchMyStatus();
+    const socket = getSocket(accessToken);
+    socket.on("connect", fetchMyStatus);
+    return () => {
+      socket.off("connect", fetchMyStatus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
   usePresenceHeartbeat(accessToken);
   function setPresenceStatus(status: SettablePresenceStatus) {
     if (!accessToken) return;

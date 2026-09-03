@@ -93,13 +93,31 @@ describe("PresenceService", () => {
       await expect(service.getStatus("u1")).resolves.toBe("OFFLINE");
     });
 
-    it("a full disconnect clears any explicit status — reconnecting later starts fresh at ONLINE", async () => {
+    // A page refresh disconnects and reconnects in well under a second — an
+    // earlier version of this deleted the status key on every disconnect
+    // (reasoning "a full disconnect means starting fresh"), which meant
+    // every refresh silently discarded AWAY/BUSY/DND back to ONLINE. It's
+    // left to its own TTL instead now, so a quick reconnect like this one
+    // preserves it; only a genuinely sustained absence (the TTL actually
+    // lapsing, not modeled by this fake — see the file's own doc comment)
+    // should reset it.
+    it("a quick reconnect preserves an explicit status set before disconnecting", async () => {
       const { service } = makeService();
       await service.connect("u1", "socket-a");
       await service.setStatus("u1", "DND");
       await service.disconnect("u1", "socket-a");
       await service.connect("u1", "socket-b");
-      await expect(service.getStatus("u1")).resolves.toBe("ONLINE");
+      await expect(service.getStatus("u1")).resolves.toBe("DND");
+    });
+
+    it("connect refreshes an existing explicit status's TTL too, not just the sockets key's", async () => {
+      const { service, redis } = makeService();
+      await service.connect("u1", "socket-a");
+      await service.setStatus("u1", "AWAY");
+      await service.disconnect("u1", "socket-a");
+      (redis.expire as jest.Mock).mockClear();
+      await service.connect("u1", "socket-b");
+      expect(redis.expire).toHaveBeenCalledWith(expect.stringContaining("presence:status:u1"), expect.any(Number));
     });
   });
 

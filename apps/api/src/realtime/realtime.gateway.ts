@@ -192,12 +192,19 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
       // Real presence (docs/roadmap.md's Presence stage) — a Redis-backed
       // online/away/busy/DND status derived from actually-open sockets, not
-      // a recency timestamp. Only broadcast the ONLINE transition when this
-      // is genuinely this user's first connected socket (a second tab
-      // opening while already online is a no-op, not a fresh "just came
-      // online" event).
+      // a recency timestamp. Only broadcast a transition when this is
+      // genuinely this user's first connected socket (a second tab opening
+      // while already online is a no-op, not a fresh "just came online"
+      // event). Broadcasts the REAL current status, not a hardcoded
+      // "ONLINE" — PresenceService.connect() no longer wipes an explicit
+      // AWAY/BUSY/DND on disconnect, so a quick reconnect (a page refresh)
+      // needs to re-announce whatever that status actually still is, not
+      // silently force everyone watching back to ONLINE.
       const cameOnline = await this.presence.connect(payload.sub, client.id);
-      if (cameOnline) await this.broadcastPresence(payload.sub, "ONLINE");
+      if (cameOnline) {
+        const status = await this.presence.getStatus(payload.sub);
+        await this.broadcastPresence(payload.sub, status);
+      }
     } catch {
       client.emit(WS_EVENTS.ERROR, { message: "Invalid or expired token" });
       client.disconnect(true);

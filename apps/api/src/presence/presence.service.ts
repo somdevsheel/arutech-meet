@@ -30,14 +30,21 @@ const PRESENCE_TTL_SECONDS = 120;
  *     connection" — multi-device/multi-tab correct by construction, since a
  *     second tab closing doesn't make the first tab's connection stop
  *     counting.
- *   - `presence:status:{userId}` — an explicit AWAY/BUSY/DND override, only
- *     ever present while the sockets set is also non-empty. Its absence
- *     while connected means "ONLINE" (the default, not written explicitly —
- *     saves a key for the common case). Both keys are cleared together the
- *     moment the sockets set goes empty: reconnecting after a genuine
- *     offline period always starts fresh at ONLINE rather than resuming
- *     whatever was explicitly set before — a deliberate v1 scope call, not
- *     an oversight (see docs/roadmap.md).
+ *   - `presence:status:{userId}` — an explicit AWAY/BUSY/DND override. Its
+ *     absence while connected means "ONLINE" (the default, not written
+ *     explicitly — saves a key for the common case). Deliberately NOT
+ *     deleted the moment the sockets set goes empty (an earlier version of
+ *     this did exactly that, on the reasoning that "reconnecting after a
+ *     genuine offline period should start fresh at ONLINE" — true, but that
+ *     isn't what "sockets set goes empty" actually detects: a page refresh
+ *     closes and reopens a socket in well under a second, and it was being
+ *     treated identically to a real multi-minute absence, silently
+ *     discarding AWAY/BUSY/DND on every reload). It's left to expire on its
+ *     own `PRESENCE_TTL_SECONDS` TTL instead — refreshed on every connect/
+ *     heartbeat/status-change same as the sockets key — so a status set
+ *     minutes ago survives a refresh, and only a genuinely sustained
+ *     disconnect (no reconnect or heartbeat for the full TTL window) lets it
+ *     lapse back to the ONLINE default.
  */
 @Injectable()
 export class PresenceService {
@@ -62,18 +69,28 @@ export class PresenceService {
     const before = await this.redis.scard(key);
     await this.redis.sadd(key, socketId);
     await this.redis.expire(key, PRESENCE_TTL_SECONDS);
+    // Refreshes an existing explicit status's TTL too (EXPIRE on a key that
+    // doesn't exist is a harmless no-op) — reconnecting resets its grace
+    // window the same way a heartbeat does, so a status set right before a
+    // longer gap isn't penalized purely for bad timing against the last
+    // heartbeat.
+    await this.redis.expire(this.statusKey(userId), PRESENCE_TTL_SECONDS);
     return before === 0;
   }
 
   /** Returns true if this was the user's last connected socket (i.e. they're
    * now fully offline) — the caller uses that to decide whether to
-   * broadcast an OFFLINE transition and clear any explicit status. */
+   * broadcast an OFFLINE transition. Does NOT clear any explicit status —
+   * see the class doc comment on `presence:status:{userId}` for why a
+   * disconnect (a page refresh reconnects in well under a second) is the
+   * wrong signal for "this AWAY/BUSY/DND choice no longer applies"; that
+   * key is left to its own TTL instead. */
   async disconnect(userId: string, socketId: string): Promise<boolean> {
     const key = this.socketsKey(userId);
     await this.redis.srem(key, socketId);
     const remaining = await this.redis.scard(key);
     if (remaining === 0) {
-      await this.redis.del(key, this.statusKey(userId));
+      await this.redis.del(key);
       return true;
     }
     return false;
