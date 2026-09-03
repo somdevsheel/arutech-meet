@@ -34,7 +34,15 @@ export const createMeetingSchema = z.object({
 });
 export type CreateMeetingDto = z.infer<typeof createMeetingSchema>;
 
-export const updateMeetingSchema = createMeetingSchema.partial();
+export const updateMeetingSchema = createMeetingSchema.partial().extend({
+  // Wider than create's `password` (a string or omitted entirely): an
+  // update also needs to say "remove the current password" — a state
+  // create-time never has to represent, since there's no existing password
+  // yet to remove. Explicit `null` means clear it; omitted means leave
+  // whatever's already set as-is; a string sets/replaces it. See
+  // MeetingsService.updateSettings for how each of the three is handled.
+  password: z.string().min(4).max(64).nullable().optional(),
+});
 export type UpdateMeetingDto = z.infer<typeof updateMeetingSchema>;
 
 export const joinMeetingSchema = z.object({

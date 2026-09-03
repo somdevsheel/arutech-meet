@@ -198,11 +198,13 @@ export class MeetingsService {
     // silently kept working forever. Re-hash only when a new password was
     // actually sent; omitted means "leave the current password as-is", same
     // as every other field below (Prisma treats `undefined` as "don't touch
-    // this column", not "clear it" — there's no way to remove password
-    // protection entirely through this endpoint, same limitation as the
-    // fields already handled this way).
+    // this column", not "clear it"). `updateMeetingSchema` widens `password`
+    // to `string | null | undefined` specifically so a client CAN say "clear
+    // it" (explicit `null`, written straight through to a null passwordHash)
+    // distinctly from "leave it" (omitted) — the UI had no way to remove a
+    // password at all before this, only ever replace one.
     const passwordHash =
-      dto.password !== undefined ? await argon2.hash(dto.password) : undefined;
+      dto.password === undefined ? undefined : dto.password === null ? null : await argon2.hash(dto.password);
 
     // `type` and `orgId` are deliberately still excluded here, not another
     // oversight: `create()` performs org-membership and per-org concurrency

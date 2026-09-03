@@ -36,11 +36,12 @@ export function PersonalRoomSettingsModal({
   // Schedule modal) is the actual fix. Blank means "leave the current
   // password as-is" (PATCH treats an omitted `password` that way — see
   // MeetingsService.updateSettings); typing something changes it.
-  // "Remove password" is a real, separate limitation the API itself doesn't
-  // support yet (there's no way to send "clear it" vs "don't touch it"),
-  // called out in that same method's own comment — not something this UI
-  // can paper over.
   const [password, setPassword] = useState("");
+  // Explicit "clear it" (PATCH sends `password: null`), distinct from
+  // "leave it" (blank `password` above, sends nothing) — MeetingsService.
+  // updateSettings needs exactly this three-way distinction to actually
+  // remove a password rather than only ever replace one.
+  const [removePassword, setRemovePassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,11 +58,12 @@ export function PersonalRoomSettingsModal({
         method: "PATCH",
         body: JSON.stringify({
           settings: next,
-          password: password.trim() || undefined,
+          password: removePassword ? null : password.trim() || undefined,
         }),
       });
-      onSaved(next, password.trim() ? true : requiresPassword);
+      onSaved(next, removePassword ? false : password.trim() ? true : requiresPassword);
       setPassword("");
+      setRemovePassword(false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to save settings");
     } finally {
@@ -92,21 +94,49 @@ export function PersonalRoomSettingsModal({
         />
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-white">
-            Meeting password {requiresPassword && <span className="font-normal text-success">(currently set)</span>}
+          <span className="flex items-center justify-between gap-2 text-sm font-medium text-white">
+            <span>
+              Meeting password{" "}
+              {requiresPassword && !removePassword && <span className="font-normal text-success">(currently set)</span>}
+              {removePassword && <span className="font-normal text-danger">(will be removed)</span>}
+            </span>
+            {requiresPassword &&
+              (removePassword ? (
+                <button
+                  type="button"
+                  onClick={() => setRemovePassword(false)}
+                  className="text-xs font-medium text-brand-300 hover:text-brand-200"
+                >
+                  Undo
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRemovePassword(true);
+                    setPassword("");
+                  }}
+                  className="rounded px-1.5 py-0.5 text-xs font-medium text-danger hover:bg-danger/10"
+                >
+                  Remove password
+                </button>
+              ))}
           </span>
           <span className="text-xs text-ink-muted">
-            {requiresPassword
-              ? "Leave blank to keep the current password, or enter a new one to change it."
-              : "Leave blank for no password."}
+            {removePassword
+              ? "Anyone with the link will be able to join without a password once you save."
+              : requiresPassword
+                ? "Leave blank to keep the current password, or enter a new one to change it."
+                : "Leave blank for no password."}
           </span>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder={requiresPassword ? "New password" : "e.g. lets-meet-2026"}
-            className="input"
+            className="input disabled:opacity-50"
             autoComplete="new-password"
+            disabled={removePassword}
           />
         </label>
 

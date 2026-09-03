@@ -13,7 +13,10 @@ const MEETING = {
   code: "abc-def-ghi",
   ownerId: "owner-1",
   status: "LIVE",
-  passwordHash: null,
+  // Typed as the real nullable column, not narrowed to the literal `null` —
+  // otherwise `makeService({ meeting: { passwordHash: "..." } })` (used to
+  // set up an already-has-a-password fixture) wouldn't type-check.
+  passwordHash: null as string | null,
   livekitRoomName: "room-1",
   deletedAt: null,
   // waitingRoomEnabled: true keeps a successful non-owner join in WAITING
@@ -201,6 +204,25 @@ describe("MeetingsService", () => {
       await service.updateSettings(MEETING.id, "owner-1", BASE_DTO);
       const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
       expect(data.passwordHash).toBeUndefined();
+    });
+
+    // The UI previously had no way to remove a password once set — only
+    // ever replace one — because there was no way to distinguish "leave it"
+    // from "clear it" through this endpoint. `password: null` is that
+    // explicit clear signal now. Starts from a meeting that already has a
+    // password set, so this actually exercises the set-to-unset transition
+    // rather than a no-op on an already-null hash.
+    it("clears the password when password is explicitly null", async () => {
+      const { service, prisma } = makeService({ meeting: { passwordHash: "existing-hash" } });
+      await service.updateSettings(MEETING.id, "owner-1", { ...BASE_DTO, password: null });
+      const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
+      expect(data.passwordHash).toBeNull();
+    });
+
+    it("reports requiresPassword: false in its own response after clearing the password", async () => {
+      const { service } = makeService({ meeting: { passwordHash: "existing-hash" } });
+      const result = await service.updateSettings(MEETING.id, "owner-1", { ...BASE_DTO, password: null });
+      expect(result.requiresPassword).toBe(false);
     });
 
     it("never returns the password hash in its own response either", async () => {
