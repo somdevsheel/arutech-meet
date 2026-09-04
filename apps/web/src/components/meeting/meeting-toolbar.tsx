@@ -28,6 +28,15 @@ interface Props {
    * transient, reverts to "idle" on its own after a few seconds. */
   screenShareRequestState: "idle" | "pending" | "denied";
   onRequestScreenShare: () => void;
+  /** True for a while right after an approved request — a real, live bug
+   * report: the button silently reverting from "Requesting…" to a plain
+   * "Share screen" gave the requester zero indication anything had
+   * happened, since getDisplayMedia() can't auto-start without one more
+   * real click (see SCREEN_SHARE_REQUESTED's doc comment) and nothing
+   * called that out. Highlights the button so it's actually noticeable,
+   * not just technically clickable. */
+  justApproved: boolean;
+  onScreenShareToggled: () => void;
   participantCount: number;
   unreadChatCount: number;
   handRaised: boolean;
@@ -53,6 +62,8 @@ export function MeetingToolbar({
   canShareScreen,
   screenShareRequestState,
   onRequestScreenShare,
+  justApproved,
+  onScreenShareToggled,
   participantCount,
   unreadChatCount,
   handRaised,
@@ -119,6 +130,7 @@ export function MeetingToolbar({
         await localParticipant.setScreenShareEnabled(!isScreenShareEnabled, {
           audio: true,
         });
+        onScreenShareToggled();
       }
     } finally {
       setBusy(false);
@@ -247,7 +259,7 @@ export function MeetingToolbar({
               isScreenShareEnabled
                 ? "bg-success text-white"
                 : "bg-success-bg text-success hover:brightness-110"
-            }`}
+            } ${justApproved && !isScreenShareEnabled ? "animate-pulse ring-2 ring-brand-400" : ""}`}
           >
             <svg
               width="22"

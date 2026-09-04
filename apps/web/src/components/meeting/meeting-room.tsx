@@ -168,6 +168,11 @@ export function MeetingRoom({
   // reactive off `participants`/onRoleChange already, nothing extra needed.
   const [screenShareApproved, setScreenShareApproved] = useState(false);
   const canShareScreen = initialCanShareScreen || isModerator || screenShareApproved;
+  // Clears itself once this participant actually clicks Share screen (see
+  // MeetingToolbar's onScreenShareToggled) or, failing that, after a
+  // generous timeout — a real notice that outlives the meeting isn't a
+  // notice anymore, it's clutter.
+  const [screenShareJustApproved, setScreenShareJustApproved] = useState(false);
   // Local-only UI feedback for the requester ("Requesting…" / a transient
   // "denied" state) — not meaningful once canShareScreen is true, since the
   // request flow is moot at that point.
@@ -267,6 +272,14 @@ export function MeetingRoom({
       if (p.participantId === participantId) {
         setScreenShareApproved(true);
         setScreenShareRequestState("idle");
+        // Real bug found live: without this, the button just silently
+        // turned into a normal "Share screen" button with nothing calling
+        // out that anything had changed — someone not staring at the
+        // toolbar had no way to know their request had gone through at
+        // all, let alone that one more real click was needed to actually
+        // start (see this effect's own top comment for why that click
+        // can't happen automatically).
+        setScreenShareJustApproved(true);
       }
     };
     const onDenied = (p: { participantId: string }) => {
@@ -292,6 +305,12 @@ export function MeetingRoom({
     const id = setTimeout(() => setScreenShareRequestState("idle"), 5000);
     return () => clearTimeout(id);
   }, [screenShareRequestState]);
+
+  useEffect(() => {
+    if (!screenShareJustApproved) return;
+    const id = setTimeout(() => setScreenShareJustApproved(false), 20000);
+    return () => clearTimeout(id);
+  }, [screenShareJustApproved]);
 
   async function requestScreenShare() {
     setScreenShareRequestState("pending");
@@ -728,6 +747,34 @@ export function MeetingRoom({
                       </button>
                     </div>
                   ))}
+                {/* The requester's own notice — see this block's own
+                    top-of-effect comment for the real bug this fixes: the
+                    button alone silently changing shape wasn't enough for
+                    anyone to actually notice. */}
+                {screenShareJustApproved && (
+                  <div
+                    role="alert"
+                    className="absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-2.5 rounded-lg bg-brand-600 px-4 py-2.5 text-xs font-medium text-white shadow-lg"
+                    style={{
+                      top: `${
+                        16 +
+                        (recordingBanner ? 1 : 0) * 48 +
+                        (localRecordingNotice ? 1 : 0) * 48 +
+                        (isModerator ? pendingScreenShareRequests.length : 0) * 48
+                      }px`,
+                    }}
+                  >
+                    <span className="h-2 w-2 flex-none rounded-full bg-white" />
+                    You&rsquo;re approved to share your screen — click Share screen below to start.
+                    <button
+                      onClick={() => setScreenShareJustApproved(false)}
+                      aria-label="Dismiss screen share approval notice"
+                      className="ml-1 flex-none text-white/80 hover:text-white"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
               </div>
 
               {panel && (
@@ -865,6 +912,8 @@ export function MeetingRoom({
               canShareScreen={canShareScreen}
               screenShareRequestState={screenShareRequestState}
               onRequestScreenShare={requestScreenShare}
+              justApproved={screenShareJustApproved}
+              onScreenShareToggled={() => setScreenShareJustApproved(false)}
               participantCount={participants.length}
               unreadChatCount={unreadChatCount}
               handRaised={myHandRaised}
