@@ -110,6 +110,20 @@ export function MeetingToolbar({
   // first click (button re-labels itself, auto-disarms after a few seconds),
   // only actually end it on the second.
   const [endArmed, setEndArmed] = useState(false);
+  // Real production bug: "screen share option is not working after
+  // approved". Root cause wasn't the approval mechanism (server logs showed
+  // every request/approve call succeeding) — it was that the requester was
+  // on a mobile browser (Android Chrome), and getDisplayMedia() simply does
+  // not exist on mobile Chrome/Safari at all; no web page can screen-share
+  // from a phone regardless of permissions. setScreenShareEnabled() was
+  // rejecting with no catch anywhere in toggle(), so the button just quietly
+  // re-enabled itself with zero feedback — indistinguishable from "nothing
+  // happened". Detect the capability up front so unsupported devices get an
+  // honest message instead of a working-looking button that can never
+  // succeed, and surface any OTHER failure (permission denied, etc.) too.
+  const screenShareSupported =
+    typeof navigator !== "undefined" && typeof navigator.mediaDevices?.getDisplayMedia === "function";
+  const [screenShareError, setScreenShareError] = useState<string | null>(null);
 
   function handleEndClick() {
     if (!endArmed) {
@@ -127,10 +141,31 @@ export function MeetingToolbar({
       if (kind === "mic") await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
       if (kind === "cam") await localParticipant.setCameraEnabled(!isCameraEnabled);
       if (kind === "screen") {
-        await localParticipant.setScreenShareEnabled(!isScreenShareEnabled, {
-          audio: true,
-        });
-        onScreenShareToggled();
+        setScreenShareError(null);
+        if (!isScreenShareEnabled && !screenShareSupported) {
+          // Don't even attempt it — on a browser with no getDisplayMedia
+          // (every mobile browser today) the call below rejects immediately
+          // anyway; this just skips straight to the honest message.
+          setScreenShareError("Screen sharing isn't supported on this browser. Try a desktop browser instead.");
+          return;
+        }
+        try {
+          await localParticipant.setScreenShareEnabled(!isScreenShareEnabled, {
+            audio: true,
+          });
+          onScreenShareToggled();
+        } catch (err) {
+          // Previously uncaught: the promise rejected (unsupported browser,
+          // the OS/browser picker being dismissed, a denied permission,
+          // etc.) and the button just silently re-enabled with zero
+          // feedback — exactly what "not working after approved" reported.
+          const message = err instanceof Error ? err.message : String(err);
+          setScreenShareError(
+            /permission|denied|NotAllowedError/i.test(message)
+              ? "Screen share was cancelled or blocked."
+              : "Couldn't start screen sharing on this device.",
+          );
+        }
       }
     } finally {
       setBusy(false);
@@ -252,28 +287,36 @@ export function MeetingToolbar({
           <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.2A8 8 0 1 1 21 12Z" />
         </Control>
         {canShareScreen ? (
-          <button
-            onClick={() => toggle("screen")}
-            disabled={busy}
-            className={`flex flex-none flex-col items-center gap-1.5 rounded-lg px-4 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
-              isScreenShareEnabled
-                ? "bg-success text-white"
-                : "bg-success-bg text-success hover:brightness-110"
-            } ${justApproved && !isScreenShareEnabled ? "animate-pulse ring-2 ring-brand-400" : ""}`}
-          >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
+          <div className="relative flex flex-none flex-col items-center">
+            <button
+              onClick={() => toggle("screen")}
+              disabled={busy || (!isScreenShareEnabled && !screenShareSupported)}
+              title={!screenShareSupported && !isScreenShareEnabled ? "Not supported on this browser" : undefined}
+              className={`flex flex-none flex-col items-center gap-1.5 rounded-lg px-4 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+                isScreenShareEnabled
+                  ? "bg-success text-white"
+                  : "bg-success-bg text-success hover:brightness-110"
+              } ${justApproved && !isScreenShareEnabled ? "animate-pulse ring-2 ring-brand-400" : ""}`}
             >
-              <rect x="3" y="4" width="18" height="13" rx="2" />
-              <path d="M12 13V7m0 0-2.5 2.5M12 7l2.5 2.5M8 21h8" />
-            </svg>
-            {isScreenShareEnabled ? "Stop sharing" : "Share screen"}
-          </button>
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+              >
+                <rect x="3" y="4" width="18" height="13" rx="2" />
+                <path d="M12 13V7m0 0-2.5 2.5M12 7l2.5 2.5M8 21h8" />
+              </svg>
+              {!screenShareSupported && !isScreenShareEnabled ? "Not supported" : isScreenShareEnabled ? "Stop sharing" : "Share screen"}
+            </button>
+            {screenShareError && (
+              <p className="absolute top-full mt-1 w-max max-w-[180px] text-center text-[10px] text-danger">
+                {screenShareError}
+              </p>
+            )}
+          </div>
         ) : (
           // No `screen_share.self` yet (a plain PARTICIPANT/STUDENT/GUEST,
           // outside the rare screenShareScope: ALL_PARTICIPANTS case — see
@@ -284,32 +327,62 @@ export function MeetingToolbar({
           // that next click is what actually opens the OS picker, not this
           // one — see SCREEN_SHARE_REQUESTED's doc comment for why it can't
           // happen automatically the moment approval arrives.
-          <button
-            onClick={onRequestScreenShare}
-            disabled={screenShareRequestState === "pending"}
-            className={`flex flex-none flex-col items-center gap-1.5 rounded-lg px-4 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
-              screenShareRequestState === "denied"
-                ? "bg-danger/10 text-danger"
-                : "bg-surface-chip text-ink-2 hover:brightness-110"
-            }`}
-          >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
+          //
+          // Real production report: "screen share option is not working
+          // after approved" — root cause was a participant asking, getting
+          // approved, then finding the resulting Share screen button did
+          // nothing, because they were on a mobile browser (Android/iOS),
+          // and getDisplayMedia() doesn't exist there at all — no amount of
+          // server-side permission can make a phone's browser capture its
+          // screen. Rather than let mobile users go through a whole
+          // request→wait→approve cycle that can only ever end in a silent
+          // dead end, tell them up front it isn't possible on this device.
+          screenShareSupported ? (
+            <button
+              onClick={onRequestScreenShare}
+              disabled={screenShareRequestState === "pending"}
+              className={`flex flex-none flex-col items-center gap-1.5 rounded-lg px-4 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+                screenShareRequestState === "denied"
+                  ? "bg-danger/10 text-danger"
+                  : "bg-surface-chip text-ink-2 hover:brightness-110"
+              }`}
             >
-              <rect x="3" y="4" width="18" height="13" rx="2" />
-              <path d="M12 13V7m0 0-2.5 2.5M12 7l2.5 2.5M8 21h8" />
-            </svg>
-            {screenShareRequestState === "pending"
-              ? "Requesting…"
-              : screenShareRequestState === "denied"
-                ? "Request denied"
-                : "Request to share screen"}
-          </button>
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+              >
+                <rect x="3" y="4" width="18" height="13" rx="2" />
+                <path d="M12 13V7m0 0-2.5 2.5M12 7l2.5 2.5M8 21h8" />
+              </svg>
+              {screenShareRequestState === "pending"
+                ? "Requesting…"
+                : screenShareRequestState === "denied"
+                  ? "Request denied"
+                  : "Request to share screen"}
+            </button>
+          ) : (
+            <div
+              title="Screen sharing isn't supported on this browser. Try a desktop browser instead."
+              className="flex flex-none flex-col items-center gap-1.5 rounded-lg px-4 py-1.5 text-[11px] font-semibold text-ink-muted opacity-60"
+            >
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+              >
+                <rect x="3" y="4" width="18" height="13" rx="2" />
+                <path d="M12 13V7m0 0-2.5 2.5M12 7l2.5 2.5M8 21h8" />
+              </svg>
+              Not supported here
+            </div>
+          )
         )}
         <Control
           label={isRecording ? "Recording" : "Record"}
