@@ -21,6 +21,13 @@ interface Props {
   onToggleCaptions: () => void;
   isRecording: boolean;
   canShareScreen: boolean;
+  /** Only meaningful while `!canShareScreen` — see SCREEN_SHARE_REQUESTED's
+   * doc comment in websocket-events.ts for the full request/approve/deny
+   * flow this drives. "idle": show "Request to share screen". "pending":
+   * request sent, waiting on a moderator. "denied": a moderator said no —
+   * transient, reverts to "idle" on its own after a few seconds. */
+  screenShareRequestState: "idle" | "pending" | "denied";
+  onRequestScreenShare: () => void;
   participantCount: number;
   unreadChatCount: number;
   handRaised: boolean;
@@ -44,6 +51,8 @@ export function MeetingToolbar({
   onToggleCaptions,
   isRecording,
   canShareScreen,
+  screenShareRequestState,
+  onRequestScreenShare,
   participantCount,
   unreadChatCount,
   handRaised,
@@ -230,7 +239,7 @@ export function MeetingToolbar({
         >
           <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.2A8 8 0 1 1 21 12Z" />
         </Control>
-        {canShareScreen && (
+        {canShareScreen ? (
           <button
             onClick={() => toggle("screen")}
             disabled={busy}
@@ -252,6 +261,42 @@ export function MeetingToolbar({
               <path d="M12 13V7m0 0-2.5 2.5M12 7l2.5 2.5M8 21h8" />
             </svg>
             {isScreenShareEnabled ? "Stop sharing" : "Share screen"}
+          </button>
+        ) : (
+          // No `screen_share.self` yet (a plain PARTICIPANT/STUDENT/GUEST,
+          // outside the rare screenShareScope: ALL_PARTICIPANTS case — see
+          // MeetingsService.computeCanShareScreen) — offer to ask a
+          // moderator instead of hiding screen share entirely. Once
+          // approved this whole branch stops rendering (canShareScreen
+          // flips true) and the real Share screen button above takes over;
+          // that next click is what actually opens the OS picker, not this
+          // one — see SCREEN_SHARE_REQUESTED's doc comment for why it can't
+          // happen automatically the moment approval arrives.
+          <button
+            onClick={onRequestScreenShare}
+            disabled={screenShareRequestState === "pending"}
+            className={`flex flex-none flex-col items-center gap-1.5 rounded-lg px-4 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+              screenShareRequestState === "denied"
+                ? "bg-danger/10 text-danger"
+                : "bg-surface-chip text-ink-2 hover:brightness-110"
+            }`}
+          >
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+            >
+              <rect x="3" y="4" width="18" height="13" rx="2" />
+              <path d="M12 13V7m0 0-2.5 2.5M12 7l2.5 2.5M8 21h8" />
+            </svg>
+            {screenShareRequestState === "pending"
+              ? "Requesting…"
+              : screenShareRequestState === "denied"
+                ? "Request denied"
+                : "Request to share screen"}
           </button>
         )}
         <Control

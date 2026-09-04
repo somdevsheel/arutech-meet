@@ -29,7 +29,12 @@ const MEETING = {
   // status, which skips LiveKit token issuance entirely — lets these tests
   // exercise the real domain/block checks without mocking the whole LiveKit
   // client just to reach a status these tests don't care about.
-  settings: { waitingRoomEnabled: true, lockAfterStart: false, allowedEmailDomains: [] as string[] },
+  settings: {
+    waitingRoomEnabled: true,
+    lockAfterStart: false,
+    allowedEmailDomains: [] as string[],
+    screenShareScope: undefined as string | undefined,
+  },
 };
 
 function makeService(overrides?: {
@@ -810,5 +815,66 @@ describe("MeetingsService.issueToken", () => {
     expect(liveKit.createRoomToken).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Casual Visitor" }),
     );
+  });
+
+  describe("screen share grant", () => {
+    it("grants a CO_HOST canPublishScreenShare regardless of screenShareScope", async () => {
+      const { service, liveKit, prisma } = makeService();
+      (prisma.client.meetingParticipant.findUnique as jest.Mock).mockResolvedValue({
+        id: "participant-1",
+        meetingId: MEETING.id,
+        role: "CO_HOST",
+        status: "ADMITTED",
+        livekitIdentity: "user-2-abc",
+        guestName: null,
+        userId: "user-2",
+        user: { displayName: "Co Host" },
+      });
+      const result = await service.issueToken(MEETING.id, "participant-1");
+      expect(liveKit.createRoomToken).toHaveBeenCalledWith(
+        expect.objectContaining({ canPublishScreenShare: true }),
+      );
+      expect(result.canShareScreen).toBe(true);
+    });
+
+    it("refuses a plain PARTICIPANT canPublishScreenShare when screenShareScope is HOST_ONLY (the default)", async () => {
+      const { service, liveKit, prisma } = makeService();
+      (prisma.client.meetingParticipant.findUnique as jest.Mock).mockResolvedValue({
+        id: "participant-1",
+        meetingId: MEETING.id,
+        role: "PARTICIPANT",
+        status: "ADMITTED",
+        livekitIdentity: "user-2-abc",
+        guestName: null,
+        userId: "user-2",
+        user: { displayName: "Regular Participant" },
+      });
+      const result = await service.issueToken(MEETING.id, "participant-1");
+      expect(liveKit.createRoomToken).toHaveBeenCalledWith(
+        expect.objectContaining({ canPublishScreenShare: false }),
+      );
+      expect(result.canShareScreen).toBe(false);
+    });
+
+    it("grants a plain PARTICIPANT canPublishScreenShare when the meeting's screenShareScope is ALL_PARTICIPANTS", async () => {
+      const { service, liveKit, prisma } = makeService({
+        meeting: { settings: { screenShareScope: "ALL_PARTICIPANTS" } },
+      });
+      (prisma.client.meetingParticipant.findUnique as jest.Mock).mockResolvedValue({
+        id: "participant-1",
+        meetingId: MEETING.id,
+        role: "PARTICIPANT",
+        status: "ADMITTED",
+        livekitIdentity: "user-2-abc",
+        guestName: null,
+        userId: "user-2",
+        user: { displayName: "Regular Participant" },
+      });
+      const result = await service.issueToken(MEETING.id, "participant-1");
+      expect(liveKit.createRoomToken).toHaveBeenCalledWith(
+        expect.objectContaining({ canPublishScreenShare: true }),
+      );
+      expect(result.canShareScreen).toBe(true);
+    });
   });
 });

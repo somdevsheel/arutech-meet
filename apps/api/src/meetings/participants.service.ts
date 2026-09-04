@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { WS_EVENTS } from "@arutech/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { LiveKitService } from "../livekit/livekit.service";
@@ -186,6 +186,58 @@ export class ParticipantsService {
       participantId,
       role: "CO_HOST",
     });
+  }
+
+  // --- Screen share request/approve/deny --------------------------------
+  // PARTICIPANT_STUDENT_CAPS/GUEST_CAPS (packages/types/src/permissions.ts)
+  // don't include `screen_share.self` by default — a plain participant has
+  // no way to actually share their screen unless the meeting's
+  // `screenShareScope` setting is ALL_PARTICIPANTS, which has no toolbar of
+  // its own to flip. This is the alternative, finer-grained path: ask, a
+  // moderator grants it just to you, for the rest of this meeting — rather
+  // than a host having to open screen share to literally everyone just to
+  // let one specific person share once.
+
+  /** Self-only — broadcasts a request to the room; only a moderator's UI
+   * renders an approve/deny prompt for it (see SCREEN_SHARE_REQUESTED's own
+   * doc comment in websocket-events.ts). Nothing is persisted: like a
+   * reaction or a raised hand, if nobody's watching when it's sent, it's
+   * just gone — the requester can always ask again. */
+  async requestScreenShare(meetingId: string, callerUserId: string, participantId: string) {
+    const { participant } = await this.getWithMeeting(meetingId, participantId);
+    if ((participant.userId ?? participant.id) !== callerUserId) {
+      throw new ForbiddenException("Can only request screen share for yourself");
+    }
+    const account = participant.userId
+      ? await this.prisma.client.user.findUnique({
+          where: { id: participant.userId },
+          select: { displayName: true },
+        })
+      : null;
+    const displayName = participant.guestName ?? account?.displayName ?? "A participant";
+    await this.broadcast.publish(meetingId, WS_EVENTS.SCREEN_SHARE_REQUESTED, { participantId, displayName });
+  }
+
+  /** Grants the live SFU permission immediately — LiveKitService.
+   * updateParticipantPermissions pushes it to the requester's already-
+   * connected client with no reconnect needed (same mechanism promoteCoHost
+   * already uses for the same reason). Doesn't itself start the share: see
+   * SCREEN_SHARE_REQUESTED's doc comment for why that has to be a second,
+   * real click from the requester. */
+  async approveScreenShare(meetingId: string, callerUserId: string, participantId: string) {
+    await this.permissions.requireOwnerOrCapability(meetingId, callerUserId, "screen_share.others.stop");
+    const { meeting, participant } = await this.getWithMeeting(meetingId, participantId);
+    await this.liveKit.updateParticipantPermissions(meeting.livekitRoomName, participant.livekitIdentity, {
+      canPublishScreenShare: true,
+    });
+    await this.logEvent(meetingId, participantId, "SCREEN_SHARE_APPROVED");
+    await this.broadcast.publish(meetingId, WS_EVENTS.SCREEN_SHARE_APPROVED, { participantId });
+  }
+
+  async denyScreenShare(meetingId: string, callerUserId: string, participantId: string) {
+    await this.permissions.requireOwnerOrCapability(meetingId, callerUserId, "screen_share.others.stop");
+    await this.getOrThrow(meetingId, participantId);
+    await this.broadcast.publish(meetingId, WS_EVENTS.SCREEN_SHARE_DENIED, { participantId });
   }
 
   private async getOrThrow(meetingId: string, participantId: string) {

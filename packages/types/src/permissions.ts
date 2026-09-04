@@ -28,6 +28,15 @@ export const CAPABILITIES = [
   "waiting_room.admit",
   "waiting_room.deny",
   "screen_share.self",
+  // Also gates approving/denying someone else's screen-share *request*
+  // (ParticipantsService.approveScreenShare/denyScreenShare) — a request
+  // only ever exists because the requester lacks `screen_share.self` in the
+  // first place (see SCREEN_SHARE_REQUESTED's own doc comment in
+  // websocket-events.ts), so whoever can already force-stop someone's
+  // screen share is the same authority that should decide whether to let
+  // one start. Not a separate capability — the two actions are close enough
+  // in scope that adding one just for "approve a request" would be
+  // duplicating this same role boundary for no real gain.
   "screen_share.others.stop",
   "chat.send",
   "chat.delete_any_message",

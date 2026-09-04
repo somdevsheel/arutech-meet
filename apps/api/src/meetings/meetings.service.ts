@@ -37,6 +37,14 @@ export interface JoinResult {
    * guest still needs a working socket to ever receive the admit/deny
    * decision at all. */
   guestToken: string | null;
+  /** Whether this participant's LiveKit token was actually granted the
+   * screen-share publish source at issuance — the client can't tell this
+   * from `role` alone (see `computeCanShareScreen`'s own comment: it also
+   * depends on the meeting's `screenShareScope` setting). Lets the web
+   * client seed its "Share screen" vs. "Request to share screen" toolbar
+   * state correctly from the very first render, rather than defaulting to
+   * one and correcting itself after the fact. */
+  canShareScreen: boolean;
 }
 
 @Injectable()
@@ -561,11 +569,16 @@ export class MeetingsService {
 
     let livekitToken: string | null = null;
     let livekitUrl: string | null = null;
+    // No real answer for a WAITING participant — no token's been issued yet
+    // to have granted (or not) the publish source. Recomputed for real once
+    // actually ADMITTED, below.
+    let canShareScreen = false;
 
     if (status === "ADMITTED") {
       const result = await this.admitAndIssueToken(meeting.id, participant.id);
       livekitToken = result.token;
       livekitUrl = result.url;
+      canShareScreen = result.canShareScreen;
     } else {
       await this.broadcast.publish(meeting.id, WS_EVENTS.WAITING_ROOM_JOINED, {
         participantId: participant.id,
@@ -596,6 +609,7 @@ export class MeetingsService {
       livekitToken,
       livekitUrl,
       guestToken,
+      canShareScreen,
     };
   }
 
@@ -647,9 +661,7 @@ export class MeetingsService {
     }
     const meeting = await this.findById(meetingId);
     const role = participant.role as ParticipantRole;
-    const isModerator = ["OWNER", "HOST", "CO_HOST", "TEACHER"].includes(role);
-    const canScreenShare =
-      isModerator || meeting.settings?.screenShareScope === "ALL_PARTICIPANTS";
+    const canScreenShare = this.computeCanShareScreen(role, meeting.settings?.screenShareScope);
 
     await this.liveKit.ensureRoom(meeting.livekitRoomName, meeting.settings?.maxParticipants ?? 100);
     const token = await this.liveKit.createRoomToken({
@@ -658,7 +670,22 @@ export class MeetingsService {
       name: participant.guestName ?? participant.user?.displayName ?? "Guest",
       canPublishScreenShare: canScreenShare,
     });
-    return { token, url: this.liveKit.getClientUrl() };
+    return { token, url: this.liveKit.getClientUrl(), canShareScreen: canScreenShare };
+  }
+
+  /** Shared by issueToken (the token's actual publish grant) and join (what
+   * the client's initial toolbar state should show) — kept as one place so
+   * the two can never quietly disagree with each other. Not just `role`:
+   * a PARTICIPANT/STUDENT additionally gets it when the meeting's own
+   * `screenShareScope` setting is ALL_PARTICIPANTS, a real, working setting
+   * (MeetingsService.updateSettings) with no toolbar of its own to flip it
+   * — see docs/roadmap.md or this stage's own PR for the reasoning; per-
+   * request approval (ParticipantsService.approveScreenShare) exists
+   * alongside it for a moderator who'd rather grant it person-by-person
+   * than open it to everyone at once. */
+  private computeCanShareScreen(role: ParticipantRole, screenShareScope: string | undefined): boolean {
+    const isModerator = ["OWNER", "HOST", "CO_HOST", "TEACHER"].includes(role);
+    return isModerator || screenShareScope === "ALL_PARTICIPANTS";
   }
 
   private async admitAndIssueToken(meetingId: string, participantId: string) {
@@ -669,7 +696,6 @@ export class MeetingsService {
         data: { status: "LIVE", actualStart: meeting.actualStart ?? new Date() },
       });
     }
-    const { token, url } = await this.issueToken(meetingId, participantId);
-    return { token, url };
+    return this.issueToken(meetingId, participantId);
   }
 }

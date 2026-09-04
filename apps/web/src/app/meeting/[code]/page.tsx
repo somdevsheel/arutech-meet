@@ -35,6 +35,10 @@ interface JoinResponse {
    * an authenticated /join, which relies on the user's real access token
    * instead. */
   guestToken: string | null;
+  /** Whether the LiveKit token actually granted the screen-share publish
+   * source — see MeetingsService.JoinResult's own doc comment for why this
+   * can't be derived from `role` alone client-side. */
+  canShareScreen: boolean;
 }
 
 type Phase = "loading" | "lobby" | "joining" | "waiting" | "in-meeting" | "denied" | "error";
@@ -81,11 +85,14 @@ export default function MeetingPage() {
     const onAdmit = async (payload: { participantId: string }) => {
       if (payload.participantId !== joinResult.participantId) return;
       try {
-        const { token, url } = await apiFetch<{ token: string; url: string }>(
-          `/meetings/${joinResult.meeting.id}/participants/${joinResult.participantId}/token`,
-          { method: "POST" },
-        );
-        setJoinResult({ ...joinResult, livekitToken: token, livekitUrl: url, status: "ADMITTED" });
+        const { token, url, canShareScreen } = await apiFetch<{
+          token: string;
+          url: string;
+          canShareScreen: boolean;
+        }>(`/meetings/${joinResult.meeting.id}/participants/${joinResult.participantId}/token`, {
+          method: "POST",
+        });
+        setJoinResult({ ...joinResult, livekitToken: token, livekitUrl: url, canShareScreen, status: "ADMITTED" });
         setPhase("in-meeting");
       } catch {
         // stay in waiting state; host may retry admit
@@ -161,6 +168,7 @@ export default function MeetingPage() {
         role={joinResult.role}
         userId={user?.id ?? null}
         authToken={accessToken ?? joinResult.guestToken}
+        initialCanShareScreen={joinResult.canShareScreen}
         onLeave={() => router.push(user ? "/dashboard" : "/")}
       />
     );

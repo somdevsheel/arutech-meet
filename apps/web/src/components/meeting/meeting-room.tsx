@@ -40,6 +40,15 @@ export interface MeetingRoomProps {
    * scoped guest token (see lib/guest-session.ts) for a guest. Both are
    * accepted identically by TokenService.verifyAnyToken server-side. */
   authToken: string | null;
+  /** Whether this participant's LiveKit token was actually granted the
+   * screen-share publish source at join time — see MeetingsService.
+   * JoinResult's own doc comment for why `role` alone isn't enough to know
+   * this client-side (it also depends on the meeting's `screenShareScope`
+   * setting). Seeds the toolbar's "Share screen" vs. "Request to share
+   * screen" state; from here it can only ever go from false to true for
+   * the rest of this session (a promotion, or an approved request — see
+   * the effect below), never back. */
+  initialCanShareScreen: boolean;
   onLeave: () => void;
 }
 
@@ -73,6 +82,7 @@ export function MeetingRoom({
   role,
   userId,
   authToken,
+  initialCanShareScreen,
   onLeave,
 }: MeetingRoomProps) {
   const [panel, setPanel] = useState<PanelKind | null>(null);
@@ -128,8 +138,50 @@ export function MeetingRoom({
   // truth for "what can I actually do right now", falling back to the
   // join-time snapshot only for the brief window before that first
   // self-presence event arrives.
-  const effectiveRole = participants.find((p) => p.participantId === participantId)?.role ?? role;
+  //
+  // Found live while verifying the screen-share request feature: a real,
+  // separate race in that same onRoleChange handler — it only ever
+  // `.map()`s an UPDATE into an EXISTING matching row in `participants`, so
+  // promoting someone within roughly a second of them joining (before their
+  // own PARTICIPANT_JOINED echo has landed in their own `participants`
+  // array yet) meant that map found nothing to update and the promotion was
+  // silently lost — permanently, since nothing re-applies it later. Their
+  // own Participants-panel row still showed the correct role fine (that
+  // list is driven by OTHER people's already-populated rows), but their own
+  // `effectiveRole` — and everything gated on it, screen share included —
+  // stayed stuck at the stale join-time role for the rest of the meeting.
+  // `lastModeration` is set by that same onRoleChange unconditionally,
+  // independent of whether a matching row existed to update, so it's immune
+  // to this race — takes priority when it names this exact participant.
+  const ownRoleFromModeration =
+    lastModeration?.type === "role_change" && lastModeration.participantId === participantId
+      ? lastModeration.role
+      : null;
+  const effectiveRole =
+    ownRoleFromModeration ?? participants.find((p) => p.participantId === participantId)?.role ?? role;
   const isModerator = MODERATOR_ROLES.has(effectiveRole);
+  // Flips true (permanently, for the rest of this session) the moment this
+  // participant's own screen-share request is approved — see the
+  // SCREEN_SHARE_APPROVED listener below. `isModerator` in the OR here
+  // covers a promotion to CO_HOST mid-meeting the exact same way it already
+  // covers every other moderator-gated capability on this page: it's
+  // reactive off `participants`/onRoleChange already, nothing extra needed.
+  const [screenShareApproved, setScreenShareApproved] = useState(false);
+  const canShareScreen = initialCanShareScreen || isModerator || screenShareApproved;
+  // Local-only UI feedback for the requester ("Requesting…" / a transient
+  // "denied" state) — not meaningful once canShareScreen is true, since the
+  // request flow is moot at that point.
+  const [screenShareRequestState, setScreenShareRequestState] = useState<"idle" | "pending" | "denied">(
+    "idle",
+  );
+  // Moderator-facing: everyone currently asking to share their screen.
+  // Broadcast reaches every client (see SCREEN_SHARE_REQUESTED's own doc
+  // comment in websocket-events.ts), but only rendered into UI when
+  // `isModerator` — a non-moderator has no approve/deny authority to act on
+  // it anyway.
+  const [pendingScreenShareRequests, setPendingScreenShareRequests] = useState<
+    { participantId: string; displayName: string }[]
+  >([]);
   // Narrower than isModerator on purpose — CO_HOST is a moderator role but
   // doesn't hold `meeting.end` in the permissions matrix (only OWNER/HOST/
   // TEACHER do), and PermissionService enforces that same check server-side
@@ -197,6 +249,81 @@ export function MeetingRoom({
       socket.off(WS_EVENTS.WHITEBOARD_CLOSED, onClosed);
     };
   }, [socket]);
+
+  // Screen share request/approve/deny — see SCREEN_SHARE_REQUESTED's own
+  // doc comment in websocket-events.ts for the full design (in particular
+  // why APPROVED doesn't itself start sharing: getDisplayMedia() needs a
+  // real user gesture, so this only unlocks the toolbar button for a
+  // second, real click).
+  useEffect(() => {
+    if (!socket) return;
+    const onRequested = (p: { participantId: string; displayName: string }) => {
+      setPendingScreenShareRequests((prev) =>
+        prev.some((r) => r.participantId === p.participantId) ? prev : [...prev, p],
+      );
+    };
+    const onApproved = (p: { participantId: string }) => {
+      setPendingScreenShareRequests((prev) => prev.filter((r) => r.participantId !== p.participantId));
+      if (p.participantId === participantId) {
+        setScreenShareApproved(true);
+        setScreenShareRequestState("idle");
+      }
+    };
+    const onDenied = (p: { participantId: string }) => {
+      setPendingScreenShareRequests((prev) => prev.filter((r) => r.participantId !== p.participantId));
+      if (p.participantId === participantId) setScreenShareRequestState("denied");
+    };
+    socket.on(WS_EVENTS.SCREEN_SHARE_REQUESTED, onRequested);
+    socket.on(WS_EVENTS.SCREEN_SHARE_APPROVED, onApproved);
+    socket.on(WS_EVENTS.SCREEN_SHARE_DENIED, onDenied);
+    return () => {
+      socket.off(WS_EVENTS.SCREEN_SHARE_REQUESTED, onRequested);
+      socket.off(WS_EVENTS.SCREEN_SHARE_APPROVED, onApproved);
+      socket.off(WS_EVENTS.SCREEN_SHARE_DENIED, onDenied);
+    };
+  }, [socket, participantId]);
+
+  // A denied request's transient UI state reverts back to idle on its own
+  // after a few seconds — same pattern the recording/local-recording
+  // banners already use elsewhere on this page, rather than leaving "denied"
+  // showing forever until the next click.
+  useEffect(() => {
+    if (screenShareRequestState !== "denied") return;
+    const id = setTimeout(() => setScreenShareRequestState("idle"), 5000);
+    return () => clearTimeout(id);
+  }, [screenShareRequestState]);
+
+  async function requestScreenShare() {
+    setScreenShareRequestState("pending");
+    try {
+      await apiFetch(`/meetings/${meetingId}/participants/${participantId}/screen-share/request`, {
+        method: "POST",
+      });
+    } catch {
+      setScreenShareRequestState("idle");
+    }
+  }
+
+  async function approveScreenShareRequest(targetParticipantId: string) {
+    try {
+      await apiFetch(`/meetings/${meetingId}/participants/${targetParticipantId}/screen-share/approve`, {
+        method: "POST",
+      });
+    } catch {
+      // Left in the pending list on failure — the moderator can just try
+      // again; the request itself is still genuinely outstanding.
+    }
+  }
+
+  async function denyScreenShareRequest(targetParticipantId: string) {
+    try {
+      await apiFetch(`/meetings/${meetingId}/participants/${targetParticipantId}/screen-share/deny`, {
+        method: "POST",
+      });
+    } catch {
+      // Same as approve above — leave it pending on a real failure.
+    }
+  }
 
   async function endMeeting() {
     try {
@@ -570,6 +697,37 @@ export function MeetingRoom({
                     </button>
                   </div>
                 )}
+                {/* Moderator-only, even though every client receives the
+                    broadcast (see SCREEN_SHARE_REQUESTED's doc comment) —
+                    a non-moderator has no approve/deny authority to act on
+                    it. Stacked below whichever recording banners are
+                    already showing, one row per outstanding request. */}
+                {isModerator &&
+                  pendingScreenShareRequests.map((req, i) => (
+                    <div
+                      key={req.participantId}
+                      role="alert"
+                      className="absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-2.5 rounded-lg bg-brand-600 px-4 py-2.5 text-xs font-medium text-white shadow-lg"
+                      style={{
+                        top: `${16 + (recordingBanner ? 1 : 0) * 48 + (localRecordingNotice ? 1 : 0) * 48 + i * 48}px`,
+                      }}
+                    >
+                      <span className="h-2 w-2 flex-none rounded-full bg-white" />
+                      {req.displayName} wants to share their screen
+                      <button
+                        onClick={() => approveScreenShareRequest(req.participantId)}
+                        className="ml-1 flex-none rounded bg-white/20 px-2 py-1 hover:bg-white/30"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => denyScreenShareRequest(req.participantId)}
+                        className="flex-none rounded px-2 py-1 text-white/80 hover:bg-white/10 hover:text-white"
+                      >
+                        Deny
+                      </button>
+                    </div>
+                  ))}
               </div>
 
               {panel && (
@@ -704,7 +862,9 @@ export function MeetingRoom({
                     : () => setCaptionsHidden(true)
               }
               isRecording={isRecording}
-              canShareScreen={true}
+              canShareScreen={canShareScreen}
+              screenShareRequestState={screenShareRequestState}
+              onRequestScreenShare={requestScreenShare}
               participantCount={participants.length}
               unreadChatCount={unreadChatCount}
               handRaised={myHandRaised}

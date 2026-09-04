@@ -109,6 +109,24 @@ export const WS_EVENTS = {
   LOCAL_RECORDING_STARTED: "local_recording:started",
   LOCAL_RECORDING_STOPPED: "local_recording:stopped",
 
+  // Screen share, gated by permission for a PARTICIPANT/STUDENT/GUEST (an
+  // OWNER/HOST/CO_HOST/TEACHER never needs to request — they already have
+  // `screen_share.self`, see packages/types/src/permissions.ts). REQUESTED
+  // is broadcast to the whole meeting room like WAITING_ROOM_JOINED is —
+  // every client receives it, but only a moderator's UI renders an approve/
+  // deny prompt for it. APPROVED/DENIED are likewise room-wide (not just to
+  // the requester) so every moderator's pending-request UI clears together,
+  // not just whichever one happened to act. Approving grants the live SFU
+  // permission immediately (ParticipantsService.approveScreenShare calls
+  // LiveKitService.updateParticipantPermissions — no reconnect needed) but
+  // can't itself start the share: getDisplayMedia() only works from a
+  // direct user gesture, so the requester's own client still needs a second
+  // real click on "Share screen" once approved, not an automatic one fired
+  // from this event handler.
+  SCREEN_SHARE_REQUESTED: "screen_share:requested",
+  SCREEN_SHARE_APPROVED: "screen_share:approved",
+  SCREEN_SHARE_DENIED: "screen_share:denied",
+
   // AI meeting assistant — fired on every status change of a MeetingTranscript
   // (PENDING -> PROCESSING -> READY/FAILED), same shape of problem/fix as
   // RECORDING_UPDATED above: transcription runs well after a recording finishes,
@@ -246,6 +264,11 @@ export interface LocalRecordingPayload {
 }
 
 export interface WhiteboardVisibilityPayload {
+  displayName: string;
+}
+
+export interface ScreenShareRequestPayload {
+  participantId: string;
   displayName: string;
 }
 

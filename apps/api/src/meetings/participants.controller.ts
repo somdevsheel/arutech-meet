@@ -81,4 +81,31 @@ export class ParticipantsController {
   ) {
     return this.participantsService.promoteCoHost(meetingId, user.id, participantId);
   }
+
+  @Post(":participantId/screen-share/request")
+  requestScreenShare(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("meetingId") meetingId: string,
+    @Param("participantId") participantId: string,
+  ) {
+    return this.participantsService.requestScreenShare(meetingId, user.id, participantId);
+  }
+
+  @Post(":participantId/screen-share/approve")
+  approveScreenShare(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("meetingId") meetingId: string,
+    @Param("participantId") participantId: string,
+  ) {
+    return this.participantsService.approveScreenShare(meetingId, user.id, participantId);
+  }
+
+  @Post(":participantId/screen-share/deny")
+  denyScreenShare(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("meetingId") meetingId: string,
+    @Param("participantId") participantId: string,
+  ) {
+    return this.participantsService.denyScreenShare(meetingId, user.id, participantId);
+  }
 }

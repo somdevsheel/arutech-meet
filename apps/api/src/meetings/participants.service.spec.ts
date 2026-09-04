@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { ParticipantsService } from "./participants.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { LiveKitService } from "../livekit/livekit.service";
@@ -25,9 +25,13 @@ function makeService(overrides?: {
       },
       meeting: { findUniqueOrThrow: jest.fn().mockResolvedValue(MEETING) },
       meetingEvent: { create: jest.fn().mockResolvedValue(undefined) },
+      user: { findUnique: jest.fn().mockResolvedValue({ displayName: "Real Display Name" }) },
     },
   } as unknown as PrismaService;
-  const liveKit = { removeParticipant: jest.fn().mockResolvedValue(undefined) } as unknown as LiveKitService;
+  const liveKit = {
+    removeParticipant: jest.fn().mockResolvedValue(undefined),
+    updateParticipantPermissions: jest.fn().mockResolvedValue(undefined),
+  } as unknown as LiveKitService;
   const permissions = { requireOwnerOrCapability: jest.fn().mockResolvedValue(undefined) } as unknown as PermissionService;
   const broadcast = {
     publish: jest.fn().mockResolvedValue(undefined),
@@ -164,5 +168,98 @@ describe("ParticipantsService.deny", () => {
       expect.stringContaining("deny"),
       expect.objectContaining({ participantId: WAITING_GUEST_PARTICIPANT.id }),
     );
+  });
+});
+
+describe("ParticipantsService — screen share request/approve/deny", () => {
+  describe("requestScreenShare", () => {
+    it("broadcasts a request with the caller's own real display name", async () => {
+      const { service, broadcast } = makeService();
+      await service.requestScreenShare(MEETING.id, PARTICIPANT.userId!, PARTICIPANT.id);
+      expect(broadcast.publish).toHaveBeenCalledWith(
+        MEETING.id,
+        expect.stringContaining("requested"),
+        expect.objectContaining({ participantId: PARTICIPANT.id, displayName: "Real Display Name" }),
+      );
+    });
+
+    it("refuses to request on someone else's behalf", async () => {
+      const { service, broadcast } = makeService();
+      await expect(service.requestScreenShare(MEETING.id, "someone-else", PARTICIPANT.id)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(broadcast.publish).not.toHaveBeenCalled();
+    });
+
+    it("uses guestName, never the display-name fallback, for a guest's own request", async () => {
+      const guest = { ...GUEST_PARTICIPANT, guestName: "Casual Visitor" };
+      const { service, broadcast } = makeService({ participant: guest });
+      await service.requestScreenShare(MEETING.id, guest.id, guest.id);
+      expect(broadcast.publish).toHaveBeenCalledWith(
+        MEETING.id,
+        expect.stringContaining("requested"),
+        expect.objectContaining({ displayName: "Casual Visitor" }),
+      );
+    });
+  });
+
+  describe("approveScreenShare", () => {
+    it("requires the screen_share.others.stop capability", async () => {
+      const { service, permissions } = makeService();
+      await service.approveScreenShare(MEETING.id, "caller-1", PARTICIPANT.id);
+      expect(permissions.requireOwnerOrCapability).toHaveBeenCalledWith(
+        MEETING.id,
+        "caller-1",
+        "screen_share.others.stop",
+      );
+    });
+
+    it("grants the live SFU permission immediately, no reconnect", async () => {
+      const { service, liveKit } = makeService();
+      await service.approveScreenShare(MEETING.id, "caller-1", PARTICIPANT.id);
+      expect(liveKit.updateParticipantPermissions).toHaveBeenCalledWith(
+        MEETING.livekitRoomName,
+        PARTICIPANT.livekitIdentity,
+        { canPublishScreenShare: true },
+      );
+    });
+
+    it("broadcasts the approval to the room", async () => {
+      const { service, broadcast } = makeService();
+      await service.approveScreenShare(MEETING.id, "caller-1", PARTICIPANT.id);
+      expect(broadcast.publish).toHaveBeenCalledWith(
+        MEETING.id,
+        expect.stringContaining("approved"),
+        { participantId: PARTICIPANT.id },
+      );
+    });
+  });
+
+  describe("denyScreenShare", () => {
+    it("requires the screen_share.others.stop capability", async () => {
+      const { service, permissions } = makeService();
+      await service.denyScreenShare(MEETING.id, "caller-1", PARTICIPANT.id);
+      expect(permissions.requireOwnerOrCapability).toHaveBeenCalledWith(
+        MEETING.id,
+        "caller-1",
+        "screen_share.others.stop",
+      );
+    });
+
+    it("never touches LiveKit — a deny grants nothing", async () => {
+      const { service, liveKit } = makeService();
+      await service.denyScreenShare(MEETING.id, "caller-1", PARTICIPANT.id);
+      expect(liveKit.updateParticipantPermissions).not.toHaveBeenCalled();
+    });
+
+    it("broadcasts the denial to the room", async () => {
+      const { service, broadcast } = makeService();
+      await service.denyScreenShare(MEETING.id, "caller-1", PARTICIPANT.id);
+      expect(broadcast.publish).toHaveBeenCalledWith(
+        MEETING.id,
+        expect.stringContaining("denied"),
+        { participantId: PARTICIPANT.id },
+      );
+    });
   });
 });
