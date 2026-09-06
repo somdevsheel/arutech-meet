@@ -14,6 +14,8 @@ import { RecordingsRow } from "@/components/dashboard/recordings-row";
 import { PersonalRoomSettingsModal } from "@/components/dashboard/personal-room-settings-modal";
 import { InviteToMeetingModal } from "@/components/dashboard/invite-to-meeting-modal";
 import { FullPageLoading } from "@/components/full-page-loading";
+import { ShareLinkBox } from "@/components/meeting/share-link-box";
+import { ModalShell } from "@/components/dashboard/schedule-meeting-modal";
 
 interface Meeting {
   id: string;
@@ -51,6 +53,13 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<"schedule" | "join" | null>(null);
   const [inviteMeeting, setInviteMeeting] = useState<{ id: string; title: string } | null>(null);
+  // Real gap reported directly: no quick way to grab a meeting's shareable
+  // link/code from the home tab — "Invite" above is a whole separate
+  // email-based flow (InviteToMeetingModal), and the only copyable
+  // link/code lived inside MeetingInfoPanel, reachable only once already
+  // in the meeting. This is the fast, no-email path for both scheduled and
+  // just-started meetings alike.
+  const [shareMeeting, setShareMeeting] = useState<{ code: string; title: string } | null>(null);
   const [editingMeeting, setEditingMeeting] = useState<Meeting | null>(null);
   const [hour, setHour] = useState<number | null>(null);
   const [personalRoom, setPersonalRoom] = useState<Meeting | null>(null);
@@ -112,7 +121,13 @@ export default function DashboardPage() {
           settings: { waitingRoomEnabled: false },
         }),
       });
-      router.push(`/meeting/${meeting.code}`);
+      // `?share=1`: the just-created meeting's own lobby screen shows a
+      // copyable link/code alongside the camera/mic setup when this is
+      // present — see meeting/[code]/page.tsx. Real gap reported directly:
+      // starting an instant meeting dropped the host straight into
+      // setup with no way to grab the link to actually send anyone before
+      // (or right as) they joined.
+      router.push(`/meeting/${meeting.code}?share=1`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to start meeting");
       setHosting(false);
@@ -273,6 +288,7 @@ export default function DashboardPage() {
               <MeetingRow
                 key={m.id}
                 meeting={m}
+                onShare={() => setShareMeeting({ code: m.code, title: m.title })}
                 onInvite={
                   m.status === "SCHEDULED" && m.ownerId === user?.id
                     ? () => setInviteMeeting({ id: m.id, title: m.title })
@@ -315,6 +331,11 @@ export default function DashboardPage() {
           meetingTitle={inviteMeeting.title}
           onClose={() => setInviteMeeting(null)}
         />
+      )}
+      {shareMeeting && (
+        <ModalShell title={`Share "${shareMeeting.title}"`} onClose={() => setShareMeeting(null)}>
+          <ShareLinkBox code={shareMeeting.code} />
+        </ModalShell>
       )}
       {editingMeeting && (
         <ScheduleMeetingModal
@@ -372,10 +393,12 @@ function ActionCard({
 
 function MeetingRow({
   meeting,
+  onShare,
   onInvite,
   onEdit,
 }: {
   meeting: Meeting;
+  onShare?: () => void;
   onInvite?: () => void;
   onEdit?: () => void;
 }) {
@@ -399,6 +422,21 @@ function MeetingRow({
           </p>
         </div>
       </Link>
+      {/* Quick, no-email way to grab the link/code directly — shown for any
+          upcoming (not-yet-ended) meeting regardless of ownership, unlike
+          Edit/Invite below. Sharing a link you already have access to is
+          harmless whether you own the meeting or not. */}
+      {onShare && (
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            onShare();
+          }}
+          className="flex-none rounded-lg border border-surface-border2 bg-surface-field px-3 py-1.5 text-xs font-medium text-ink-3 hover:brightness-110"
+        >
+          Share
+        </button>
+      )}
       {/* Only ever shown for a scheduled meeting this user owns — see the
           dashboard's own render-site comment. There was previously no way
           to edit a scheduled meeting at all once created (topic, time,

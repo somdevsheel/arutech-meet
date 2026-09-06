@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api-client";
+import { ShareLinkBox } from "./share-link-box";
 
 interface PublicMeetingPreview {
   code: string;
@@ -24,8 +25,6 @@ interface Props {
  * itself, only whether one is set) rather than adding a second endpoint. */
 export function MeetingInfoPanel({ meetingCode, isRecording }: Props) {
   const [preview, setPreview] = useState<PublicMeetingPreview | null>(null);
-  const [linkCopied, setLinkCopied] = useState(false);
-  const [codeCopied, setCodeCopied] = useState(false);
 
   useEffect(() => {
     apiFetch<PublicMeetingPreview>(`/meetings/${meetingCode}`, { skipAuth: true })
@@ -33,38 +32,10 @@ export function MeetingInfoPanel({ meetingCode, isRecording }: Props) {
       .catch(() => setPreview(null));
   }, [meetingCode]);
 
-  const inviteLink = typeof window !== "undefined" ? `${window.location.origin}/meeting/${meetingCode}` : "";
-
-  function copy(text: string, mark: (v: boolean) => void) {
-    navigator.clipboard.writeText(text);
-    mark(true);
-    setTimeout(() => mark(false), 2000);
-  }
-
   return (
     <div className="flex flex-col gap-5 p-3.5">
       <section>
-        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-muted">Invite people</h3>
-        <div className="flex items-center gap-2">
-          <input
-            readOnly
-            value={inviteLink}
-            onClick={(e) => e.currentTarget.select()}
-            className="flex-1 truncate rounded-lg border border-surface-border2 bg-surface-field px-2.5 py-2 text-xs text-ink-2 outline-none"
-          />
-          <button
-            onClick={() => copy(inviteLink, setLinkCopied)}
-            className="flex-none rounded-lg border border-surface-border2 bg-surface-field px-3 py-2 text-xs font-medium text-ink-3 hover:brightness-110"
-          >
-            {linkCopied ? "Copied!" : "Copy"}
-          </button>
-        </div>
-        <div className="mt-2 flex items-center gap-2 text-xs text-ink-muted">
-          Meeting code: <b className="font-mono text-ink-2">{meetingCode}</b>
-          <button onClick={() => copy(meetingCode, setCodeCopied)} className="text-brand-300 hover:underline">
-            {codeCopied ? "Copied!" : "Copy"}
-          </button>
-        </div>
+        <ShareLinkBox code={meetingCode} title="Invite people" />
       </section>
 
       <section>

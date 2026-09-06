@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useEffect, useState, type CSSProperties } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { PreJoin, type LocalUserChoices } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
 import { MeetingRoom } from "@/components/meeting/meeting-room";
+import { ShareLinkBox } from "@/components/meeting/share-link-box";
 import { WS_EVENTS } from "@arutech/types";
 import { getSocket } from "@/lib/socket";
 import {
@@ -43,9 +44,17 @@ interface JoinResponse {
 
 type Phase = "loading" | "lobby" | "joining" | "waiting" | "in-meeting" | "denied" | "error";
 
-export default function MeetingPage() {
+function MeetingPage() {
   const params = useParams<{ code: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Set only by dashboard/page.tsx's hostNow(), right after creating an
+  // instant meeting — real gap reported directly: starting one dropped the
+  // host straight into camera/mic setup with no way to actually grab the
+  // link to send anyone before (or as) they joined. Rather than a whole
+  // separate share step/modal before this screen, the existing lobby
+  // (already the natural pause point for setup) just also shows it here.
+  const showShareOnJoin = searchParams.get("share") === "1";
   const { user, accessToken } = useAuthStore();
 
   const [phase, setPhase] = useState<Phase>("loading");
@@ -232,6 +241,11 @@ export default function MeetingPage() {
           joinLabel={phase === "joining" ? "Joining…" : "Join meeting"}
         />
       </div>
+      {showShareOnJoin && (
+        <div className="w-full max-w-lg rounded-xl border border-surface-border bg-surface-raised p-3.5">
+          <ShareLinkBox code={params.code} title="Share this meeting" />
+        </div>
+      )}
       {error && <p className="text-sm text-red-400">{error}</p>}
     </div>
   );
@@ -253,5 +267,18 @@ function CenteredMessage({
       )}
       <p className={isError ? "text-red-400" : "text-slate-300"}>{text}</p>
     </div>
+  );
+}
+
+// `useSearchParams()` above (for `?share=1`) opts this page out of static
+// rendering unless it's wrapped in Suspense — same fix already applied to
+// login/register; `next build`'s static prerendering enforces this even
+// though `next dev` never surfaces it, which is why it only ever showed up
+// building a real production image.
+export default function MeetingPageWrapper() {
+  return (
+    <Suspense fallback={null}>
+      <MeetingPage />
+    </Suspense>
   );
 }
