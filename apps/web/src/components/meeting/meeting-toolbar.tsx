@@ -5,11 +5,13 @@ import { useEffect, useRef, useState } from "react";
 import { REACTION_EMOJIS, type ReactionEmoji } from "@arutech/types";
 import { VirtualBackgroundPanel } from "./virtual-background-panel";
 import { CameraSelectPanel } from "./camera-select-panel";
+import { ShareLinkBox } from "./share-link-box";
 import { useVirtualBackground } from "@/hooks/use-virtual-background";
 
 export type PanelKind = "participants" | "chat" | "tools" | "recordings" | "info" | "whiteboard";
 
 interface Props {
+  meetingCode: string;
   activePanel: PanelKind | null;
   onTogglePanel: (panel: PanelKind) => void;
   onLeave: () => void;
@@ -49,6 +51,7 @@ interface Props {
  * identity per the product's design system, while still driving the same real
  * LiveKit local-participant APIs underneath. */
 export function MeetingToolbar({
+  meetingCode,
   activePanel,
   onTogglePanel,
   onLeave,
@@ -78,6 +81,15 @@ export function MeetingToolbar({
   const [reactionsOpen, setReactionsOpen] = useState(false);
   const [backgroundOpen, setBackgroundOpen] = useState(false);
   const [cameraSelectOpen, setCameraSelectOpen] = useState(false);
+  // Real gap reported directly, with a screenshot of exactly this toolbar:
+  // "i need here sharing meeting link option here" — the only existing way
+  // to grab the invite link/code from inside an already-running meeting was
+  // clicking the meeting title in the header to open the Info panel
+  // (MeetingInfoPanel), which has no icon or label suggesting "share" at
+  // all. This is the same link/code (ShareLinkBox, shared with that panel
+  // and the dashboard/lobby's own share entry points), just reachable with
+  // one obvious click from the bar everyone's already looking at.
+  const [inviteOpen, setInviteOpen] = useState(false);
   // Drives the mobile-only scroll-hint fade below — only actually shown
   // while there's real content still off to the right, so it doesn't sit
   // there implying more controls exist once you've already scrolled all the
@@ -291,6 +303,27 @@ export function MeetingToolbar({
                   {emoji}
                 </button>
               ))}
+            </div>
+          )}
+        </div>
+        <div className="relative flex-none">
+          <Control label="Invite" active={inviteOpen} onClick={() => setInviteOpen((v) => !v)}>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v8M8 12h8" />
+          </Control>
+          {inviteOpen && (
+            <div className="absolute bottom-full left-0 mb-2 w-72 rounded-xl border border-surface-border bg-surface-raised p-3 shadow-lg">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-semibold text-ink-2">Invite people</span>
+                <button
+                  onClick={() => setInviteOpen(false)}
+                  className="text-ink-muted2 hover:text-white"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <ShareLinkBox code={meetingCode} />
             </div>
           )}
         </div>

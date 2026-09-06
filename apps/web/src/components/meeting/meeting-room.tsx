@@ -955,6 +955,7 @@ export function MeetingRoom({
               }`}
             >
             <MeetingToolbar
+              meetingCode={meetingCode}
               activePanel={panel}
               onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
               onLeave={onLeave}
