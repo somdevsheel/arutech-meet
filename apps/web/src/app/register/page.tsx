@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { registerSchema } from "@arutech/validation";
@@ -11,6 +11,7 @@ function RegisterPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const setSession = useAuthStore((s) => s.setSession);
+  const { accessToken, hasHydrated } = useAuthStore();
   // Pre-filled from an org-invite link's ?email= — see
   // organizations/invites/[token]/page.tsx, which sends an unauthenticated
   // visitor here rather than duplicating a second signup form.
@@ -27,6 +28,15 @@ function RegisterPage() {
   // to an existing account instead), shouldn't lose it either.
   const redirectParam = searchParams.get("redirect");
   const loginHref = redirectParam ? `/login?redirect=${encodeURIComponent(redirectParam)}` : "/login";
+
+  // Same fix as the root landing page and /login (see their own comments):
+  // a still-logged-in user shouldn't be shown a form to create a SECOND
+  // account just because they landed here thinking their session was gone.
+  useEffect(() => {
+    if (hasHydrated && accessToken) {
+      router.replace(redirectParam || "/dashboard");
+    }
+  }, [hasHydrated, accessToken, redirectParam, router]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -52,6 +62,10 @@ function RegisterPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (hasHydrated && accessToken) {
+    return null;
   }
 
   return (

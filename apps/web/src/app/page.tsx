@@ -1,12 +1,35 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useAuthStore } from "@/lib/auth-store";
 
 export default function HomePage() {
   const router = useRouter();
   const [code, setCode] = useState("");
+  const { accessToken, hasHydrated } = useAuthStore();
+
+  // Real user report: "when i close tab and open again website why need to
+  // login again" — this page never checked auth state at all, so a still-
+  // logged-in user landing here (reopening a closed tab to the bare domain,
+  // rather than back to whatever page they'd left open, is completely
+  // normal browser behavior) saw the exact same "Sign in / Create account"
+  // landing screen a logged-out visitor would, with nothing here to tell
+  // them their session was actually still fine. They were never really
+  // logged out — clicking "Sign in" just made it *look* like they needed
+  // to be. `hasHydrated` gates this the same way every protected page
+  // already does (see auth-store.ts's own doc comment on it) so a
+  // genuinely logged-out visitor's very first render isn't held up by it.
+  useEffect(() => {
+    if (hasHydrated && accessToken) {
+      router.replace("/dashboard");
+    }
+  }, [hasHydrated, accessToken, router]);
+
+  if (hasHydrated && accessToken) {
+    return null;
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-10 px-6">

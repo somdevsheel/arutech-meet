@@ -11,6 +11,7 @@ function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const setSession = useAuthStore((s) => s.setSession);
+  const { accessToken, hasHydrated } = useAuthStore();
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -28,6 +29,16 @@ function LoginPage() {
     const timer = setTimeout(() => setRetryAfter((s) => (s && s > 1 ? s - 1 : null)), 1000);
     return () => clearTimeout(timer);
   }, [retryAfter]);
+
+  // Same fix as the root landing page (see its own comment): a still-
+  // logged-in user landing on /login — habit, a bookmark, or having been
+  // bounced here from the home page before its own fix — shouldn't be
+  // asked to sign in again when their session is already fine.
+  useEffect(() => {
+    if (hasHydrated && accessToken) {
+      router.replace(redirectParam || "/dashboard");
+    }
+  }, [hasHydrated, accessToken, redirectParam, router]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,6 +68,10 @@ function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (hasHydrated && accessToken) {
+    return null;
   }
 
   return (
