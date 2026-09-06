@@ -75,6 +75,11 @@ export class MeetingsController {
       status: meeting.status,
       requiresPassword: Boolean(meeting.passwordHash),
       waitingRoomEnabled: meeting.settings?.waitingRoomEnabled ?? true,
+      // Lets the lobby say "you'll join view-only" before someone joins,
+      // rather than them discovering it once already in and unable to
+      // unmute — see MeetingsService.computeCanPublishAudioVideo for where
+      // this is actually enforced.
+      isWebinar: meeting.settings?.isWebinar ?? false,
       branding: hasBranding
         ? { orgName: org!.name, logoUrl: org!.logoUrl, brandColor: org!.brandColor, message: org!.joinPageMessage }
         : null,

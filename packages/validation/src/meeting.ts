@@ -8,6 +8,11 @@ export const meetingSettingsSchema = z.object({
   allowChat: z.boolean().default(true),
   allowRecording: z.boolean().default(true),
   allowParticipantsUnmuteSelf: z.boolean().default(true),
+  // Attendees join view-only — see MeetingsService.computeCanPublishAudioVideo,
+  // which is what actually enforces this via allowParticipantsUnmuteSelf
+  // (set to false automatically for a webinar, not exposed as a separate
+  // raw toggle). This field is the cosmetic/UI marker only.
+  isWebinar: z.boolean().default(false),
   lockAfterStart: z.boolean().default(false),
   maxParticipants: z.number().int().min(2).max(1000).default(100),
   // Bare lowercase domains ("acme.com"), no leading "@". Empty = no

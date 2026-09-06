@@ -22,6 +22,7 @@ interface MeetingPreview {
   status: string;
   requiresPassword: boolean;
   waitingRoomEnabled: boolean;
+  isWebinar: boolean;
   branding: { orgName: string; logoUrl: string | null; brandColor: string | null; message: string | null } | null;
 }
 
@@ -40,6 +41,9 @@ interface JoinResponse {
    * source — see MeetingsService.JoinResult's own doc comment for why this
    * can't be derived from `role` alone client-side. */
   canShareScreen: boolean;
+  /** Same idea, for camera/mic — false only for a webinar attendee. See
+   * MeetingsService.JoinResult's own doc comment on this field. */
+  canPublishAudioVideo: boolean;
 }
 
 type Phase = "loading" | "lobby" | "joining" | "waiting" | "in-meeting" | "denied" | "error";
@@ -94,14 +98,22 @@ function MeetingPage() {
     const onAdmit = async (payload: { participantId: string }) => {
       if (payload.participantId !== joinResult.participantId) return;
       try {
-        const { token, url, canShareScreen } = await apiFetch<{
+        const { token, url, canShareScreen, canPublishAudioVideo } = await apiFetch<{
           token: string;
           url: string;
           canShareScreen: boolean;
+          canPublishAudioVideo: boolean;
         }>(`/meetings/${joinResult.meeting.id}/participants/${joinResult.participantId}/token`, {
           method: "POST",
         });
-        setJoinResult({ ...joinResult, livekitToken: token, livekitUrl: url, canShareScreen, status: "ADMITTED" });
+        setJoinResult({
+          ...joinResult,
+          livekitToken: token,
+          livekitUrl: url,
+          canShareScreen,
+          canPublishAudioVideo,
+          status: "ADMITTED",
+        });
         setPhase("in-meeting");
       } catch {
         // stay in waiting state; host may retry admit
@@ -178,6 +190,7 @@ function MeetingPage() {
         userId={user?.id ?? null}
         authToken={accessToken ?? joinResult.guestToken}
         initialCanShareScreen={joinResult.canShareScreen}
+        initialCanPublishAudioVideo={joinResult.canPublishAudioVideo}
         onLeave={() => router.push(user ? "/dashboard" : "/")}
       />
     );
@@ -210,6 +223,11 @@ function MeetingPage() {
         <img src={branding.logoUrl} alt={`${branding.orgName} logo`} className="h-12 max-w-[220px] object-contain" />
       )}
       <h1 className="text-xl font-semibold text-white">{preview?.title}</h1>
+      {preview?.isWebinar && (
+        <p className="max-w-md rounded-lg bg-surface-raised px-3 py-1.5 text-center text-xs text-ink-muted">
+          This is a webinar — attendees join view-only (no camera or mic) and can watch, chat, and raise a hand.
+        </p>
+      )}
       {branding?.message && <p className="max-w-md text-center text-sm text-ink-muted">{branding.message}</p>}
       {preview?.requiresPassword && (
         <input

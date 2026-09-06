@@ -45,6 +45,12 @@ export interface JoinResult {
    * state correctly from the very first render, rather than defaulting to
    * one and correcting itself after the fact. */
   canShareScreen: boolean;
+  /** Same idea as `canShareScreen`, for camera/mic — normally always true,
+   * false only for a webinar attendee (see
+   * `computeCanPublishAudioVideo`/`allowParticipantsUnmuteSelf`). Lets the
+   * client show a real disabled Mute/Camera state from first render instead
+   * of a working-looking control that silently fails at the SFU. */
+  canPublishAudioVideo: boolean;
 }
 
 @Injectable()
@@ -113,7 +119,15 @@ export class MeetingsService {
             screenShareScope: dto.settings?.screenShareScope ?? "HOST_ONLY",
             allowChat: dto.settings?.allowChat ?? true,
             allowRecording: dto.settings?.allowRecording ?? true,
-            allowParticipantsUnmuteSelf: dto.settings?.allowParticipantsUnmuteSelf ?? true,
+            // Webinar mode overrides whatever allowParticipantsUnmuteSelf
+            // was otherwise going to be — attendees join view-only, full
+            // stop, not a separately-adjustable knob. See
+            // computeCanPublishAudioVideo for where this actually gets
+            // enforced.
+            allowParticipantsUnmuteSelf: dto.settings?.isWebinar
+              ? false
+              : (dto.settings?.allowParticipantsUnmuteSelf ?? true),
+            isWebinar: dto.settings?.isWebinar ?? false,
             lockAfterStart: dto.settings?.lockAfterStart ?? false,
             maxParticipants: dto.settings?.maxParticipants ?? 100,
           },
@@ -240,7 +254,20 @@ export class MeetingsService {
         scheduledEnd: dto.scheduledEnd ? new Date(dto.scheduledEnd) : undefined,
         settings: dto.settings
           ? {
-              update: dto.settings,
+              update: {
+                ...dto.settings,
+                // Same override create() applies, both directions:
+                // isWebinar (whenever the request actually touches it) is
+                // authoritative over allowParticipantsUnmuteSelf, not a
+                // separately-adjustable knob — turning webinar mode OFF
+                // must restore attendees' ability to unmute themselves,
+                // same as turning it ON must take that away, regardless of
+                // whatever allowParticipantsUnmuteSelf value (if any) was
+                // also in this same request.
+                ...(dto.settings.isWebinar !== undefined
+                  ? { allowParticipantsUnmuteSelf: !dto.settings.isWebinar }
+                  : {}),
+              },
             }
           : undefined,
       },
@@ -573,12 +600,14 @@ export class MeetingsService {
     // to have granted (or not) the publish source. Recomputed for real once
     // actually ADMITTED, below.
     let canShareScreen = false;
+    let canPublishAudioVideo = true;
 
     if (status === "ADMITTED") {
       const result = await this.admitAndIssueToken(meeting.id, participant.id);
       livekitToken = result.token;
       livekitUrl = result.url;
       canShareScreen = result.canShareScreen;
+      canPublishAudioVideo = result.canPublishAudioVideo;
     } else {
       await this.broadcast.publish(meeting.id, WS_EVENTS.WAITING_ROOM_JOINED, {
         participantId: participant.id,
@@ -610,6 +639,7 @@ export class MeetingsService {
       livekitUrl,
       guestToken,
       canShareScreen,
+      canPublishAudioVideo,
     };
   }
 
@@ -662,6 +692,10 @@ export class MeetingsService {
     const meeting = await this.findById(meetingId);
     const role = participant.role as ParticipantRole;
     const canScreenShare = this.computeCanShareScreen(role, meeting.settings?.screenShareScope);
+    const canPublishAudioVideo = this.computeCanPublishAudioVideo(
+      role,
+      meeting.settings?.allowParticipantsUnmuteSelf,
+    );
 
     await this.liveKit.ensureRoom(meeting.livekitRoomName, meeting.settings?.maxParticipants ?? 100);
     const token = await this.liveKit.createRoomToken({
@@ -669,8 +703,14 @@ export class MeetingsService {
       identity: participant.livekitIdentity,
       name: participant.guestName ?? participant.user?.displayName ?? "Guest",
       canPublishScreenShare: canScreenShare,
+      canPublishAudioVideo,
     });
-    return { token, url: this.liveKit.getClientUrl(), canShareScreen: canScreenShare };
+    return {
+      token,
+      url: this.liveKit.getClientUrl(),
+      canShareScreen: canScreenShare,
+      canPublishAudioVideo,
+    };
   }
 
   /** Shared by issueToken (the token's actual publish grant) and join (what
@@ -686,6 +726,23 @@ export class MeetingsService {
   private computeCanShareScreen(role: ParticipantRole, screenShareScope: string | undefined): boolean {
     const isModerator = ["OWNER", "HOST", "CO_HOST", "TEACHER"].includes(role);
     return isModerator || screenShareScope === "ALL_PARTICIPANTS";
+  }
+
+  /** Webinar mode's actual enforcement point — shared by issueToken (the
+   * token's real publish grant) and join (what the client's initial toolbar
+   * state should show), same reasoning as computeCanShareScreen just above.
+   * A moderator can always publish camera/mic regardless of the setting;
+   * everyone else only when `allowParticipantsUnmuteSelf` isn't explicitly
+   * false — true whenever unset, matching the schema/validation default for
+   * every meeting that predates webinar mode. Promoting an attendee to
+   * CO_HOST (ParticipantsService.promoteCoHost) is the one way to let them
+   * publish anyway, exactly like it already is for screen share. */
+  private computeCanPublishAudioVideo(
+    role: ParticipantRole,
+    allowParticipantsUnmuteSelf: boolean | undefined,
+  ): boolean {
+    const isModerator = ["OWNER", "HOST", "CO_HOST", "TEACHER"].includes(role);
+    return isModerator || (allowParticipantsUnmuteSelf ?? true);
   }
 
   private async admitAndIssueToken(meetingId: string, participantId: string) {

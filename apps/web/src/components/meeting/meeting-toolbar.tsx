@@ -23,6 +23,12 @@ interface Props {
   captionsHidden: boolean;
   onToggleCaptions: () => void;
   isRecording: boolean;
+  /** False only for a webinar attendee — see MeetingRoomProps'
+   * initialCanPublishAudioVideo doc comment. Disables Mute/Camera outright
+   * rather than a request/approve flow like screen share has: "raise hand"
+   * already covers "ask to be let in," and a host/co-host promoting
+   * someone is the actual mechanism that grants this live. */
+  canPublishAudioVideo: boolean;
   canShareScreen: boolean;
   /** Only meaningful while `!canShareScreen` — see SCREEN_SHARE_REQUESTED's
    * doc comment in websocket-events.ts for the full request/approve/deny
@@ -63,6 +69,7 @@ export function MeetingToolbar({
   captionsHidden,
   onToggleCaptions,
   isRecording,
+  canPublishAudioVideo,
   canShareScreen,
   screenShareRequestState,
   onRequestScreenShare,
@@ -213,7 +220,8 @@ export function MeetingToolbar({
         <Control
           label={isMicrophoneEnabled ? "Mute" : "Unmute"}
           off={!isMicrophoneEnabled}
-          disabled={busy}
+          disabled={busy || !canPublishAudioVideo}
+          title={canPublishAudioVideo ? undefined : "The host has made this a view-only webinar"}
           onClick={() => toggle("mic")}
         >
           {isMicrophoneEnabled ? (
@@ -226,7 +234,8 @@ export function MeetingToolbar({
           <Control
             label={isCameraEnabled ? "Stop video" : "Start video"}
             off={!isCameraEnabled}
-            disabled={busy}
+            disabled={busy || !canPublishAudioVideo}
+            title={canPublishAudioVideo ? undefined : "The host has made this a view-only webinar"}
             onClick={() => toggle("cam")}
           >
             <rect x="3" y="6" width="12" height="12" rx="2" />
@@ -238,16 +247,18 @@ export function MeetingToolbar({
               a whole extra top-level toolbar button — this toolbar is
               already crowded enough on mobile (see the scroll-hint comment
               below) to not want a full-size button for a device picker. */}
-          <button
-            onClick={() => setCameraSelectOpen((v) => !v)}
-            aria-label="Choose camera"
-            aria-expanded={cameraSelectOpen}
-            className="absolute -right-1 -top-1 grid h-4 w-4 flex-none place-items-center rounded-full bg-surface-elevated text-ink-muted2 ring-1 ring-surface-border hover:text-white"
-          >
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          </button>
+          {canPublishAudioVideo && (
+            <button
+              onClick={() => setCameraSelectOpen((v) => !v)}
+              aria-label="Choose camera"
+              aria-expanded={cameraSelectOpen}
+              className="absolute -right-1 -top-1 grid h-4 w-4 flex-none place-items-center rounded-full bg-surface-elevated text-ink-muted2 ring-1 ring-surface-border hover:text-white"
+            >
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+          )}
           {cameraSelectOpen && (
             <div className="absolute bottom-full left-0 mb-2">
               <CameraSelectPanel room={room} onClose={() => setCameraSelectOpen(false)} />
@@ -546,6 +557,7 @@ function Control({
   label,
   onClick,
   disabled,
+  title,
   off,
   active,
   accentActive,
@@ -555,6 +567,10 @@ function Control({
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  /** Native tooltip — only really needed for a *disabled* control to
+   * explain why (a webinar attendee's Mute/Camera), since the visible
+   * label already covers the normal case. */
+  title?: string;
   off?: boolean;
   active?: boolean;
   accentActive?: boolean;
@@ -564,6 +580,7 @@ function Control({
     <button
       onClick={onClick}
       disabled={disabled}
+      title={title}
       aria-pressed={active}
       className={`relative flex flex-none flex-col items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium transition disabled:opacity-50 ${
         active ? "bg-surface-field text-white" : "text-ink-3 hover:bg-surface-field"

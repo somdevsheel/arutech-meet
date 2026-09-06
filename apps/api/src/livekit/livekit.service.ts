@@ -31,7 +31,22 @@ export interface GrantOptions {
   name: string;
   canPublish?: boolean;
   canPublishScreenShare?: boolean;
+  /** Defaults to true when omitted — every existing caller predates webinar
+   * mode and expects camera/mic to always be grantable, same as before this
+   * option existed. Only ever explicitly `false` for a webinar attendee
+   * (see MeetingsService.computeCanPublishAudioVideo). */
+  canPublishAudioVideo?: boolean;
   metadata?: string;
+}
+
+/** Shared by createRoomToken and updateParticipantPermissions so the two
+ * can never quietly disagree on what a given combination of grants actually
+ * translates to at the SFU. */
+function computePublishSources(opts: { canPublishScreenShare?: boolean; canPublishAudioVideo?: boolean }): TrackSource[] {
+  const sources: TrackSource[] = [];
+  if (opts.canPublishAudioVideo ?? true) sources.push(TrackSource.CAMERA, TrackSource.MICROPHONE);
+  if (opts.canPublishScreenShare) sources.push(TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO);
+  return sources;
 }
 
 /**
@@ -90,9 +105,7 @@ export class LiveKitService {
       canPublish: opts.canPublish ?? true,
       canSubscribe: true,
       canPublishData: true,
-      canPublishSources: opts.canPublishScreenShare
-        ? [TrackSource.CAMERA, TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO]
-        : [TrackSource.CAMERA, TrackSource.MICROPHONE],
+      canPublishSources: computePublishSources(opts),
     };
     at.addGrant(grant);
     return at.toJwt();
@@ -156,16 +169,18 @@ export class LiveKitService {
   async updateParticipantPermissions(
     roomName: string,
     identity: string,
-    opts: { canPublishScreenShare: boolean },
+    // `canPublishAudioVideo` defaults to true when omitted — every call site
+    // that predates webinar mode (approve/denyScreenShare) only ever cared
+    // about the screen-share grant and expects camera/mic to stay
+    // unconditionally on, exactly as before this option existed.
+    opts: { canPublishScreenShare: boolean; canPublishAudioVideo?: boolean },
   ): Promise<void> {
     try {
       await this.roomService.updateParticipant(roomName, identity, undefined, {
         canPublish: true,
         canSubscribe: true,
         canPublishData: true,
-        canPublishSources: opts.canPublishScreenShare
-          ? [TrackSource.CAMERA, TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO]
-          : [TrackSource.CAMERA, TrackSource.MICROPHONE],
+        canPublishSources: computePublishSources(opts),
       });
     } catch (err) {
       // Participant may not be connected yet (still admitted-but-not-joined) — the

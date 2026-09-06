@@ -20,6 +20,7 @@ interface Meeting {
     allowChat: boolean;
     allowRecording: boolean;
     allowedEmailDomains: string[];
+    isWebinar?: boolean;
   } | null;
 }
 
@@ -84,6 +85,15 @@ export function ScheduleMeetingModal({
   // too (unchanged behavior for anyone who doesn't touch it), but now it's
   // an actual, visible choice instead of an invisible one.
   const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(editMeeting?.settings?.waitingRoomEnabled ?? true);
+  // Real feature request: "need to add webinar option also." Attendees join
+  // view-only — camera/mic can't be turned on at all (not just off by
+  // default) — and can only watch, chat, and raise a hand; a host/co-host
+  // promotes someone (the existing Participants-panel action) to actually
+  // let them speak/show video. Server-side this is entirely
+  // allowParticipantsUnmuteSelf (MeetingsService.computeCanPublishAudioVideo)
+  // — isWebinar itself is just this checkbox's own persisted state/label,
+  // not a separate enforcement point.
+  const [isWebinar, setIsWebinar] = useState(editMeeting?.settings?.isWebinar ?? false);
   // H-11: meeting passwords are fully built and enforced server-side
   // (createMeetingSchema already takes one, join-time verification already
   // works end to end) but no UI anywhere ever let a host actually set one —
@@ -111,7 +121,7 @@ export function ScheduleMeetingModal({
               scheduledEnd: scheduledEnd.toISOString(),
               timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
               password: removePassword ? null : password.trim() || undefined,
-              settings: { waitingRoomEnabled },
+              settings: { waitingRoomEnabled, isWebinar },
             }),
           })
         : await apiFetch<Meeting>("/meetings", {
@@ -123,7 +133,7 @@ export function ScheduleMeetingModal({
               scheduledEnd: scheduledEnd.toISOString(),
               timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
               password: password.trim() || undefined,
-              settings: { waitingRoomEnabled },
+              settings: { waitingRoomEnabled, isWebinar },
             }),
           });
       onScheduled(meeting);
@@ -173,6 +183,13 @@ export function ScheduleMeetingModal({
           description="Attendees wait for you to admit them before joining"
           checked={waitingRoomEnabled}
           onChange={setWaitingRoomEnabled}
+        />
+
+        <Toggle
+          label="Webinar"
+          description="Attendees join view-only — no camera or mic — and can watch, chat, and raise a hand. Make someone a co-host to let them speak."
+          checked={isWebinar}
+          onChange={setIsWebinar}
         />
 
         {isEditing ? (

@@ -638,6 +638,15 @@ model MeetingSettings {
   allowParticipantsUnmuteSelf Boolean          @default(true) @map("allow_participants_unmute_self")
   lockAfterStart              Boolean          @default(false) @map("lock_after_start")
   maxParticipants             Int              @default(100) @map("max_participants")
+  // Webinar mode: attendees join view-only (camera/mic can't be turned on —
+  // see MeetingsService.computeCanPublishAudioVideo, which is what actually
+  // enforces this via `allowParticipantsUnmuteSelf`, set to false
+  // automatically whenever a webinar is created). This flag itself is
+  // purely the cosmetic/UI marker ("Webinar" label, the create-flow
+  // checkbox) — kept separate from the setting that actually gets enforced
+  // so the two concerns don't have to stay in lockstep everywhere they're
+  // read.
+  isWebinar                   Boolean          @default(false) @map("is_webinar")
   // Empty = no restriction. Lowercase bare domains ("acme.com", no "@"),
   // checked against the joiner's own account email at join time — see
   // MeetingsService.join. The meeting owner is always exempt (it's their

@@ -34,6 +34,7 @@ const MEETING = {
     lockAfterStart: false,
     allowedEmailDomains: [] as string[],
     screenShareScope: undefined as string | undefined,
+    allowParticipantsUnmuteSelf: undefined as boolean | undefined,
   },
 };
 
@@ -189,6 +190,28 @@ describe("MeetingsService", () => {
       await expect(service.create("user-1", { ...BASE_DTO, orgId: "org-1" })).rejects.toThrow("limit reached");
       expect(prisma.client.meeting.create).not.toHaveBeenCalled();
     });
+
+    // Webinar mode isn't a separately-adjustable allowParticipantsUnmuteSelf
+    // toggle — creating one always forces attendees view-only, regardless
+    // of whatever (if anything) was also sent for that field directly.
+    it("forces allowParticipantsUnmuteSelf: false when creating a webinar", async () => {
+      const { service, prisma } = makeService();
+      await service.create("user-1", {
+        ...BASE_DTO,
+        settings: { isWebinar: true, allowParticipantsUnmuteSelf: true },
+      });
+      const data = (prisma.client.meeting.create as jest.Mock).mock.calls[0][0].data;
+      expect(data.settings.create.isWebinar).toBe(true);
+      expect(data.settings.create.allowParticipantsUnmuteSelf).toBe(false);
+    });
+
+    it("leaves allowParticipantsUnmuteSelf at its own default for a non-webinar meeting", async () => {
+      const { service, prisma } = makeService();
+      await service.create("user-1", BASE_DTO);
+      const data = (prisma.client.meeting.create as jest.Mock).mock.calls[0][0].data;
+      expect(data.settings.create.isWebinar).toBe(false);
+      expect(data.settings.create.allowParticipantsUnmuteSelf).toBe(true);
+    });
   });
 
   describe("end", () => {
@@ -296,6 +319,42 @@ describe("MeetingsService", () => {
       expect(data.timezone).toBe("Asia/Kolkata");
       expect(data.recurrenceFrequency).toBe("WEEKLY");
       expect(data.recurrenceUntil).toEqual(new Date("2027-01-01T00:00:00.000Z"));
+    });
+
+    it("forces allowParticipantsUnmuteSelf: false when turning webinar mode ON", async () => {
+      const { service, prisma } = makeService();
+      await service.updateSettings(MEETING.id, "owner-1", {
+        ...BASE_DTO,
+        settings: { isWebinar: true, allowParticipantsUnmuteSelf: true },
+      });
+      const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
+      expect(data.settings.update.isWebinar).toBe(true);
+      expect(data.settings.update.allowParticipantsUnmuteSelf).toBe(false);
+    });
+
+    // Real bug this specifically guards against: turning webinar mode back
+    // OFF must restore attendees' ability to unmute themselves — otherwise
+    // a meeting that was briefly a webinar stays permanently view-only for
+    // everyone even after switching the mode off.
+    it("restores allowParticipantsUnmuteSelf: true when turning webinar mode OFF", async () => {
+      const { service, prisma } = makeService();
+      await service.updateSettings(MEETING.id, "owner-1", {
+        ...BASE_DTO,
+        settings: { isWebinar: false },
+      });
+      const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
+      expect(data.settings.update.isWebinar).toBe(false);
+      expect(data.settings.update.allowParticipantsUnmuteSelf).toBe(true);
+    });
+
+    it("leaves allowParticipantsUnmuteSelf alone when a settings update doesn't touch isWebinar at all", async () => {
+      const { service, prisma } = makeService();
+      await service.updateSettings(MEETING.id, "owner-1", {
+        ...BASE_DTO,
+        settings: { muteOnEntry: false },
+      });
+      const data = (prisma.client.meeting.update as jest.Mock).mock.calls[0][0].data;
+      expect(data.settings.update).not.toHaveProperty("allowParticipantsUnmuteSelf");
     });
 
     it("requires the meeting.settings.update capability", async () => {
@@ -875,6 +934,71 @@ describe("MeetingsService.issueToken", () => {
         expect.objectContaining({ canPublishScreenShare: true }),
       );
       expect(result.canShareScreen).toBe(true);
+    });
+  });
+
+  // Webinar mode's actual enforcement point — see
+  // MeetingsService.computeCanPublishAudioVideo's own doc comment.
+  describe("audio/video (webinar) grant", () => {
+    it("grants a CO_HOST canPublishAudioVideo regardless of allowParticipantsUnmuteSelf", async () => {
+      const { service, liveKit, prisma } = makeService({
+        meeting: { settings: { allowParticipantsUnmuteSelf: false } },
+      });
+      (prisma.client.meetingParticipant.findUnique as jest.Mock).mockResolvedValue({
+        id: "participant-1",
+        meetingId: MEETING.id,
+        role: "CO_HOST",
+        status: "ADMITTED",
+        livekitIdentity: "user-2-abc",
+        guestName: null,
+        userId: "user-2",
+        user: { displayName: "Co Host" },
+      });
+      const result = await service.issueToken(MEETING.id, "participant-1");
+      expect(liveKit.createRoomToken).toHaveBeenCalledWith(
+        expect.objectContaining({ canPublishAudioVideo: true }),
+      );
+      expect(result.canPublishAudioVideo).toBe(true);
+    });
+
+    it("refuses a plain PARTICIPANT canPublishAudioVideo when the meeting is a webinar (allowParticipantsUnmuteSelf: false)", async () => {
+      const { service, liveKit, prisma } = makeService({
+        meeting: { settings: { allowParticipantsUnmuteSelf: false } },
+      });
+      (prisma.client.meetingParticipant.findUnique as jest.Mock).mockResolvedValue({
+        id: "participant-1",
+        meetingId: MEETING.id,
+        role: "PARTICIPANT",
+        status: "ADMITTED",
+        livekitIdentity: "user-2-abc",
+        guestName: null,
+        userId: "user-2",
+        user: { displayName: "Attendee" },
+      });
+      const result = await service.issueToken(MEETING.id, "participant-1");
+      expect(liveKit.createRoomToken).toHaveBeenCalledWith(
+        expect.objectContaining({ canPublishAudioVideo: false }),
+      );
+      expect(result.canPublishAudioVideo).toBe(false);
+    });
+
+    it("grants a plain PARTICIPANT canPublishAudioVideo by default — every meeting that predates webinar mode", async () => {
+      const { service, liveKit, prisma } = makeService();
+      (prisma.client.meetingParticipant.findUnique as jest.Mock).mockResolvedValue({
+        id: "participant-1",
+        meetingId: MEETING.id,
+        role: "PARTICIPANT",
+        status: "ADMITTED",
+        livekitIdentity: "user-2-abc",
+        guestName: null,
+        userId: "user-2",
+        user: { displayName: "Regular Participant" },
+      });
+      const result = await service.issueToken(MEETING.id, "participant-1");
+      expect(liveKit.createRoomToken).toHaveBeenCalledWith(
+        expect.objectContaining({ canPublishAudioVideo: true }),
+      );
+      expect(result.canPublishAudioVideo).toBe(true);
     });
   });
 });

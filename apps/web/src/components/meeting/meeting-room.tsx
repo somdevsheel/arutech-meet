@@ -49,6 +49,14 @@ export interface MeetingRoomProps {
    * the rest of this session (a promotion, or an approved request — see
    * the effect below), never back. */
   initialCanShareScreen: boolean;
+  /** Same idea, for camera/mic — false only for a webinar attendee (see
+   * MeetingsService.computeCanPublishAudioVideo). Unlike screen share,
+   * there's no request/approve flow for this — the only way it goes from
+   * false to true mid-meeting is a host/co-host promoting the attendee
+   * (ParticipantsService.promoteCoHost already grants this live), which
+   * MODERATION_ROLE_CHANGE already causes a re-render for via `role`/
+   * `effectiveRole` below — no separate live-update plumbing needed here. */
+  initialCanPublishAudioVideo: boolean;
   onLeave: () => void;
 }
 
@@ -83,6 +91,7 @@ export function MeetingRoom({
   userId,
   authToken,
   initialCanShareScreen,
+  initialCanPublishAudioVideo,
   onLeave,
 }: MeetingRoomProps) {
   const [panel, setPanel] = useState<PanelKind | null>(null);
@@ -202,6 +211,10 @@ export function MeetingRoom({
   // reactive off `participants`/onRoleChange already, nothing extra needed.
   const [screenShareApproved, setScreenShareApproved] = useState(false);
   const canShareScreen = initialCanShareScreen || isModerator || screenShareApproved;
+  // Same `isModerator` reactivity as canShareScreen above, minus a request/
+  // approve flow of its own — a webinar attendee's only path to speaking is
+  // a promotion to CO_HOST (see this prop's own doc comment).
+  const canPublishAudioVideo = initialCanPublishAudioVideo || isModerator;
   // Clears itself once this participant actually clicks Share screen (see
   // MeetingToolbar's onScreenShareToggled) or, failing that, after a
   // generous timeout — a real notice that outlives the meeting isn't a
@@ -626,8 +639,14 @@ export function MeetingRoom({
             token={conn.token}
             serverUrl={conn.url}
             connect
-            video
-            audio
+            // A webinar attendee's token doesn't grant the camera/mic
+            // publish sources at all (see canPublishAudioVideo above) —
+            // auto-enabling on connect would just have the SFU reject the
+            // publish. Breakout rooms (conn.label set) are a separate,
+            // always-full-participation context regardless of the main
+            // meeting's webinar setting, so they're unconditionally true.
+            video={Boolean(conn.label) || canPublishAudioVideo}
+            audio={Boolean(conn.label) || canPublishAudioVideo}
             onDisconnected={
               conn.label
                 ? returnToMain
@@ -980,6 +999,7 @@ export function MeetingRoom({
               }
               isRecording={isRecording}
               canShareScreen={canShareScreen}
+              canPublishAudioVideo={canPublishAudioVideo}
               screenShareRequestState={screenShareRequestState}
               onRequestScreenShare={requestScreenShare}
               justApproved={screenShareJustApproved}

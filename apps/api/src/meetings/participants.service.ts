@@ -171,8 +171,12 @@ export class ParticipantsService {
       where: { id: participantId },
       data: { role: "CO_HOST" },
     });
+    // Also the one way to let a webinar attendee actually speak/show video
+    // — CO_HOST is always a moderator, so both grants are unconditional
+    // here regardless of screenShareScope/allowParticipantsUnmuteSelf.
     await this.liveKit.updateParticipantPermissions(meeting.livekitRoomName, participant.livekitIdentity, {
       canPublishScreenShare: true,
+      canPublishAudioVideo: true,
     });
     await this.logEvent(meetingId, participantId, "MODERATION_PROMOTE_CO_HOST");
     await this.auditLog.record({
@@ -211,13 +215,16 @@ export class ParticipantsService {
       data: { role: baseRole },
     });
 
-    // Mirrors MeetingsService.computeCanShareScreen: only revoke the live
-    // SFU screen-share grant if the restored role wouldn't have it anyway —
-    // a meeting configured with screenShareScope: ALL_PARTICIPANTS should
-    // leave every participant's grant alone regardless of role.
+    // Mirrors MeetingsService.computeCanShareScreen/computeCanPublishAudioVideo:
+    // only revoke a live SFU grant if the restored (always non-moderator)
+    // role wouldn't have had it anyway — a meeting configured with
+    // screenShareScope: ALL_PARTICIPANTS, or one that isn't a webinar,
+    // should leave that grant alone regardless of the demotion.
     const keepsScreenShare = meeting.settings?.screenShareScope === "ALL_PARTICIPANTS";
+    const keepsAudioVideo = meeting.settings?.allowParticipantsUnmuteSelf ?? true;
     await this.liveKit.updateParticipantPermissions(meeting.livekitRoomName, participant.livekitIdentity, {
       canPublishScreenShare: keepsScreenShare,
+      canPublishAudioVideo: keepsAudioVideo,
     });
 
     await this.logEvent(meetingId, participantId, "MODERATION_DEMOTE_CO_HOST");

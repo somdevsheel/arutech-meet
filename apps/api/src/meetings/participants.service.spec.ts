@@ -7,7 +7,11 @@ import type { RealtimeBroadcastService } from "../realtime/realtime-broadcast.se
 import type { AuditLogService } from "../audit/audit-log.service";
 import type { ContactsService } from "../contacts/contacts.service";
 
-const MEETING = { id: "meeting-1", livekitRoomName: "room-1", settings: null as { screenShareScope: string } | null };
+const MEETING = {
+  id: "meeting-1",
+  livekitRoomName: "room-1",
+  settings: null as { screenShareScope?: string; allowParticipantsUnmuteSelf?: boolean } | null,
+};
 const PARTICIPANT = { id: "participant-1", meetingId: "meeting-1", userId: "target-1", livekitIdentity: "target-1-abc" };
 const CO_HOST_PARTICIPANT = { ...PARTICIPANT, role: "CO_HOST" };
 const GUEST_PARTICIPANT = { id: "participant-2", meetingId: "meeting-1", userId: null, livekitIdentity: "guest-xyz" };
@@ -180,6 +184,21 @@ describe("ParticipantsService.deny", () => {
   });
 });
 
+describe("ParticipantsService.promoteCoHost", () => {
+  it("grants both screen-share and audio/video unconditionally — CO_HOST is always a moderator", async () => {
+    const { service, liveKit } = makeService({
+      participant: PARTICIPANT,
+      meeting: { ...MEETING, settings: { allowParticipantsUnmuteSelf: false } },
+    });
+    await service.promoteCoHost(MEETING.id, "caller-1", PARTICIPANT.id);
+    expect(liveKit.updateParticipantPermissions).toHaveBeenCalledWith(
+      MEETING.livekitRoomName,
+      PARTICIPANT.livekitIdentity,
+      { canPublishScreenShare: true, canPublishAudioVideo: true },
+    );
+  });
+});
+
 describe("ParticipantsService.demoteCoHost", () => {
   it("requires the participant.role.demote capability", async () => {
     const { service, permissions } = makeService({ participant: CO_HOST_PARTICIPANT });
@@ -218,13 +237,13 @@ describe("ParticipantsService.demoteCoHost", () => {
     );
   });
 
-  it("revokes the live screen-share grant by default", async () => {
+  it("revokes the live screen-share grant by default, keeps audio/video since this meeting isn't a webinar", async () => {
     const { service, liveKit } = makeService({ participant: CO_HOST_PARTICIPANT });
     await service.demoteCoHost(MEETING.id, "caller-1", CO_HOST_PARTICIPANT.id);
     expect(liveKit.updateParticipantPermissions).toHaveBeenCalledWith(
       MEETING.livekitRoomName,
       CO_HOST_PARTICIPANT.livekitIdentity,
-      { canPublishScreenShare: false },
+      { canPublishScreenShare: false, canPublishAudioVideo: true },
     );
   });
 
@@ -237,7 +256,20 @@ describe("ParticipantsService.demoteCoHost", () => {
     expect(liveKit.updateParticipantPermissions).toHaveBeenCalledWith(
       MEETING.livekitRoomName,
       CO_HOST_PARTICIPANT.livekitIdentity,
-      { canPublishScreenShare: true },
+      { canPublishScreenShare: true, canPublishAudioVideo: true },
+    );
+  });
+
+  it("revokes the live audio/video grant too when demoting back into a webinar's view-only attendee role", async () => {
+    const { service, liveKit } = makeService({
+      participant: CO_HOST_PARTICIPANT,
+      meeting: { ...MEETING, settings: { allowParticipantsUnmuteSelf: false } },
+    });
+    await service.demoteCoHost(MEETING.id, "caller-1", CO_HOST_PARTICIPANT.id);
+    expect(liveKit.updateParticipantPermissions).toHaveBeenCalledWith(
+      MEETING.livekitRoomName,
+      CO_HOST_PARTICIPANT.livekitIdentity,
+      { canPublishScreenShare: false, canPublishAudioVideo: false },
     );
   });
 
