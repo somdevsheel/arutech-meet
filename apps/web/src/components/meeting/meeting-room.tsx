@@ -86,6 +86,40 @@ export function MeetingRoom({
   onLeave,
 }: MeetingRoomProps) {
   const [panel, setPanel] = useState<PanelKind | null>(null);
+  // Feature request: "all icon should be hide automatically when move mouse
+  // need to popup all icons" — auto-hide the toolbar after a few seconds of
+  // no real activity (mouse, touch, or key) so it stops covering the video
+  // while someone's just watching/listening, same as YouTube/Zoom; any
+  // activity — including just hovering the toolbar itself, see its own
+  // onMouseEnter/onMouseLeave below — brings it straight back. Deliberately
+  // only the bottom toolbar, not the header: the header has no "icons" to
+  // speak of (just the title/timer/encryption badges), and always-visible
+  // meeting info is more useful kept in place than an immersive-video win.
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controlsHoveredRef = useRef(false);
+  const CONTROLS_HIDE_DELAY_MS = 4000;
+
+  function scheduleControlsHide() {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => {
+      if (!controlsHoveredRef.current) setControlsVisible(false);
+    }, CONTROLS_HIDE_DELAY_MS);
+  }
+
+  function wakeControls() {
+    setControlsVisible(true);
+    scheduleControlsHide();
+  }
+
+  useEffect(() => {
+    scheduleControlsHide();
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [isRecording, setIsRecording] = useState(false);
   const [recordingBanner, setRecordingBanner] = useState(false);
   const [captionsActive, setCaptionsActive] = useState(false);
@@ -610,6 +644,9 @@ export function MeetingRoom({
             }
             data-lk-theme="default"
             className="flex h-screen flex-col overflow-hidden bg-surface"
+            onMouseMove={wakeControls}
+            onTouchStart={wakeControls}
+            onKeyDown={wakeControls}
           >
             {/* Unconditional and outside the whiteboard/video-grid swap below
                 on purpose — see VideoGrid's own doc comment for why this
@@ -886,6 +923,37 @@ export function MeetingRoom({
               )}
             </div>
 
+            {/* Wrapping div (not a change to MeetingToolbar itself) so the
+                fade/slide is purely cosmetic — hiding is opacity+transform,
+                never `overflow-hidden`/height-collapse, because the
+                Background/Camera/Reactions popovers this toolbar renders
+                escape upward past its own box via `absolute bottom-full`;
+                clipping this wrapper would clip them too. The toolbar keeps
+                its normal flex space either way (no video-reflow when
+                hidden) — deliberately, since actually removing it from flow
+                risks the fullscreen mobile side-panel overlay (`<aside
+                className="... absolute inset-0 ...">` above) extending
+                underneath and being covered by it once it reappears.
+                onMouseEnter/onMouseLeave here — not on MeetingToolbar
+                itself — keep it visible for as long as the pointer is
+                anywhere over the bar OR one of its popovers (popovers are
+                DOM descendants of this same wrapper despite rendering
+                visually above it, so entering one never fires a
+                mouseleave here). */}
+            <div
+              onMouseEnter={() => {
+                controlsHoveredRef.current = true;
+                if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+                setControlsVisible(true);
+              }}
+              onMouseLeave={() => {
+                controlsHoveredRef.current = false;
+                scheduleControlsHide();
+              }}
+              className={`flex-none transition-all duration-300 ${
+                controlsVisible ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0"
+              }`}
+            >
             <MeetingToolbar
               activePanel={panel}
               onTogglePanel={(p) => setPanel((cur) => (cur === p ? null : p))}
@@ -921,6 +989,7 @@ export function MeetingRoom({
               onToggleHand={toggleHand}
               onReact={sendReaction}
             />
+            </div>
 
             {reportingParticipant && (
               <ReportParticipantModal
