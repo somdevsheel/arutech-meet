@@ -1,9 +1,10 @@
 "use client";
 
-import { useLocalParticipant } from "@livekit/components-react";
+import { useLocalParticipant, useRoomContext } from "@livekit/components-react";
 import { useEffect, useRef, useState } from "react";
 import { REACTION_EMOJIS, type ReactionEmoji } from "@arutech/types";
 import { VirtualBackgroundPanel } from "./virtual-background-panel";
+import { CameraSelectPanel } from "./camera-select-panel";
 import { useVirtualBackground } from "@/hooks/use-virtual-background";
 
 export type PanelKind = "participants" | "chat" | "tools" | "recordings" | "info" | "whiteboard";
@@ -72,9 +73,11 @@ export function MeetingToolbar({
 }: Props) {
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } =
     useLocalParticipant();
+  const room = useRoomContext();
   const [busy, setBusy] = useState(false);
   const [reactionsOpen, setReactionsOpen] = useState(false);
   const [backgroundOpen, setBackgroundOpen] = useState(false);
+  const [cameraSelectOpen, setCameraSelectOpen] = useState(false);
   // Drives the mobile-only scroll-hint fade below — only actually shown
   // while there's real content still off to the right, so it doesn't sit
   // there implying more controls exist once you've already scrolled all the
@@ -207,15 +210,38 @@ export function MeetingToolbar({
             <path d="M9 9V6a3 3 0 0 1 6 0v5M5 11a7 7 0 0 0 10.5 6M12 18v3M3 3l18 18" />
           )}
         </Control>
-        <Control
-          label={isCameraEnabled ? "Stop video" : "Start video"}
-          off={!isCameraEnabled}
-          disabled={busy}
-          onClick={() => toggle("cam")}
-        >
-          <rect x="3" y="6" width="12" height="12" rx="2" />
-          <path d="m15 11 6-4v10l-6-4" />
-        </Control>
+        <div className="relative flex-none">
+          <Control
+            label={isCameraEnabled ? "Stop video" : "Start video"}
+            off={!isCameraEnabled}
+            disabled={busy}
+            onClick={() => toggle("cam")}
+          >
+            <rect x="3" y="6" width="12" height="12" rx="2" />
+            <path d="m15 11 6-4v10l-6-4" />
+          </Control>
+          {/* Real feature gap: the camera button only ever toggled on/off,
+              no way to pick WHICH camera on a machine with more than one.
+              A small corner caret (same spot Zoom/Meet put it) rather than
+              a whole extra top-level toolbar button — this toolbar is
+              already crowded enough on mobile (see the scroll-hint comment
+              below) to not want a full-size button for a device picker. */}
+          <button
+            onClick={() => setCameraSelectOpen((v) => !v)}
+            aria-label="Choose camera"
+            aria-expanded={cameraSelectOpen}
+            className="absolute -right-1 -top-1 grid h-4 w-4 flex-none place-items-center rounded-full bg-surface-elevated text-ink-muted2 ring-1 ring-surface-border hover:text-white"
+          >
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+          {cameraSelectOpen && (
+            <div className="absolute bottom-full left-0 mb-2">
+              <CameraSelectPanel room={room} onClose={() => setCameraSelectOpen(false)} />
+            </div>
+          )}
+        </div>
         <div className="relative flex-none">
           <Control
             label="Background"
