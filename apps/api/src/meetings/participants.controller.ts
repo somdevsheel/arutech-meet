@@ -82,6 +82,15 @@ export class ParticipantsController {
     return this.participantsService.promoteCoHost(meetingId, user.id, participantId);
   }
 
+  @Post(":participantId/demote-co-host")
+  demote(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("meetingId") meetingId: string,
+    @Param("participantId") participantId: string,
+  ) {
+    return this.participantsService.demoteCoHost(meetingId, user.id, participantId);
+  }
+
   @Post(":participantId/screen-share/request")
   requestScreenShare(
     @CurrentUser() user: AuthenticatedUser,

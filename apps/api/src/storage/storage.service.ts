@@ -20,7 +20,20 @@ export class StorageService {
   /** Used only to compute presigned URLs — must use a host the requesting
    * browser can actually resolve. Signing is a local HMAC computation, no network
    * call happens against this client, so it's safe to point it at a different
-   * (public) endpoint than `client` even though both target the same bucket. */
+   * (public) endpoint than `client` even though both target the same bucket.
+   *
+   * Whatever infrastructure sits between this endpoint and the actual bucket
+   * (a reverse proxy, in the self-hosted-MinIO case — see
+   * infrastructure/docker/nginx.lightsail.conf's dedicated MinIO server
+   * block) must forward the request with its path byte-for-byte unchanged.
+   * AWS SigV4 signs the exact request path as part of the signature — a
+   * proxy that strips or rewrites any part of it (e.g. fronting this as
+   * `/storage/<bucket>/<key>` and stripping `/storage` before forwarding)
+   * invalidates the signature and the request 403s with
+   * SignatureDoesNotMatch, even though the URL "looks" fine and the host is
+   * perfectly reachable. Confirmed directly against a real MinIO — this
+   * isn't theoretical. A dedicated port with a pure passthrough (no path
+   * involved at all) is the only proxy shape that works here. */
   private readonly publicClient: S3Client;
   private readonly bucket: string;
 

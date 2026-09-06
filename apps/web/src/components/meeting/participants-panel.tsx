@@ -11,6 +11,7 @@ interface Props {
   onRemove: (participantId: string) => void;
   onBlock: (participantId: string) => void;
   onPromote: (participantId: string) => void;
+  onDemote: (participantId: string) => void;
   onLowerHand: (userId: string) => void;
   onReport: (participant: ParticipantPresencePayload) => void;
 }
@@ -32,6 +33,7 @@ export function ParticipantsPanel({
   onRemove,
   onBlock,
   onPromote,
+  onDemote,
   onLowerHand,
   onReport,
 }: Props) {
@@ -100,9 +102,16 @@ export function ParticipantsPanel({
                   <IconButton title="Disable camera" onClick={() => onDisableCamera(p.participantId)}>
                     <path d="M3 6h9a2 2 0 0 1 2 2v8M21 7v10l-6-4M3 3l18 18" />
                   </IconButton>
-                  <IconButton title="Make co-host" onClick={() => onPromote(p.participantId)}>
-                    <path d="M12 3.5 14.5 9l6 .6-4.5 4 1.3 5.9L12 16.7 6.7 19.5 8 13.6l-4.5-4L9.5 9 12 3.5Z" />
-                  </IconButton>
+                  {p.role === "CO_HOST" ? (
+                    <IconButton title="Remove co-host" onClick={() => onDemote(p.participantId)}>
+                      <path d="M12 3.5 14.5 9l6 .6-4.5 4 1.3 5.9L12 16.7 6.7 19.5 8 13.6l-4.5-4L9.5 9 12 3.5Z" />
+                      <path d="M4 4l16 16" />
+                    </IconButton>
+                  ) : (
+                    <IconButton title="Make co-host" onClick={() => onPromote(p.participantId)}>
+                      <path d="M12 3.5 14.5 9l6 .6-4.5 4 1.3 5.9L12 16.7 6.7 19.5 8 13.6l-4.5-4L9.5 9 12 3.5Z" />
+                    </IconButton>
+                  )}
                   <IconButton title="Remove" onClick={() => onRemove(p.participantId)}>
                     <path d="M18 6 6 18M6 6l12 12" />
                   </IconButton>

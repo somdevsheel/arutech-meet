@@ -840,6 +840,7 @@ export function MeetingRoom({
                         onRemove={(id) => moderate("remove", id)}
                         onBlock={(id) => moderate("block", id)}
                         onPromote={(id) => moderate("promote-co-host", id)}
+                        onDemote={(id) => moderate("demote-co-host", id)}
                         onLowerHand={(targetUserId) => lowerHandFor(targetUserId)}
                         onReport={(p) => setReportingParticipant(p)}
                       />

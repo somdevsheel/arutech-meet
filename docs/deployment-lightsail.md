@@ -36,8 +36,8 @@ on one instance. What it deliberately does **not** give you:
   the Kubernetes/RDS/ElastiCache path in `docs/deployment.md`, not this one.
 - **Automatic TLS renewal out of the box** — set up the cron job in §Renewal below, or your cert expires in
   90 days and the site goes dark.
-- **Recording playback from a real device, if you use the free self-hosted MinIO option instead of real S3**
-  — see §Storage for exactly why, and which one to pick.
+- Nothing storage-related — the free self-hosted MinIO option works from a real device too now (§6), same
+  as real S3, just with one extra firewall port and no publicly-trusted TLS cert step of its own.
 - **Anything AI-assistant-related** — Stage 8 is deliberately deferred (see `docs/roadmap.md`), this
   doesn't change that.
 
@@ -273,6 +273,7 @@ Open exactly these — anything else stays closed:
 | Custom | TCP | 7880 | LiveKit signaling (TLS-terminated by nginx — see §Networking below) |
 | Custom | TCP | 7881 | LiveKit's TCP fallback, for networks that block/throttle UDP |
 | Custom | UDP | 50000-50100 | WebRTC media (audio/video/screen-share) — this is the one people forget, and its absence looks exactly like "camera works, but the other person is a black screen" |
+| Custom | TCP | 9000 | Only if you're on the self-hosted MinIO storage profile (§6) — TLS-terminated by nginx, same pattern as 7880. Not needed on real S3. |
 
 ## 4. Server setup
 
@@ -399,16 +400,19 @@ S3_SECRET_KEY=<the SecretAccessKey above>
 S3_FORCE_PATH_STYLE=false
 ```
 
-**Alternative: self-hosted MinIO (free, but recording playback won't reach a real device).** Proxying
-MinIO's presigned URLs through nginx breaks AWS SigV4 signature validation (the signature covers the exact
-host/path used when it was signed — see the comment on the `minio` service in
-`infrastructure/docker/docker-compose.lightsail.yml`), and MinIO would need to terminate its own TLS to be
-safely reachable from outside — not set up here. Pick this only if you don't care about recording playback
-working from outside the instance itself:
+**Alternative: self-hosted MinIO (free).** `S3_PUBLIC_ENDPOINT` must be a host the requesting *browser* can
+resolve — plain `http://minio:9000` (the container's own Docker-network name) never is, so every presigned
+upload/download URL handed to a real client would fail outright. nginx can't front MinIO as a path under
+the main `:443` server the way other services here are, either: AWS SigV4 signs the exact request path as
+part of the signature, so a path-prefixed proxy (e.g. `/storage/` → `minio:9000/`) invalidates it and every
+upload/download 403s with `SignatureDoesNotMatch` (confirmed directly against a real MinIO — this used to
+be documented here as an unsolved limitation). The fix nginx.lightsail.conf actually ships is a dedicated
+port with a pure, path-preserving TLS passthrough — the exact same shape as the LiveKit 7880 block just
+below it, nothing added or stripped from the path:
 
 ```
 S3_ENDPOINT=http://minio:9000
-S3_PUBLIC_ENDPOINT=http://minio:9000
+S3_PUBLIC_ENDPOINT=https://DOMAIN:9000
 S3_REGION=us-east-1
 S3_BUCKET=arutech-meet-test
 S3_ACCESS_KEY=<pick a value>
@@ -416,9 +420,12 @@ S3_SECRET_KEY=<openssl rand -hex 24>
 S3_FORCE_PATH_STYLE=true
 ```
 
-...and add `--profile minio` to the `dc` alias (`alias dc='... -p arutech-meet --profile minio'`) so every
-command below picks it up consistently — mixing `--profile minio` on some commands and not others is a
-real footgun (Compose errors on a `depends_on` referencing a service excluded by the active profile set).
+(`S3_ENDPOINT` stays the internal Docker hostname — that one's for server-to-server calls, which never
+leave the Docker network; only `S3_PUBLIC_ENDPOINT`, used solely to *sign* URLs a browser will call
+directly, needs to be externally reachable.) Add port 9000 to the firewall table in §3, and add
+`--profile minio` to the `dc` alias (`alias dc='... -p arutech-meet --profile minio'`) so every command
+below picks it up consistently — mixing `--profile minio` on some commands and not others is a real
+footgun (Compose errors on a `depends_on` referencing a service excluded by the active profile set).
 
 ## 7. LiveKit and Egress config
 

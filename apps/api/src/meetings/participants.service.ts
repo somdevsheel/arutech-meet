@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { WS_EVENTS } from "@arutech/types";
+import { WS_EVENTS, type ParticipantRole } from "@arutech/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { LiveKitService } from "../livekit/livekit.service";
 import { PermissionService } from "./permission.service";
@@ -188,6 +188,69 @@ export class ParticipantsService {
     });
   }
 
+  /** The other half of promoteCoHost — previously didn't exist at all, so a
+   * host had no way to undo a promotion short of removing and re-inviting
+   * the person. Restores whatever role a fresh join would assign today
+   * (see MeetingsService.join's own resolution of the same thing) rather
+   * than always dropping to a generic PARTICIPANT, so a promoted class
+   * STUDENT lands back on STUDENT instead of losing that label. */
+  async demoteCoHost(meetingId: string, callerUserId: string, participantId: string) {
+    await this.permissions.requireOwnerOrCapability(
+      meetingId,
+      callerUserId,
+      "participant.role.demote",
+    );
+    const { meeting, participant } = await this.getWithMeeting(meetingId, participantId);
+    if (participant.role !== "CO_HOST") {
+      throw new BadRequestException("Only a co-host can be demoted");
+    }
+
+    const baseRole = await this.resolveBaseRole(meetingId, participant.userId);
+    await this.prisma.client.meetingParticipant.update({
+      where: { id: participantId },
+      data: { role: baseRole },
+    });
+
+    // Mirrors MeetingsService.computeCanShareScreen: only revoke the live
+    // SFU screen-share grant if the restored role wouldn't have it anyway —
+    // a meeting configured with screenShareScope: ALL_PARTICIPANTS should
+    // leave every participant's grant alone regardless of role.
+    const keepsScreenShare = meeting.settings?.screenShareScope === "ALL_PARTICIPANTS";
+    await this.liveKit.updateParticipantPermissions(meeting.livekitRoomName, participant.livekitIdentity, {
+      canPublishScreenShare: keepsScreenShare,
+    });
+
+    await this.logEvent(meetingId, participantId, "MODERATION_DEMOTE_CO_HOST");
+    await this.auditLog.record({
+      actorUserId: callerUserId,
+      action: "participant.demote_co_host",
+      targetType: "meeting_participant",
+      targetId: participantId,
+      metadata: { meetingId, demotedUserId: participant.userId, newRole: baseRole },
+    });
+    await this.broadcast.publish(meetingId, WS_EVENTS.MODERATION_ROLE_CHANGE, {
+      participantId,
+      role: baseRole,
+    });
+  }
+
+  /** Same classroom-roster resolution MeetingsService.join uses for a fresh
+   * join, reused here so a demotion restores the role someone would
+   * actually have today rather than a hardcoded guess. */
+  private async resolveBaseRole(meetingId: string, userId: string | null): Promise<ParticipantRole> {
+    if (!userId) return "GUEST";
+    const classSession = await this.prisma.client.classSession.findUnique({
+      where: { meetingId },
+    });
+    if (classSession) {
+      const isStudent = await this.prisma.client.classStudent.findUnique({
+        where: { classId_userId: { classId: classSession.classId, userId } },
+      });
+      if (isStudent) return "STUDENT";
+    }
+    return "PARTICIPANT";
+  }
+
   // --- Screen share request/approve/deny --------------------------------
   // PARTICIPANT_STUDENT_CAPS/GUEST_CAPS (packages/types/src/permissions.ts)
   // don't include `screen_share.self` by default — a plain participant has
@@ -252,7 +315,13 @@ export class ParticipantsService {
 
   private async getWithMeeting(meetingId: string, participantId: string) {
     const participant = await this.getOrThrow(meetingId, participantId);
-    const meeting = await this.prisma.client.meeting.findUniqueOrThrow({ where: { id: meetingId } });
+    // `include: settings` so callers (demoteCoHost) can read screenShareScope
+    // without a second round-trip — harmless small extra join for every
+    // other caller here that doesn't need it.
+    const meeting = await this.prisma.client.meeting.findUniqueOrThrow({
+      where: { id: meetingId },
+      include: { settings: true },
+    });
     return { meeting, participant };
   }
 

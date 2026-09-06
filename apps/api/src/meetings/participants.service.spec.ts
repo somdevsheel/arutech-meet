@@ -7,25 +7,34 @@ import type { RealtimeBroadcastService } from "../realtime/realtime-broadcast.se
 import type { AuditLogService } from "../audit/audit-log.service";
 import type { ContactsService } from "../contacts/contacts.service";
 
-const MEETING = { id: "meeting-1", livekitRoomName: "room-1" };
+const MEETING = { id: "meeting-1", livekitRoomName: "room-1", settings: null as { screenShareScope: string } | null };
 const PARTICIPANT = { id: "participant-1", meetingId: "meeting-1", userId: "target-1", livekitIdentity: "target-1-abc" };
+const CO_HOST_PARTICIPANT = { ...PARTICIPANT, role: "CO_HOST" };
 const GUEST_PARTICIPANT = { id: "participant-2", meetingId: "meeting-1", userId: null, livekitIdentity: "guest-xyz" };
 const WAITING_PARTICIPANT = { ...PARTICIPANT, status: "WAITING" };
 const WAITING_GUEST_PARTICIPANT = { ...GUEST_PARTICIPANT, status: "WAITING" };
 
 function makeService(overrides?: {
-  participant?: typeof PARTICIPANT | typeof GUEST_PARTICIPANT | typeof WAITING_PARTICIPANT;
+  participant?: typeof PARTICIPANT | typeof GUEST_PARTICIPANT | typeof WAITING_PARTICIPANT | typeof CO_HOST_PARTICIPANT;
+  meeting?: typeof MEETING;
+  classSession?: { classId: string } | null;
+  isClassStudent?: boolean;
 }) {
   const participant = overrides?.participant ?? PARTICIPANT;
+  const meeting = overrides?.meeting ?? MEETING;
   const prisma = {
     client: {
       meetingParticipant: {
         findUnique: jest.fn().mockResolvedValue(participant),
         update: jest.fn().mockResolvedValue({ ...participant, status: "REMOVED" }),
       },
-      meeting: { findUniqueOrThrow: jest.fn().mockResolvedValue(MEETING) },
+      meeting: { findUniqueOrThrow: jest.fn().mockResolvedValue(meeting) },
       meetingEvent: { create: jest.fn().mockResolvedValue(undefined) },
       user: { findUnique: jest.fn().mockResolvedValue({ displayName: "Real Display Name" }) },
+      classSession: { findUnique: jest.fn().mockResolvedValue(overrides?.classSession ?? null) },
+      classStudent: {
+        findUnique: jest.fn().mockResolvedValue(overrides?.isClassStudent ? { classId: "class-1", userId: participant.userId } : null),
+      },
     },
   } as unknown as PrismaService;
   const liveKit = {
@@ -167,6 +176,78 @@ describe("ParticipantsService.deny", () => {
       MEETING.id,
       expect.stringContaining("deny"),
       expect.objectContaining({ participantId: WAITING_GUEST_PARTICIPANT.id }),
+    );
+  });
+});
+
+describe("ParticipantsService.demoteCoHost", () => {
+  it("requires the participant.role.demote capability", async () => {
+    const { service, permissions } = makeService({ participant: CO_HOST_PARTICIPANT });
+    await service.demoteCoHost(MEETING.id, "caller-1", CO_HOST_PARTICIPANT.id);
+    expect(permissions.requireOwnerOrCapability).toHaveBeenCalledWith(
+      MEETING.id,
+      "caller-1",
+      "participant.role.demote",
+    );
+  });
+
+  it("refuses to demote someone who isn't currently a co-host", async () => {
+    const { service } = makeService({ participant: PARTICIPANT });
+    await expect(service.demoteCoHost(MEETING.id, "caller-1", PARTICIPANT.id)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it("restores a plain (non-classroom) co-host to PARTICIPANT", async () => {
+    const { service, prisma } = makeService({ participant: CO_HOST_PARTICIPANT });
+    await service.demoteCoHost(MEETING.id, "caller-1", CO_HOST_PARTICIPANT.id);
+    expect(prisma.client.meetingParticipant.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: CO_HOST_PARTICIPANT.id }, data: { role: "PARTICIPANT" } }),
+    );
+  });
+
+  it("restores a promoted class student to STUDENT, not a generic PARTICIPANT", async () => {
+    const { service, prisma } = makeService({
+      participant: CO_HOST_PARTICIPANT,
+      classSession: { classId: "class-1" },
+      isClassStudent: true,
+    });
+    await service.demoteCoHost(MEETING.id, "caller-1", CO_HOST_PARTICIPANT.id);
+    expect(prisma.client.meetingParticipant.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: CO_HOST_PARTICIPANT.id }, data: { role: "STUDENT" } }),
+    );
+  });
+
+  it("revokes the live screen-share grant by default", async () => {
+    const { service, liveKit } = makeService({ participant: CO_HOST_PARTICIPANT });
+    await service.demoteCoHost(MEETING.id, "caller-1", CO_HOST_PARTICIPANT.id);
+    expect(liveKit.updateParticipantPermissions).toHaveBeenCalledWith(
+      MEETING.livekitRoomName,
+      CO_HOST_PARTICIPANT.livekitIdentity,
+      { canPublishScreenShare: false },
+    );
+  });
+
+  it("keeps the screen-share grant when the meeting allows all participants to share", async () => {
+    const { service, liveKit } = makeService({
+      participant: CO_HOST_PARTICIPANT,
+      meeting: { ...MEETING, settings: { screenShareScope: "ALL_PARTICIPANTS" } },
+    });
+    await service.demoteCoHost(MEETING.id, "caller-1", CO_HOST_PARTICIPANT.id);
+    expect(liveKit.updateParticipantPermissions).toHaveBeenCalledWith(
+      MEETING.livekitRoomName,
+      CO_HOST_PARTICIPANT.livekitIdentity,
+      { canPublishScreenShare: true },
+    );
+  });
+
+  it("broadcasts the same MODERATION_ROLE_CHANGE event promote uses, so the existing live-update path applies", async () => {
+    const { service, broadcast } = makeService({ participant: CO_HOST_PARTICIPANT });
+    await service.demoteCoHost(MEETING.id, "caller-1", CO_HOST_PARTICIPANT.id);
+    expect(broadcast.publish).toHaveBeenCalledWith(
+      MEETING.id,
+      expect.stringContaining("role"),
+      expect.objectContaining({ participantId: CO_HOST_PARTICIPANT.id, role: "PARTICIPANT" }),
     );
   });
 });

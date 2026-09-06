@@ -42,16 +42,17 @@ services:
       retries: 10
 
   # Optional — only started with `--profile minio` (see docs/deployment-lightsail.md
-  # §Storage). Recommended default is real AWS S3 instead: it already has
-  # valid, publicly-trusted TLS with zero extra certificate work, whereas
-  # exposing MinIO's presigned download URLs to a real external device would
-  # need MinIO to terminate its own TLS too (proxying it through nginx like
-  # the other services breaks AWS SigV4 signature validation — the signature
-  # covers the exact host/path used at signing time, and a path-prefixed
-  # proxy changes that). If you do use this profile, recording playback
-  # (presigned download links) will only work from clients that can reach
-  # `minio` directly and unencrypted — i.e. not a real device over the
-  # internet — which is why it's opt-in and not the default here.
+  # §Storage). Recommended default is still real AWS S3 instead: it already
+  # has valid, publicly-trusted TLS with zero extra certificate work. This
+  # profile IS reachable from a real device now too, but only via the
+  # dedicated `nginx` port-9000 passthrough (see nginx.lightsail.conf's own
+  # comment on that server block) — nginx cannot front it as a path under
+  # the main :443 server the way other services here are, because AWS SigV4
+  # signs the exact request path and a path-prefixed proxy invalidates that
+  # signature (confirmed directly against a real MinIO). `minio` itself has
+  # no `ports:` mapping — it's reached over the internet exclusively through
+  # that nginx passthrough, and server-to-server (S3_ENDPOINT) over the
+  # internal Docker network.
   minio:
     image: minio/minio:latest
     restart: unless-stopped
@@ -174,10 +175,12 @@ services:
       - "80:80"
       - "443:443"
       - "7880:7880" # TLS-terminated LiveKit signaling — see the service comment above
+      - "9000:9000" # TLS-terminated MinIO, path-preserving passthrough — see nginx.lightsail.conf's own comment on this port
     depends_on:
       - api
       - web
       - livekit
+      - minio
 
   # One-shot / periodic — see docs/deployment-lightsail.md §TLS for how this
   # is actually invoked (not started by `up -d`, run on demand instead).
