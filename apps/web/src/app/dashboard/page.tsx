@@ -49,7 +49,10 @@ export default function DashboardPage() {
   const { user, accessToken, clear, hasHydrated } = useAuthStore();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [hosting, setHosting] = useState(false);
+  // Which instant-start card (if either) is currently in flight — not a
+  // plain boolean, so clicking one doesn't also flip the OTHER card's label
+  // to "Starting…" while nothing is actually happening on it.
+  const [hosting, setHosting] = useState<"meeting" | "webinar" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<"schedule" | "join" | null>(null);
   const [inviteMeeting, setInviteMeeting] = useState<{ id: string; title: string } | null>(null);
@@ -97,13 +100,17 @@ export default function DashboardPage() {
     }
   }
 
-  async function hostNow() {
-    setHosting(true);
+  // Real follow-up ask, right after webinar mode shipped: "like instant
+  // meeting need instant webinar option" — webinar was only reachable
+  // through Schedule (a future time, waiting room on by default) before
+  // this, with no equivalent to "New meeting"'s start-right-now flow.
+  async function hostNow(webinar: boolean) {
+    setHosting(webinar ? "webinar" : "meeting");
     setError(null);
     try {
       // H-4: waitingRoomEnabled defaults to true server-side, which is the
       // right default for a scheduled meeting shared in advance, but wrong
-      // for "New meeting" — the entire point of this one-click flow is
+      // for an instant one — the entire point of this one-click flow is
       // sharing the link and having people join immediately. There's no
       // settings step here to ever surface (or turn off) that gate before
       // sharing, so anyone the host sent the link to right after clicking
@@ -116,9 +123,9 @@ export default function DashboardPage() {
       const meeting = await apiFetch<Meeting>("/meetings", {
         method: "POST",
         body: JSON.stringify({
-          title: "Instant meeting",
+          title: webinar ? "Instant webinar" : "Instant meeting",
           type: "INSTANT",
-          settings: { waitingRoomEnabled: false },
+          settings: { waitingRoomEnabled: false, isWebinar: webinar },
         }),
       });
       // `?share=1`: the just-created meeting's own lobby screen shows a
@@ -129,8 +136,8 @@ export default function DashboardPage() {
       // (or right as) they joined.
       router.push(`/meeting/${meeting.code}?share=1`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to start meeting");
-      setHosting(false);
+      setError(err instanceof ApiError ? err.message : `Failed to start ${webinar ? "webinar" : "meeting"}`);
+      setHosting(null);
     }
   }
 
@@ -164,17 +171,31 @@ export default function DashboardPage() {
           </p>
         </section>
 
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-3" aria-label="Quick actions">
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Quick actions">
           <ActionCard
             tone="warn"
-            title={hosting ? "Starting…" : "New meeting"}
+            title={hosting === "meeting" ? "Starting…" : "New meeting"}
             description="Start an instant meeting"
-            onClick={hostNow}
-            disabled={hosting}
+            onClick={() => hostNow(false)}
+            disabled={hosting !== null}
             icon={
               <>
                 <rect x="3" y="6" width="12" height="12" rx="2" />
                 <path d="m15 11 6-4v10l-6-4" />
+              </>
+            }
+          />
+          <ActionCard
+            tone="accent"
+            title={hosting === "webinar" ? "Starting…" : "Instant webinar"}
+            description="Attendees join view-only"
+            onClick={() => hostNow(true)}
+            disabled={hosting !== null}
+            icon={
+              <>
+                <rect x="2" y="4" width="15" height="11" rx="2" />
+                <path d="M6 20h7M9.5 15v5" />
+                <path d="M20 8v3.5M20 15v.01" />
               </>
             }
           />
@@ -359,7 +380,7 @@ function ActionCard({
   disabled,
   icon,
 }: {
-  tone: "warn" | "brand" | "success";
+  tone: "warn" | "brand" | "success" | "accent";
   title: string;
   description: string;
   onClick: () => void;
@@ -370,6 +391,7 @@ function ActionCard({
     warn: "bg-warn-bg text-warn",
     brand: "bg-brand-tint text-brand-300",
     success: "bg-success-bg text-success",
+    accent: "bg-accent-bg text-accent",
   }[tone];
 
   return (
