@@ -123,6 +123,76 @@ describe("AuthService", () => {
     });
   });
 
+  // Real bug report: "need to login everytime". Root cause was refresh
+  // rotating the stored token hash on every call — every tab of the same
+  // login shares one refresh token (persisted to localStorage, shared by
+  // every tab on the same origin), so two tabs both refreshing their
+  // 15-minute access token within moments of each other used to have
+  // whichever request the server processed second find the token already
+  // rotated out from under it, treat that as reuse, and revoke the whole
+  // session — forcing a fresh login even though nothing malicious happened.
+  describe("refresh — no rotation (multi-tab fix)", () => {
+    function makeValidSession() {
+      return {
+        id: "s1",
+        userId: "u1",
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60),
+        refreshTokenHash: sha256Hex("valid-token"),
+      };
+    }
+
+    it("reissues only a fresh access token and echoes back the SAME refresh token, unrotated", async () => {
+      const prisma = makePrismaMock();
+      const tokens = makeTokensMock();
+      (tokens.verifyRefreshToken as jest.Mock).mockReturnValue({ sub: "u1", sessionId: "s1" });
+      (prisma.client.session.findUnique as jest.Mock).mockResolvedValue(makeValidSession());
+      (prisma.client.user.findUnique as jest.Mock).mockResolvedValue({
+        id: "u1",
+        email: "u@arutech.dev",
+        systemRole: "USER",
+        status: "ACTIVE",
+      });
+      const service = new AuthService(prisma, tokens, makeMailMock(), makeEnv());
+
+      const result = await service.refresh("valid-token");
+
+      expect(result.refreshToken).toBe("valid-token");
+      expect(result.accessToken).toBe("access-token");
+      // The whole point: no new hash gets written, so a second tab's
+      // in-flight request against the same original token never finds a
+      // mismatch.
+      expect(prisma.client.session.update).toHaveBeenCalledWith({
+        where: { id: "s1" },
+        data: { lastUsedAt: expect.any(Date) },
+      });
+      expect(prisma.client.session.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ refreshTokenHash: expect.anything() }) }),
+      );
+    });
+
+    it("lets two concurrent tabs both successfully refresh with the same original token", async () => {
+      const prisma = makePrismaMock();
+      const tokens = makeTokensMock();
+      (tokens.verifyRefreshToken as jest.Mock).mockReturnValue({ sub: "u1", sessionId: "s1" });
+      // Same session row returned every time — nothing about it changes
+      // between calls, since refresh no longer rewrites refreshTokenHash.
+      (prisma.client.session.findUnique as jest.Mock).mockResolvedValue(makeValidSession());
+      (prisma.client.user.findUnique as jest.Mock).mockResolvedValue({
+        id: "u1",
+        email: "u@arutech.dev",
+        systemRole: "USER",
+        status: "ACTIVE",
+      });
+      const service = new AuthService(prisma, tokens, makeMailMock(), makeEnv());
+
+      // Simulates tab A and tab B both waking up and refreshing around the
+      // same 15-minute mark — this used to throw on the second call.
+      await expect(service.refresh("valid-token")).resolves.toMatchObject({ refreshToken: "valid-token" });
+      await expect(service.refresh("valid-token")).resolves.toMatchObject({ refreshToken: "valid-token" });
+    });
+  });
+
   // M-1: requestPasswordResetSchema/resetPasswordSchema existed but nothing
   // ever called them — this is the actual fix, so it gets real coverage.
   describe("requestPasswordReset", () => {

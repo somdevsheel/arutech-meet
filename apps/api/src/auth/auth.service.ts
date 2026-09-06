@@ -121,9 +121,10 @@ export class AuthService {
     }
 
     if (session.refreshTokenHash !== sha256Hex(refreshToken)) {
-      // Token doesn't match what we last issued for this session: either a forged
-      // token or replay of an already-rotated one. Revoke the whole session (breach
-      // containment) rather than silently rejecting.
+      // Token doesn't match what we last issued for this session — a
+      // forged token, or one from a session already ended (revoked/logged
+      // out) elsewhere. Revoke the whole session (breach containment)
+      // rather than silently rejecting.
       await this.prisma.client.session.update({
         where: { id: session.id },
         data: { revokedAt: new Date() },
@@ -136,7 +137,46 @@ export class AuthService {
       throw new UnauthorizedException("Account is not active");
     }
 
-    return this.rotateSession(session.id, user.id, user.email, user.systemRole);
+    // Real bug this fixes: this used to rotate the refresh token on every
+    // single call here (via the same helper login() uses to issue the
+    // initial pair) — a brand new refreshTokenHash overwriting the old one,
+    // with the mismatch check above then treating the old, now-stale token
+    // as "reuse detected" and revoking the WHOLE session outright. That's
+    // fine for one browser tab at a time, but every tab of the same login
+    // shares this exact refresh token (apps/web's auth store persists it to
+    // localStorage, shared by every tab on the same origin) — with a
+    // 15-minute access token, two tabs open at once will routinely both
+    // need to refresh within moments of each other, and whichever request
+    // the server processes second used to find the token already rotated
+    // out from under it and get the entire session revoked, forcing a
+    // fresh login. Reported by a user as needing to log in constantly.
+    //
+    // The actual fix: stop rotating here. The client already holds this
+    // exact refreshToken (they just sent it), so there's nothing to
+    // reissue — only a fresh, short-lived access token is minted. Every
+    // tab keeps working off the same stable refresh token for the rest of
+    // the session's real lifetime (JWT_REFRESH_EXPIRES_IN), with zero risk
+    // of one tab's refresh invalidating another's. The tradeoff (a stolen
+    // refresh token stays usable until it naturally expires or the session
+    // is revoked, rather than being invalidated on its next legitimate
+    // use) is the standard one most apps accept for exactly this reason —
+    // and "Active Sessions" (UsersService.revokeSession) already gives a
+    // user a real way to kill a specific session if one is compromised.
+    await this.prisma.client.session.update({
+      where: { id: session.id },
+      data: { lastUsedAt: new Date() },
+    });
+    const accessToken = this.tokens.signAccessToken({
+      sub: user.id,
+      email: user.email,
+      systemRole: user.systemRole as "USER" | "ADMIN",
+      sessionId: session.id,
+    });
+    return {
+      accessToken,
+      refreshToken,
+      expiresIn: Math.floor(parseDurationMs(this.env.JWT_ACCESS_EXPIRES_IN) / 1000),
+    };
   }
 
   async logout(sessionId: string): Promise<void> {
@@ -264,15 +304,23 @@ export class AuthService {
       },
     });
 
-    return this.rotateSession(session.id, user.id, user.email, user.systemRole, true);
+    return this.issueSessionTokens(session.id, user.id, user.email, user.systemRole);
   }
 
-  private async rotateSession(
+  /** Signs the token pair for a brand-new session row. Two steps (create the
+   * row, then sign tokens referencing its id) because the session's own id
+   * has to already exist to go inside the signed payload — `expiresAt` was
+   * already set at creation time above, so this only ever needs to fill in
+   * the real hash in place of the "pending" placeholder. Called exactly
+   * once per login/register, never again for that session afterward — see
+   * `refresh()`'s own doc comment for why a refresh no longer calls this
+   * (used to, under the name `rotateSession`, back when this was also the
+   * refresh path's rotation step). */
+  private async issueSessionTokens(
     sessionId: string,
     userId: string,
     email: string,
     systemRole: string,
-    isNewSession = false,
   ): Promise<AuthTokens> {
     const accessToken = this.tokens.signAccessToken({
       sub: userId,
@@ -282,13 +330,11 @@ export class AuthService {
     });
     const refreshToken = this.tokens.signRefreshToken({ sub: userId, sessionId });
 
-    const expiresAt = new Date(Date.now() + parseDurationMs(this.env.JWT_REFRESH_EXPIRES_IN));
     await this.prisma.client.session.update({
       where: { id: sessionId },
       data: {
         refreshTokenHash: sha256Hex(refreshToken),
         lastUsedAt: new Date(),
-        ...(isNewSession ? {} : { expiresAt }),
       },
     });
 
