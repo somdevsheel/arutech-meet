@@ -5,7 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { PermissionService } from "../meetings/permission.service";
 import { OrganizationsService } from "../organizations/organizations.service";
-import { isAllowedMimeType, sanitizeFileName } from "./file-upload.util";
+import { isAllowedUpload, sanitizeFileName } from "./file-upload.util";
 
 /**
  * Real object-storage file uploads (chat/meeting attachments — see
@@ -37,7 +37,7 @@ export class FilesService {
   async presignMeetingUpload(meetingId: string, callerUserId: string, dto: PresignUploadDto) {
     await this.permissions.requireCapability(meetingId, callerUserId, "chat.send");
 
-    if (!isAllowedMimeType(dto.mimeType)) {
+    if (!isAllowedUpload(dto.mimeType, dto.fileName)) {
       throw new BadRequestException(`File type ${dto.mimeType} is not allowed`);
     }
 
@@ -86,7 +86,7 @@ export class FilesService {
       throw new ForbiddenException("This file failed a virus scan and cannot be downloaded");
     }
 
-    const url = await this.storage.getSignedDownloadUrl(file.storageKey);
+    const url = await this.storage.getSignedDownloadUrl(file.storageKey, 600, file.originalName);
     return { url, fileName: file.originalName, mimeType: file.mimeType, expiresInSeconds: 600 };
   }
 }

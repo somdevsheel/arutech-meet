@@ -11,6 +11,12 @@ export const ALLOWED_MIME_TYPES = new Set([
   "image/webp",
   "application/pdf",
   "text/plain",
+  "text/csv",
+  "text/html",
+  "application/json",
+  "application/xml",
+  "text/xml",
+  "application/sql",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.ms-excel",
@@ -27,16 +33,50 @@ export const ALLOWED_MIME_TYPES = new Set([
   "audio/mpeg",
 ]);
 
-/** Checks a browser-reported MIME type against the allowlist above, ignoring
- * any `;parameter=...` suffix. Real-world browsers append these — Chrome's
- * `MediaRecorder` reports `audio/webm;codecs=opus`, not bare `audio/webm` —
- * so a strict `Set.has()` on the raw string rejects every voice message a
- * real browser records. The suffix is still stored verbatim on the
- * `FileAsset` (and sent as the upload's Content-Type) since it's genuinely
- * useful codec information for playback; only the allowlist check strips it. */
-export function isAllowedMimeType(mimeType: string): boolean {
+/** Fallback for a deliberately narrow set of plain-text code/data formats
+ * that real browsers frequently DON'T recognize at all — a `.py`, `.ipynb`,
+ * or `.sql` file's `File.type` in JS is empty string or a generic
+ * `application/octet-stream` on many OS/browser combinations, since these
+ * extensions usually aren't registered in the OS's own MIME database the
+ * browser reads from. There's no reliable MIME signal to allowlist for
+ * them, so `isAllowedUpload` falls back to the file's extension for exactly
+ * this set. None of these are executable on their own the way `.exe`/`.sh`/
+ * `.js` are (still excluded everywhere) — opening one does nothing unless
+ * the recipient separately chooses to run it through an interpreter/tool,
+ * so extension-based trust is an acceptable line to draw here. Keep this
+ * list narrow and additive, same as ALLOWED_MIME_TYPES above. */
+export const ALLOWED_EXTENSIONS = new Set([
+  "py",
+  "ipynb",
+  "sql",
+  "md",
+  "xml",
+  // Redundant with an ALLOWED_MIME_TYPES entry on browsers that DO report
+  // these correctly — kept as a fallback for the ones that don't.
+  "html",
+  "htm",
+  "csv",
+  "json",
+  "txt",
+]);
+
+function getExtension(fileName: string): string {
+  const idx = fileName.lastIndexOf(".");
+  return idx === -1 ? "" : fileName.slice(idx + 1).toLowerCase();
+}
+
+/** The actual upload gate — a browser-reported MIME type matching
+ * ALLOWED_MIME_TYPES (ignoring any `;parameter=...` suffix — Chrome's
+ * `MediaRecorder` reports `audio/webm;codecs=opus`, not bare `audio/webm`,
+ * so a strict `Set.has()` on the raw string would reject every voice
+ * message a real browser records) OR the file's extension matching
+ * ALLOWED_EXTENSIONS (see that constant's own comment for why MIME alone
+ * isn't reliable for several legitimate formats). Either signal alone is
+ * sufficient — most files satisfy both. */
+export function isAllowedUpload(mimeType: string, fileName: string): boolean {
   const base = (mimeType.split(";")[0] ?? "").trim();
-  return ALLOWED_MIME_TYPES.has(base);
+  if (ALLOWED_MIME_TYPES.has(base)) return true;
+  return ALLOWED_EXTENSIONS.has(getExtension(fileName));
 }
 
 /** Sanitizes a user-supplied filename down to characters safe in an S3 key and

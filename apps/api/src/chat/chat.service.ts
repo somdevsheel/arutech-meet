@@ -17,7 +17,7 @@ import { AuditLogService } from "../audit/audit-log.service";
 import { ContactsService } from "../contacts/contacts.service";
 import { StorageService } from "../storage/storage.service";
 import { OrganizationsService } from "../organizations/organizations.service";
-import { isAllowedMimeType, sanitizeFileName } from "../files/file-upload.util";
+import { isAllowedUpload, sanitizeFileName } from "../files/file-upload.util";
 
 const MEMBER_SELECT = {
   id: true,
@@ -605,7 +605,7 @@ export class ChatService {
   async presignRoomAttachment(chatRoomId: string, callerUserId: string, dto: PresignUploadDto) {
     await this.requireMember(chatRoomId, callerUserId);
 
-    if (!isAllowedMimeType(dto.mimeType)) {
+    if (!isAllowedUpload(dto.mimeType, dto.fileName)) {
       throw new BadRequestException(`File type ${dto.mimeType} is not allowed`);
     }
 
@@ -661,7 +661,7 @@ export class ChatService {
       throw new ForbiddenException("This file failed a virus scan and cannot be downloaded");
     }
 
-    const url = await this.storage.getSignedDownloadUrl(file.storageKey);
+    const url = await this.storage.getSignedDownloadUrl(file.storageKey, 600, file.originalName);
     return { url, fileName: file.originalName, mimeType: file.mimeType, expiresInSeconds: 600 };
   }
 

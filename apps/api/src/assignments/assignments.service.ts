@@ -7,7 +7,7 @@ import { StorageService } from "../storage/storage.service";
 import { ClassesService } from "../classes/classes.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { OrganizationsService } from "../organizations/organizations.service";
-import { isAllowedMimeType, sanitizeFileName } from "../files/file-upload.util";
+import { isAllowedUpload, sanitizeFileName } from "../files/file-upload.util";
 
 /**
  * Classroom assignments — create, attach material, students submit (with
@@ -212,7 +212,7 @@ export class AssignmentsService {
   async presignAttachment(classId: string, callerUserId: string, dto: PresignUploadDto) {
     await this.classes.requireMember(classId, callerUserId);
 
-    if (!isAllowedMimeType(dto.mimeType)) {
+    if (!isAllowedUpload(dto.mimeType, dto.fileName)) {
       throw new BadRequestException(`File type ${dto.mimeType} is not allowed`);
     }
 
@@ -284,7 +284,7 @@ export class AssignmentsService {
       throw new ForbiddenException("This file failed a virus scan and cannot be downloaded");
     }
 
-    const url = await this.storage.getSignedDownloadUrl(file.storageKey);
+    const url = await this.storage.getSignedDownloadUrl(file.storageKey, 600, file.originalName);
     return { url, fileName: file.originalName, mimeType: file.mimeType, expiresInSeconds: 600 };
   }
 

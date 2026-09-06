@@ -5,6 +5,7 @@ import type { Env } from "@arutech/config";
 import { createWriteStream } from "fs";
 import { pipeline } from "stream/promises";
 import type { Readable } from "stream";
+import { sanitizeFileName } from "../files/file-upload.util";
 
 /**
  * The ONLY place the API talks to object storage directly. Clients never receive
@@ -68,8 +69,28 @@ export class StorageService {
     };
   }
 
-  async getSignedDownloadUrl(key: string, expiresInSeconds = 600): Promise<string> {
-    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
+  /** `forceDownloadFileName`, when given, sets ResponseContentDisposition to
+   * `attachment` — the allowlist now includes `text/html`, and without this
+   * an uploaded HTML "attachment" would render (and could run its own
+   * script) if a recipient's browser opened this URL directly rather than
+   * treating it as a download; a normal image/PDF/etc. embedded via
+   * `<img>`/`<a download>` is unaffected either way, since Content-
+   * Disposition only changes what a *direct, top-level navigation* to the
+   * URL does. Omit it for content meant to play/render inline on purpose
+   * (recording playback) — everywhere else that hands a URL straight to an
+   * arbitrary user upload should pass one. */
+  async getSignedDownloadUrl(
+    key: string,
+    expiresInSeconds = 600,
+    forceDownloadFileName?: string,
+  ): Promise<string> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ...(forceDownloadFileName
+        ? { ResponseContentDisposition: `attachment; filename="${sanitizeFileName(forceDownloadFileName)}"` }
+        : {}),
+    });
     return getSignedUrl(this.publicClient, command, { expiresIn: expiresInSeconds });
   }
 
