@@ -10,8 +10,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Arutech Meet",
-  description: "Video meetings, online classrooms, and calls — by Arutech Consultancy Services LLP",
+  title: "Indium Meet",
+  description: "Video meetings, online classrooms, and calls — Indium, by Arutech Consultancy Services LLP",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

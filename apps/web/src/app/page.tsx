@@ -34,7 +34,7 @@ export default function HomePage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-10 px-6">
       <div className="text-center">
-        <h1 className="text-4xl font-semibold tracking-tight text-white">Arutech Meet</h1>
+        <h1 className="text-4xl font-semibold tracking-tight text-white">Indium Meet</h1>
         <p className="mt-3 max-w-md text-surface-border text-slate-400">
           Video meetings, online classrooms, and calls in one platform.
         </p>
@@ -70,6 +70,8 @@ export default function HomePage() {
           Create account
         </Link>
       </div>
+
+      <p className="text-xs tracking-wide text-slate-600">Indium, by Arutech</p>
     </main>
   );
 }

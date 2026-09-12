@@ -51,13 +51,13 @@ export class MailService {
   }): Promise<void> {
     await this.send({
       to: opts.to,
-      subject: `${opts.inviterName} invited you to join ${opts.orgName} on Arutech Meet`,
+      subject: `${opts.inviterName} invited you to join ${opts.orgName} on Indium Meet`,
       text:
-        `${opts.inviterName} invited you to join ${opts.orgName} on Arutech Meet.\n\n` +
+        `${opts.inviterName} invited you to join ${opts.orgName} on Indium Meet.\n\n` +
         `Accept the invite: ${opts.acceptUrl}\n\n` +
         `If you weren't expecting this, you can ignore this email.`,
       html:
-        `<p>${escapeHtml(opts.inviterName)} invited you to join <strong>${escapeHtml(opts.orgName)}</strong> on Arutech Meet.</p>` +
+        `<p>${escapeHtml(opts.inviterName)} invited you to join <strong>${escapeHtml(opts.orgName)}</strong> on Indium Meet.</p>` +
         `<p><a href="${opts.acceptUrl}">Accept the invite</a></p>` +
         `<p style="color:#888;font-size:12px">If you weren't expecting this, you can ignore this email.</p>`,
     });
@@ -75,7 +75,7 @@ export class MailService {
       : "";
     await this.send({
       to: opts.to,
-      subject: `${opts.inviterName} invited you to "${opts.meetingTitle}" on Arutech Meet`,
+      subject: `${opts.inviterName} invited you to "${opts.meetingTitle}" on Indium Meet`,
       text:
         `${opts.inviterName} invited you to a meeting: ${opts.meetingTitle}\n\n` +
         (whenLine ? `${whenLine}\n\n` : "") +
@@ -96,7 +96,7 @@ export class MailService {
   async sendPasswordReset(opts: { to: string; resetUrl: string }): Promise<void> {
     await this.send({
       to: opts.to,
-      subject: "Reset your Arutech Meet password",
+      subject: "Reset your Indium Meet password",
       text:
         `Someone requested a password reset for this account.\n\n` +
         `Reset your password: ${opts.resetUrl}\n\n` +

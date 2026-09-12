@@ -1,11 +1,11 @@
-# Arutech Meet — System Architecture
+# Indium Meet — System Architecture
 
-Owner: Arutech Consultancy Services LLP
+Product: Indium Meet, by Arutech Consultancy Services LLP
 Status: Living document, updated as implementation progresses.
 
 ## 1. Goals
 
-Arutech Meet is a multi-tenant SaaS platform providing:
+Indium Meet is a multi-tenant SaaS platform providing:
 
 1. **Meetings** — ad-hoc and scheduled video/audio meetings with screen share, chat, recording.
 2. **Online Classrooms** — teacher/student sessions with attendance, whiteboard, polls, quizzes, breakout rooms.

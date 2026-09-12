@@ -40,7 +40,7 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 /**
- * Fetch wrapper for the Arutech Meet API — identical contract to
+ * Fetch wrapper for the Indium Meet API — identical contract to
  * apps/web/src/lib/api-client.ts (same silent-refresh-on-401 behavior) so the
  * two clients don't drift in how they talk to the same backend.
  */

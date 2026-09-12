@@ -1,4 +1,6 @@
-# Arutech Meet
+# Indium Meet
+
+*Indium, by Arutech.*
 
 A production-grade video meeting, online classroom, and calling platform, built by
 **Arutech Consultancy Services LLP**.
@@ -14,7 +16,7 @@ A production-grade video meeting, online classroom, and calling platform, built 
 
 ## Product overview
 
-Arutech Meet provides three experiences on one account, across web and native mobile:
+Indium Meet provides three experiences on one account, across web and native mobile:
 
 - **Meetings** — instant/scheduled/recurring video meetings with waiting room, chat, screen share,
   recording (real LiveKit Egress → S3/MinIO, not a stub — see `docs/webrtc.md` §Recording), and

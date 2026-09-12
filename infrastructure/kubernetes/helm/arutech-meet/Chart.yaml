@@ -1,7 +1,7 @@
 apiVersion: v2
 name: arutech-meet
 description: >-
-  Arutech Meet — video meetings, online classrooms, and calling platform.
+  Indium Meet, by Arutech — video meetings, online classrooms, and calling platform.
   Deploys the api and web tiers plus LiveKit SFU + Egress recording worker.
   PostgreSQL, Redis, and S3 are expected to be managed/external services in
   production (see docs/deployment.md) — this chart does not deploy them.

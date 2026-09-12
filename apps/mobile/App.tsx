@@ -1,5 +1,5 @@
 /**
- * Arutech Meet — mobile app entry point.
+ * Indium Meet — mobile app entry point.
  *
  * @format
  */

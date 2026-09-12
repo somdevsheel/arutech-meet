@@ -233,7 +233,7 @@ export function AppShell({ user, active, accessToken, onSignOut, rail, children 
               avatar getting pushed half off-screen. The icon badge alone is
               still a recognizable "home" link on its own; drop the text
               below `sm` rather than let the row overflow. */}
-          <span className="hidden sm:inline">Arutech Meet</span>
+          <span className="hidden sm:inline">Indium Meet</span>
         </Link>
 
         <div className="relative hidden max-w-md flex-1 sm:block">

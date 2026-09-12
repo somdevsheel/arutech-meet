@@ -1,4 +1,4 @@
-# Terraform — Arutech Meet production infrastructure (AWS reference)
+# Terraform — Indium Meet production infrastructure (AWS reference)
 
 Provisions the managed infrastructure the Helm chart (`../kubernetes/helm/arutech-meet`) expects to
 already exist: a VPC, an EKS cluster, RDS PostgreSQL, ElastiCache Redis, and an S3 bucket for

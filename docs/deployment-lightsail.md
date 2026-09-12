@@ -339,7 +339,7 @@ LIVEKIT_API_SECRET=$(openssl rand -hex 32)
 
 SMTP_HOST=
 SMTP_PORT=587
-SMTP_FROM="Arutech Meet <no-reply@yourdomain.com>"
+SMTP_FROM="Indium Meet <no-reply@yourdomain.com>"
 SMTP_SECURE=true
 
 RATE_LIMIT_WINDOW_MS=60000

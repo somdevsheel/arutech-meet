@@ -23,7 +23,7 @@
   `SystemAdminGuard` (`apps/api/src/common/guards/system-admin.guard.ts`), checked against the
   `systemRole` claim embedded in the access token at login (see Authentication above — a role change
   takes effect on that user's next token refresh, not instantly). This is a distinct, separate concept
-  from org-level `ADMIN` below: platform admin is "can use the Arutech Meet admin dashboard", org admin is
+  from org-level `ADMIN` below: platform admin is "can use the Indium Meet admin dashboard", org admin is
   "can manage members within one specific organization". A user can be one, both, or neither.
 - **Org-level**: `memberships.role` (`OWNER`/`ADMIN`/`MEMBER`) — org membership/billing management scoped
   to that organization only.

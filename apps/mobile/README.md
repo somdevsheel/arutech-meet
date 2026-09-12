@@ -1,4 +1,4 @@
-# Arutech Meet — Mobile (React Native)
+# Indium Meet — Mobile (React Native)
 
 A proper React Native app (bare CLI, real native Android/iOS projects — not a WebView wrapper around
 `apps/web`), sharing the same backend, auth model, and permission model as the web client via

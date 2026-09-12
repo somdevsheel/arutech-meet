@@ -99,7 +99,7 @@ export default function AppsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Apps</h1>
           <p className="mt-1 max-w-2xl text-[13px] text-ink-muted">
-            A launcher for what&rsquo;s actually built into Arutech Meet — not a third-party integration
+            A launcher for what&rsquo;s actually built into Indium Meet — not a third-party integration
             marketplace (there are no external app integrations to install here yet).
           </p>
         </div>

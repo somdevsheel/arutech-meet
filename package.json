@@ -2,7 +2,7 @@
   "name": "arutech-meet",
   "version": "0.1.0",
   "private": true,
-  "description": "Arutech Meet - Production-grade video meetings, online classrooms & calling platform",
+  "description": "Indium Meet (by Arutech) - Production-grade video meetings, online classrooms & calling platform",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=20.0.0"

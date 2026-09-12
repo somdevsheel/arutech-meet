@@ -64,7 +64,7 @@ export const envSchema = z.object({
   SMTP_PORT: z.coerce.number().int().positive().default(1025),
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
-  SMTP_FROM: z.string().default("Arutech Meet <no-reply@arutech.dev>"),
+  SMTP_FROM: z.string().default("Indium Meet <no-reply@arutech.dev>"),
   SMTP_SECURE: booleanEnvVar(false),
 
   AI_PROVIDER: z.string().default("openai"),

@@ -47,7 +47,7 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 /**
- * Fetch wrapper for the Arutech Meet API: attaches the bearer access token and
+ * Fetch wrapper for the Indium Meet API: attaches the bearer access token and
  * transparently retries once after a silent refresh on 401 (access token expiry is
  * expected/routine, not an error condition the caller should have to handle).
  */

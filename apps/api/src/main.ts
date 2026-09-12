@@ -70,9 +70,9 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   const swaggerConfig = new DocumentBuilder()
-    .setTitle("Arutech Meet API")
+    .setTitle("Indium Meet API")
     .setDescription(
-      "REST API for the Arutech Meet video meeting, classroom, and calling platform.",
+      "REST API for the Indium Meet video meeting, classroom, and calling platform.",
     )
     .setVersion("0.1.0")
     .addBearerAuth()
@@ -92,7 +92,7 @@ async function bootstrap() {
   await app.listen(env.API_PORT);
   app.get(Logger).log(
     { port: env.API_PORT },
-    "Arutech Meet API listening (docs at /docs, metrics at /metrics)",
+    "Indium Meet API listening (docs at /docs, metrics at /metrics)",
   );
 }
 
